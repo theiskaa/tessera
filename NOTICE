@@ -1,0 +1,9 @@
+Tessera
+
+The code in this repository is licensed under MIT OR Apache-2.0.
+
+The trained model weights are licensed under CC BY 4.0. They are derived from the following sources, whose notices are reproduced as their licenses require.
+
+OpenStreetMap: Contains information from OpenStreetMap, © OpenStreetMap contributors, available under the Open Database License (https://opendatacommons.org/licenses/odbl/1-0/). The address training data derived from it is itself available under the Open Database License: it is produced deterministically from the libpostal training files published at https://archive.org/download/libpostal-parser-training-data-20170304/ by the trainer's prepare command, using the manifests and label map under data/manifests/.
+
+Open Addresses UK: Contains data from Open Addresses UK, published by Open Addresses Ltd under CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). It includes data originally licensed under the UK Open Government Licence or the Ordnance Survey OpenData Licence: contains public sector information licensed under the Open Government Licence v3.0, and OS data © Crown copyright and database right.

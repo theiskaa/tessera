@@ -1,7 +1,7 @@
 {
   "source": "libpostal-openaddresses",
   "kind": "address",
-  "use": "planned",
+  "use": "dropped",
   "status": "sampled",
   "url": "https://archive.org/download/libpostal-parser-training-data-20170304/openaddresses_formatted_addresses_tagged.random.tsv.gz",
   "index_url": "https://github.com/openvenues/libpostal/blob/master/README.md",
@@ -33,7 +33,7 @@
   "dropped_tags": {},
   "verified_on": "2026-09-22",
   "verified_by": "theiskaa",
-  "notes": "README label: '(various licenses, mostly CC-BY)'. Size: 12945744429 bytes. Training set date 20170304 from the repository file current_parser_training_set (verified 2026-09-22). The README lists the files under https://archive.org/download/libpostal-parser-training-data-YYYYMMDD/; the older libpostal.s3.amazonaws.com location returns 403.",
+  "notes": "README label: '(various licenses, mostly CC-BY)'. Size: 12945744429 bytes. Training set date 20170304 from the repository file current_parser_training_set (verified 2026-09-22). The README lists the files under https://archive.org/download/libpostal-parser-training-data-YYYYMMDD/; the older libpostal.s3.amazonaws.com location returns 403. Dropped on 2026-09-22 by the Milestone 0 redistribution decision: the combined file keeps only a country column, so its rows cannot be traced to a per-source license; countries taken from OpenAddresses are fetched per source in Milestone 2 with one manifest each.",
   "sample": {
     "date": "2026-09-22",
     "lines_read": 2000000,

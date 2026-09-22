@@ -7,6 +7,7 @@ repository.workspace = true
 description = "Find people, organizations, addresses, emails, and phone numbers in text and assemble them into contacts, locally"
 keywords = ["ner", "address", "contacts", "wasm", "extraction"]
 categories = ["text-processing", "wasm"]
+license = "MIT OR Apache-2.0"
 
 [lib]
 crate-type = ["cdylib", "rlib"]

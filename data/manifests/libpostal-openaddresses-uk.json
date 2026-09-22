@@ -6,14 +6,14 @@
   "url": "https://archive.org/download/libpostal-parser-training-data-20170304/uk_openaddresses_formatted_addresses_tagged.random.tsv.gz",
   "index_url": "https://github.com/openvenues/libpostal/blob/master/README.md",
   "upstream": "Open Addresses UK (Open Addresses Ltd, openaddressesuk.org, discontinued)",
-  "upstream_url": "https://github.com/openaddressesuk",
+  "upstream_url": "https://web.archive.org/web/20160414003020/https://alpha.openaddressesuk.org/developers/download",
   "license": "CC-BY-4.0",
   "license_url": "https://creativecommons.org/licenses/by/4.0/",
-  "attribution": "unverifiable: the openaddressesuk.org site is offline; the libpostal README states CC-BY and the project's ODI Open Data Certificate and contributor terms state Creative Commons Attribution 4.0. The attribution string to use pending a verifiable archived statement is 'Contains data from Open Addresses UK, CC BY 4.0'",
+  "attribution": "Contains data from Open Addresses UK, published by Open Addresses Ltd under CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). It includes data originally licensed under the UK Open Government Licence or the Ordnance Survey OpenData Licence: contains public sector information licensed under the Open Government Licence v3.0, and OS data © Crown copyright and database right.",
   "constraints": [
     "this is a different project from openaddresses.io; it is the only UK address source in the libpostal set",
-    "Open Addresses UK derived part of its data from crowdsourcing and part from open government sources; the ODI certificate records that rights are held by several parties",
-    "if 0.4 cannot confirm the CC-BY-4.0 statement from an archived copy of openaddressesuk.org, the file is dropped and GB parser data comes from OSM only"
+    "license verified from the archived download page https://alpha.openaddressesuk.org/developers/download (Wayback capture 2016-04-14): CC BY 4.0, containing data originally under the UK Open Government Licence or the OS OpenData Licence, subject to Crown copyright and Crown database rights",
+    "attribution therefore names Open Addresses Ltd, CC BY 4.0, and the OGL v3.0 and OS Crown copyright notices"
   ],
   "format": "gzipped TSV, three columns: language (ISO 639-1), country (ISO 3166-1 alpha-2 lowercase), tagged address. The address column is space-separated token/label pairs, for example 'Parkstraße/road 8/house_number |/FSEP 6OG/level'; '|/FSEP' marks a field separator and ',/SEP' a separator token. Verified by streaming the first bytes of the 20170304 file on 2026-09-22.",
   "sha256": "",
