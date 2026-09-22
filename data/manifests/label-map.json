@@ -1,0 +1,160 @@
+{
+  "taxonomy": [
+    "house_number",
+    "road",
+    "unit",
+    "level",
+    "suburb",
+    "city",
+    "district",
+    "region",
+    "postcode",
+    "country",
+    "po_box",
+    "unknown"
+  ],
+  "source": "libpostal parser labels",
+  "source_url": "https://github.com/openvenues/libpostal#parser-labels",
+  "formatter_url": "https://github.com/openvenues/libpostal/blob/master/scripts/geodata/address_formatting/formatter.py",
+  "verified": "2026-09-22",
+  "fates": {
+    "map": "rename the label; tokens keep their component role",
+    "outside": "keep the example; label these tokens O",
+    "exclude_example": "drop the whole example",
+    "separator": "not a source token; render as a line break between fields and label it O"
+  },
+  "parsing": {
+    "columns": "language TAB country TAB tagged address",
+    "line_ending": "lines end in CRLF; strip the trailing carriage return before splitting the last token, or the last label reads 'country\\r'",
+    "token_split": "tokens are separated by single spaces; split each token on its last '/', because a literal slash token appears as '//house_number'",
+    "fsep": "'|/FSEP' is inserted by formatter.py where the rendered template had a line break (splitter ' | ', field_separator_tag 'FSEP'); it is not text that appeared in the address",
+    "sep": "'<punct>/SEP' is a literal separator token (comma, hyphen, semicolon) between components; formatter.py tags template separators with separator_tag 'SEP'",
+    "observed": "label counts from the first 200000 lines of each of the six 20170304 files, 2026-09-22: every README label occurs except attention and care_of; SEP and FSEP occur in every file"
+  },
+  "map": {
+    "house_number": {
+      "fate": "map",
+      "to": "house_number",
+      "reason": "identical concept"
+    },
+    "road": {
+      "fate": "map",
+      "to": "road",
+      "reason": "identical concept"
+    },
+    "unit": {
+      "fate": "map",
+      "to": "unit",
+      "reason": "identical concept"
+    },
+    "level": {
+      "fate": "map",
+      "to": "level",
+      "reason": "identical concept"
+    },
+    "staircase": {
+      "fate": "map",
+      "to": "unit",
+      "reason": "sub-building locator; too rare for its own label; not misleading as unit"
+    },
+    "entrance": {
+      "fate": "map",
+      "to": "unit",
+      "reason": "sub-building locator; same reasoning as staircase"
+    },
+    "po_box": {
+      "fate": "map",
+      "to": "po_box",
+      "reason": "identical concept"
+    },
+    "postcode": {
+      "fate": "map",
+      "to": "postcode",
+      "reason": "identical concept"
+    },
+    "suburb": {
+      "fate": "map",
+      "to": "suburb",
+      "reason": "identical concept"
+    },
+    "city_district": {
+      "fate": "map",
+      "to": "district",
+      "reason": "public taxonomy has one district level"
+    },
+    "city": {
+      "fate": "map",
+      "to": "city",
+      "reason": "identical concept"
+    },
+    "island": {
+      "fate": "map",
+      "to": "region",
+      "reason": "sits between city and country in postal hierarchies; administrative region in the starting countries"
+    },
+    "state_district": {
+      "fate": "map",
+      "to": "district",
+      "reason": "public taxonomy has one district level"
+    },
+    "state": {
+      "fate": "map",
+      "to": "region",
+      "reason": "first-level administrative division; the README notes England, Scotland, Wales, and Northern Ireland are tagged state"
+    },
+    "country_region": {
+      "fate": "map",
+      "to": "region",
+      "reason": "informal subdivision of a country per the README; country is reserved for the sovereign state"
+    },
+    "country": {
+      "fate": "map",
+      "to": "country",
+      "reason": "identical concept"
+    },
+    "house": {
+      "fate": "outside",
+      "to": null,
+      "reason": "venue or building names are org or place entities; the spec says the outer entity wins and the address taxonomy has no venue label"
+    },
+    "world_region": {
+      "fate": "outside",
+      "to": null,
+      "reason": "supra-national context such as 'West Indies', not a deliverable address component"
+    },
+    "attention": {
+      "fate": "outside",
+      "to": null,
+      "upstream": "defined in formatter.py, not in the README, not observed in the sampled lines",
+      "reason": "an 'Attn: Jane Doe' line is a person entity next to the address, not a component; the spec's taxonomy has no attention label"
+    },
+    "care_of": {
+      "fate": "outside",
+      "to": null,
+      "upstream": "defined in formatter.py, not in the README, not observed in the sampled lines",
+      "reason": "a 'c/o' line names a person or org, which the spec makes a separate entity"
+    },
+    "SEP": {
+      "fate": "outside",
+      "to": null,
+      "upstream": "separator tag from formatter.py, not a README label",
+      "reason": "literal punctuation between components; it belongs to no component"
+    },
+    "category": {
+      "fate": "exclude_example",
+      "to": null,
+      "reason": "search-query generator output, not an address"
+    },
+    "near": {
+      "fate": "exclude_example",
+      "to": null,
+      "reason": "search-query generator output, not an address"
+    },
+    "FSEP": {
+      "fate": "separator",
+      "to": null,
+      "upstream": "field separator tag from formatter.py, not a README label",
+      "reason": "stands for a line break in the rendered address; keeping '|' as text would teach the model a character that never appears in real addresses"
+    }
+  }
+}
