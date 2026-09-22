@@ -1,0 +1,31 @@
+{
+  "source": "baseline-presidio",
+  "kind": "baseline",
+  "use": "planned",
+  "status": "inventoried",
+  "url": "https://github.com/microsoft/presidio",
+  "index_url": "https://microsoft.github.io/presidio/",
+  "upstream": "Microsoft Presidio",
+  "upstream_url": "https://github.com/microsoft/presidio",
+  "license": "MIT",
+  "license_url": "https://github.com/microsoft/presidio/blob/main/LICENSE",
+  "attribution": "Microsoft Presidio, MIT, 'Copyright (c) Presidio Contributors.'",
+  "constraints": [
+    "baseline only; its output never trains anything",
+    "its default spaCy model en_core_web_lg is MIT (spacy-models meta for en_core_web_lg-3.8.0, verified 2026-09-22)"
+  ],
+  "format": "Python package; outputs are span lists written in the detector fixture shape",
+  "sha256": "",
+  "downloaded": "",
+  "filters": {},
+  "counts": {
+    "train": 0,
+    "valid": 0,
+    "test": 0
+  },
+  "split_seed": 42,
+  "dropped_tags": {},
+  "verified_on": "2026-09-22",
+  "verified_by": "theiskaa",
+  "notes": ""
+}

@@ -1,0 +1,33 @@
+{
+  "source": "teacher-gliner",
+  "kind": "teacher",
+  "use": "candidate",
+  "status": "inventoried",
+  "url": "https://huggingface.co/urchade/gliner_multi-v2.1",
+  "index_url": "https://github.com/urchade/GLiNER",
+  "upstream": "GLiNER",
+  "upstream_url": "https://github.com/urchade/GLiNER",
+  "license": "Apache-2.0",
+  "license_url": "https://huggingface.co/urchade/gliner_multi-v2.1",
+  "attribution": "Zaratiana, Tomeh, Holat, Charnois. GLiNER: Generalist Model for Named Entity Recognition using Bidirectional Transformer. arXiv:2311.08526 (NAACL 2024)",
+  "constraints": [
+    "model card license tag apache-2.0 (verified 2026-09-22)",
+    "base encoder microsoft/mdeberta-v3-base (gliner_config.json model_name, verified 2026-09-22), whose model card license tag is mit; neither license restricts use of model outputs",
+    "silver labels produced by the teacher are used only for detector training, never for evaluation",
+    "the real-text corpus fed to the teacher needs its own manifest before Milestone 4 phase 4.3"
+  ],
+  "format": "model weights; outputs are span lists",
+  "sha256": "",
+  "downloaded": "",
+  "filters": {},
+  "counts": {
+    "train": 0,
+    "valid": 0,
+    "test": 0
+  },
+  "split_seed": 42,
+  "dropped_tags": {},
+  "verified_on": "2026-09-22",
+  "verified_by": "theiskaa",
+  "notes": ""
+}

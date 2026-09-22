@@ -1,0 +1,43 @@
+{
+  "source": "gleif-lei",
+  "kind": "org",
+  "use": "planned",
+  "status": "inventoried",
+  "url": "https://api.gleif.org/api/v1/lei-records",
+  "index_url": "https://www.gleif.org/en/lei-data/gleif-golden-copy",
+  "upstream": "GLEIF Global LEI Index",
+  "upstream_url": "https://www.gleif.org/",
+  "license": "CC0-1.0",
+  "license_url": "https://www.gleif.org/en/meta/lei-data-terms-of-use",
+  "attribution": "none required",
+  "constraints": [
+    "LEI Data Terms of Use (verified 2026-09-22): 'The data available through the Access Service are provided under the CC0 licence, see CC0 1.0 Universal (CC0 1.0)'; the terms forbid presenting data as GLEIF-provided or -authorized and any false association with GLEIF or the LEI system",
+    "the page https://www.gleif.org/en/about/gleif-services/terms-of-use named in the plan returns 404; the terms are at /en/meta/lei-data-terms-of-use",
+    "the ISO 20275 Entity Legal Forms code list page states no license of its own and the LEI Data Terms of Use do not name it; treated as an open item for 0.4. Current file: https://www.gleif.org/lei-data/code-lists/iso-20275-entity-legal-forms-code-list/2026-02-19-elf-code-list-v1.6.csv",
+    "API (probed 2026-09-22): page[size] must be between 1 and 200 (HTTP 400 above 200); no rate-limit headers are returned and the documentation page is rendered by script and could not be read, so sampling keeps to at most one request per second",
+    "GE has 162 active records (probe on 2026-09-22), so the Georgian org sample will be small and must be supplemented from Wikidata"
+  ],
+  "format": "JSON:API pages of up to 200 records; fields used: attributes.entity.legalName.name, attributes.entity.legalName.language, attributes.entity.legalAddress.country, attributes.entity.legalForm.id, attributes.entity.otherNames[*].name",
+  "sha256": "",
+  "downloaded": "",
+  "filters": {
+    "countries": [
+      "GB",
+      "DE",
+      "GE",
+      "US",
+      "JP"
+    ],
+    "status": "ACTIVE"
+  },
+  "counts": {
+    "train": 0,
+    "valid": 0,
+    "test": 0
+  },
+  "split_seed": 42,
+  "dropped_tags": {},
+  "verified_on": "2026-09-22",
+  "verified_by": "theiskaa",
+  "notes": ""
+}

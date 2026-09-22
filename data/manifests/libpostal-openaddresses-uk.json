@@ -1,0 +1,32 @@
+{
+  "source": "libpostal-openaddresses-uk",
+  "kind": "address",
+  "use": "planned",
+  "status": "inventoried",
+  "url": "https://archive.org/download/libpostal-parser-training-data-20170304/uk_openaddresses_formatted_addresses_tagged.random.tsv.gz",
+  "index_url": "https://github.com/openvenues/libpostal/blob/master/README.md",
+  "upstream": "Open Addresses UK (Open Addresses Ltd, openaddressesuk.org, discontinued)",
+  "upstream_url": "https://github.com/openaddressesuk",
+  "license": "CC-BY-4.0",
+  "license_url": "https://creativecommons.org/licenses/by/4.0/",
+  "attribution": "unverifiable: the openaddressesuk.org site is offline; the libpostal README states CC-BY and the project's ODI Open Data Certificate and contributor terms state Creative Commons Attribution 4.0. The attribution string to use pending a verifiable archived statement is 'Contains data from Open Addresses UK, CC BY 4.0'",
+  "constraints": [
+    "this is a different project from openaddresses.io; it is the only UK address source in the libpostal set",
+    "Open Addresses UK derived part of its data from crowdsourcing and part from open government sources; the ODI certificate records that rights are held by several parties",
+    "if 0.4 cannot confirm the CC-BY-4.0 statement from an archived copy of openaddressesuk.org, the file is dropped and GB parser data comes from OSM only"
+  ],
+  "format": "gzipped TSV, three columns: language (ISO 639-1), country (ISO 3166-1 alpha-2 lowercase), tagged address. The address column is space-separated token/label pairs, for example 'Parkstraße/road 8/house_number |/FSEP 6OG/level'; '|/FSEP' marks a field separator and ',/SEP' a separator token. Verified by streaming the first bytes of the 20170304 file on 2026-09-22.",
+  "sha256": "",
+  "downloaded": "",
+  "filters": {},
+  "counts": {
+    "train": 0,
+    "valid": 0,
+    "test": 0
+  },
+  "split_seed": 42,
+  "dropped_tags": {},
+  "verified_on": "2026-09-22",
+  "verified_by": "theiskaa",
+  "notes": "README label: '(CC-BY): addresses from OpenAddresses UK'. Size: 26611979 bytes. Training set date 20170304 from the repository file current_parser_training_set (verified 2026-09-22). The README lists the files under https://archive.org/download/libpostal-parser-training-data-YYYYMMDD/; the older libpostal.s3.amazonaws.com location returns 403."
+}

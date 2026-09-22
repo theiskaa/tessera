@@ -1,0 +1,40 @@
+{
+  "source": "wikidata-organizations",
+  "kind": "org",
+  "use": "planned",
+  "status": "inventoried",
+  "url": "https://query.wikidata.org/sparql",
+  "index_url": "https://www.wikidata.org/wiki/Wikidata:Licensing",
+  "upstream": "Wikidata",
+  "upstream_url": "https://www.wikidata.org/",
+  "license": "CC0-1.0",
+  "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+  "attribution": "none required; the project credits Wikidata voluntarily",
+  "constraints": [
+    "Wikidata:Licensing (verified 2026-09-22): 'All structured data in the main, property and lexeme namespaces is made available under the Creative Commons CC0 License'",
+    "same query service limits as wikidata-people",
+    "only official names, short names, and labels are stored, with the country"
+  ],
+  "format": "SPARQL JSON results; queries recorded in bench/inspect/sample_wikidata.py (phase 0.3)",
+  "sha256": "",
+  "downloaded": "",
+  "filters": {
+    "properties": [
+      "P31/P279* in {Q4830453 business, Q3918 university, Q327333 government agency, Q31855 research institute, Q163740 nonprofit}",
+      "P17 country",
+      "P1448 official name",
+      "P1813 short name",
+      "rdfs:label"
+    ]
+  },
+  "counts": {
+    "train": 0,
+    "valid": 0,
+    "test": 0
+  },
+  "split_seed": 42,
+  "dropped_tags": {},
+  "verified_on": "2026-09-22",
+  "verified_by": "theiskaa",
+  "notes": ""
+}

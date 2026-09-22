@@ -1,0 +1,33 @@
+{
+  "source": "libpostal-osm-ways",
+  "kind": "address",
+  "use": "planned",
+  "status": "inventoried",
+  "url": "https://archive.org/download/libpostal-parser-training-data-20170304/formatted_ways_tagged.random.tsv.gz",
+  "index_url": "https://github.com/openvenues/libpostal/blob/master/README.md",
+  "upstream": "OpenStreetMap",
+  "upstream_url": "https://www.openstreetmap.org/copyright",
+  "license": "ODbL-1.0",
+  "license_url": "https://opendatacommons.org/licenses/odbl/1-0/",
+  "attribution": "© OpenStreetMap contributors",
+  "constraints": [
+    "ODbL 1.0 section 4.4: a derivative database may be distributed only under ODbL",
+    "ODbL 1.0 section 4.3: a produced work must carry the notice that it contains data from the database under ODbL",
+    "openstreetmap.org/copyright (verified 2026-09-22): 'If you alter or build upon our data, you may distribute the result only under the same license'",
+    "whether trained weights are a produced work or a derivative database is decided in reports/licensing.md section 4"
+  ],
+  "format": "gzipped TSV, three columns: language (ISO 639-1), country (ISO 3166-1 alpha-2 lowercase), tagged address. The address column is space-separated token/label pairs, for example 'Parkstraße/road 8/house_number |/FSEP 6OG/level'; '|/FSEP' marks a field separator and ',/SEP' a separator token. Verified by streaming the first bytes of the 20170304 file on 2026-09-22.",
+  "sha256": "",
+  "downloaded": "",
+  "filters": {},
+  "counts": {
+    "train": 0,
+    "valid": 0,
+    "test": 0
+  },
+  "split_seed": 42,
+  "dropped_tags": {},
+  "verified_on": "2026-09-22",
+  "verified_by": "theiskaa",
+  "notes": "Training set date 20170304 from the repository file current_parser_training_set (verified 2026-09-22). The README lists the files under https://archive.org/download/libpostal-parser-training-data-YYYYMMDD/; the older libpostal.s3.amazonaws.com location returns 403. README label: '(ODBL): every street in OSM'. Street-only examples for the road component; listed in the README but not in the original phase plan, added so every libpostal file has a manifest. Size: 1990961380 bytes."
+}
