@@ -1,0 +1,74 @@
+{
+  "cases": [
+    {
+      "name": "berlin fiction block international",
+      "input": "+49 30 23125456",
+      "country_hint": [],
+      "expected": [
+        {
+          "kind": "phone",
+          "text": "+49 30 23125456",
+          "start": 0,
+          "end": 15,
+          "normalized": "+493023125456",
+          "region": "DE",
+          "min_confidence": 0.75
+        }
+      ]
+    },
+    {
+      "name": "berlin fiction block national with hyphen",
+      "input": "Telefon: 030 23125-456",
+      "country_hint": [
+        "DE"
+      ],
+      "expected": [
+        {
+          "kind": "phone",
+          "text": "030 23125-456",
+          "start": 9,
+          "end": 22,
+          "normalized": "+493023125456",
+          "region": "DE",
+          "min_confidence": 0.75
+        }
+      ]
+    },
+    {
+      "name": "national with slash separator",
+      "input": "030/23125456",
+      "country_hint": [
+        "DE"
+      ],
+      "expected": [
+        {
+          "kind": "phone",
+          "text": "030/23125456",
+          "start": 0,
+          "end": 12,
+          "normalized": "+493023125456",
+          "region": "DE",
+          "min_confidence": 0.75
+        }
+      ]
+    },
+    {
+      "name": "gb hint reads a german national number as a uk 03 number",
+      "input": "030 23125456",
+      "country_hint": [
+        "GB"
+      ],
+      "expected": [
+        {
+          "kind": "phone",
+          "text": "030 23125456",
+          "start": 0,
+          "end": 12,
+          "normalized": "+443023125456",
+          "region": "GB",
+          "min_confidence": 0.5
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,214 @@
+{
+  "cases": [
+    {
+      "name": "emoji before a name",
+      "input": "📞 Nino",
+      "tokens": [
+        {
+          "text": "📞",
+          "start": 0,
+          "end": 4,
+          "class": "other",
+          "script": "other",
+          "utf16_start": 0,
+          "utf16_end": 2
+        },
+        {
+          "text": " ",
+          "start": 4,
+          "end": 5,
+          "class": "space",
+          "script": "other",
+          "utf16_start": 2,
+          "utf16_end": 3
+        },
+        {
+          "text": "Nino",
+          "start": 5,
+          "end": 9,
+          "class": "alpha",
+          "script": "latin",
+          "utf16_start": 3,
+          "utf16_end": 7
+        }
+      ]
+    },
+    {
+      "name": "decomposed accent",
+      "input": "José Silva",
+      "tokens": [
+        {
+          "text": "José",
+          "start": 0,
+          "end": 6,
+          "class": "alpha",
+          "script": "latin",
+          "utf16_start": 0,
+          "utf16_end": 5
+        },
+        {
+          "text": " ",
+          "start": 6,
+          "end": 7,
+          "class": "space",
+          "script": "other",
+          "utf16_start": 5,
+          "utf16_end": 6
+        },
+        {
+          "text": "Silva",
+          "start": 7,
+          "end": 12,
+          "class": "alpha",
+          "script": "latin",
+          "utf16_start": 6,
+          "utf16_end": 11
+        }
+      ]
+    },
+    {
+      "name": "precomposed accent",
+      "input": "José Silva",
+      "tokens": [
+        {
+          "text": "José",
+          "start": 0,
+          "end": 5,
+          "class": "alpha",
+          "script": "latin",
+          "utf16_start": 0,
+          "utf16_end": 4
+        },
+        {
+          "text": " ",
+          "start": 5,
+          "end": 6,
+          "class": "space",
+          "script": "other",
+          "utf16_start": 4,
+          "utf16_end": 5
+        },
+        {
+          "text": "Silva",
+          "start": 6,
+          "end": 11,
+          "class": "alpha",
+          "script": "latin",
+          "utf16_start": 5,
+          "utf16_end": 10
+        }
+      ]
+    },
+    {
+      "name": "astral character before an email",
+      "input": "📞 a@b.example",
+      "tokens": [
+        {
+          "text": "📞",
+          "start": 0,
+          "end": 4,
+          "class": "other",
+          "script": "other",
+          "utf16_start": 0,
+          "utf16_end": 2
+        },
+        {
+          "text": " ",
+          "start": 4,
+          "end": 5,
+          "class": "space",
+          "script": "other",
+          "utf16_start": 2,
+          "utf16_end": 3
+        },
+        {
+          "text": "a",
+          "start": 5,
+          "end": 6,
+          "class": "alpha",
+          "script": "latin",
+          "utf16_start": 3,
+          "utf16_end": 4
+        },
+        {
+          "text": "@",
+          "start": 6,
+          "end": 7,
+          "class": "punct",
+          "script": "other",
+          "utf16_start": 4,
+          "utf16_end": 5
+        },
+        {
+          "text": "b",
+          "start": 7,
+          "end": 8,
+          "class": "alpha",
+          "script": "latin",
+          "utf16_start": 5,
+          "utf16_end": 6
+        },
+        {
+          "text": ".",
+          "start": 8,
+          "end": 9,
+          "class": "punct",
+          "script": "other",
+          "utf16_start": 6,
+          "utf16_end": 7
+        },
+        {
+          "text": "example",
+          "start": 9,
+          "end": 16,
+          "class": "alpha",
+          "script": "latin",
+          "utf16_start": 7,
+          "utf16_end": 14
+        }
+      ]
+    },
+    {
+      "name": "tab and multiple spaces",
+      "input": "a  \tb",
+      "tokens": [
+        {
+          "text": "a",
+          "start": 0,
+          "end": 1,
+          "class": "alpha",
+          "script": "latin"
+        },
+        {
+          "text": "  \t",
+          "start": 1,
+          "end": 4,
+          "class": "space",
+          "script": "other"
+        },
+        {
+          "text": "b",
+          "start": 4,
+          "end": 5,
+          "class": "alpha",
+          "script": "latin"
+        }
+      ]
+    },
+    {
+      "name": "fullwidth digits",
+      "input": "１２３",
+      "tokens": [
+        {
+          "text": "１２３",
+          "start": 0,
+          "end": 9,
+          "class": "digit",
+          "script": "other",
+          "utf16_start": 0,
+          "utf16_end": 3
+        }
+      ]
+    }
+  ]
+}

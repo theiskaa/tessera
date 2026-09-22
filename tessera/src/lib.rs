@@ -6,6 +6,26 @@
 //! exclusive. The `wasm` feature converts them to UTF-16 code units at the
 //! binding boundary.
 
+mod features;
+mod policy;
+mod rules;
+mod token;
+#[cfg(feature = "wasm")]
+pub mod wasm;
+
+/// Internals shared with the trainer and the integration tests. Not a stable API.
+#[doc(hidden)]
+pub mod internal {
+    pub use crate::features::{
+        FeatureConfig, TokenFeatures, featurize, flag, is_content, line_ranges,
+    };
+    pub use crate::policy::display_confidence;
+    pub use crate::rules::email::scan as scan_email;
+    pub use crate::rules::phone::scan as scan_phone;
+    pub use crate::rules::scan as scan_rules;
+    pub use crate::token::{Script, Token, TokenClass, tokenize, utf16_offsets};
+}
+
 use std::ops::BitOr;
 
 /// Entity kinds the library can detect.
@@ -33,6 +53,22 @@ impl Kind {
         Kind::ALL
             .iter()
             .fold(KindSet::EMPTY, |set, kind| set | *kind)
+    }
+
+    /// Lowercase label used by fixtures, the CLI, the bindings, and the bundle manifest.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Kind::Person => "person",
+            Kind::Org => "org",
+            Kind::Address => "address",
+            Kind::Email => "email",
+            Kind::Phone => "phone",
+        }
+    }
+
+    /// Inverse of [`Kind::as_str`].
+    pub fn from_str_label(s: &str) -> Option<Kind> {
+        Kind::ALL.iter().copied().find(|k| k.as_str() == s)
     }
 
     const fn bit(self) -> u8 {
@@ -93,6 +129,24 @@ pub enum Source {
     Rules,
 }
 
+impl Source {
+    /// Both sources, in declaration order.
+    pub const ALL: [Source; 2] = [Source::Model, Source::Rules];
+
+    /// Lowercase label used by fixtures, the CLI, and the bindings.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Source::Model => "model",
+            Source::Rules => "rules",
+        }
+    }
+
+    /// Inverse of [`Source::as_str`].
+    pub fn from_str_label(s: &str) -> Option<Source> {
+        Source::ALL.iter().copied().find(|v| v.as_str() == s)
+    }
+}
+
 /// Address component labels, in taxonomy order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AddressLabel {
@@ -110,12 +164,57 @@ pub enum AddressLabel {
     Unknown,
 }
 
+impl AddressLabel {
+    /// Every label, in taxonomy order.
+    pub const ALL: [AddressLabel; 12] = [
+        AddressLabel::HouseNumber,
+        AddressLabel::Road,
+        AddressLabel::Unit,
+        AddressLabel::Level,
+        AddressLabel::Suburb,
+        AddressLabel::City,
+        AddressLabel::District,
+        AddressLabel::Region,
+        AddressLabel::Postcode,
+        AddressLabel::Country,
+        AddressLabel::PoBox,
+        AddressLabel::Unknown,
+    ];
+
+    /// Snake-case label used by fixtures, the CLI, the bindings, and the bundle manifest.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            AddressLabel::HouseNumber => "house_number",
+            AddressLabel::Road => "road",
+            AddressLabel::Unit => "unit",
+            AddressLabel::Level => "level",
+            AddressLabel::Suburb => "suburb",
+            AddressLabel::City => "city",
+            AddressLabel::District => "district",
+            AddressLabel::Region => "region",
+            AddressLabel::Postcode => "postcode",
+            AddressLabel::Country => "country",
+            AddressLabel::PoBox => "po_box",
+            AddressLabel::Unknown => "unknown",
+        }
+    }
+
+    /// Inverse of [`AddressLabel::as_str`].
+    pub fn from_str_label(s: &str) -> Option<AddressLabel> {
+        AddressLabel::ALL.iter().copied().find(|v| v.as_str() == s)
+    }
+}
+
 /// One labelled component of an address span.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Component {
+    /// Which part of the address this is.
     pub label: AddressLabel,
+    /// UTF-8 byte offset where the span begins.
     pub start: usize,
+    /// UTF-8 byte offset where the span ends, exclusive.
     pub end: usize,
+    /// Model confidence in this component, from 0 to 1.
     pub confidence: f32,
 }
 
@@ -129,10 +228,17 @@ impl Component {
 /// One detected span.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Entity {
+    /// What was found.
     pub kind: Kind,
+    /// UTF-8 byte offset where the span begins.
     pub start: usize,
+    /// UTF-8 byte offset where the span ends, exclusive.
     pub end: usize,
+    /// Confidence from 0 to 1; see `review_recommended` for the band it falls in.
     pub confidence: f32,
+    /// Medium confidence: return it, but a person should look before acting on it.
+    pub review_recommended: bool,
+    /// Whether a model or the rules layer found it.
     pub source: Source,
     /// Address only; empty for every other kind.
     pub components: Vec<Component>,
@@ -152,20 +258,30 @@ impl Entity {
 /// A person or organization with the details that belong to them.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Contact {
+    /// UTF-8 byte offset of the first byte of any field of the contact.
     pub start: usize,
+    /// UTF-8 byte offset after the last field of the contact, exclusive.
     pub end: usize,
     /// Bounded by the weakest assignment, never averaged.
     pub confidence: f32,
+    /// Medium confidence: return it, but a person should look before acting on it.
+    pub review_recommended: bool,
+    /// The person the contact is anchored on, if any.
     pub person: Option<Entity>,
+    /// The organization, as anchor when there is no person, or as the person's employer.
     pub org: Option<Entity>,
+    /// Addresses assigned to this contact.
     pub addresses: Vec<Entity>,
+    /// Email addresses assigned to this contact.
     pub emails: Vec<Entity>,
+    /// Phone numbers assigned to this contact.
     pub phones: Vec<Entity>,
 }
 
 /// Result of [`Tessera::extract_contacts`].
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Extraction {
+    /// Contacts in document order.
     pub contacts: Vec<Contact>,
     /// Entities that could not be assigned to a contact with confidence.
     pub unassigned: Vec<Entity>,
@@ -211,32 +327,70 @@ pub struct Tessera {
 }
 
 impl Tessera {
-    /// Parse and verify a weight bundle. Pass an empty slice for a rules-only configuration.
+    /// Parse and verify a weight bundle.
+    ///
+    /// A rules-only configuration (`config.kinds.is_rules_only()`) needs no
+    /// bundle: `bundle` and `expected_checksum` are ignored and may be empty.
     pub fn load(bundle: &[u8], config: Config<'_>) -> Result<Tessera, Error> {
-        let _ = (bundle, config);
-        todo!("bundle loading")
+        if config.kinds.is_rules_only() {
+            return Ok(Tessera {
+                kinds: config.kinds,
+            });
+        }
+        // No bundle format exists before the parser ships; any bytes are invalid.
+        let _ = bundle;
+        Err(Error::BundleInvalid)
     }
 
     /// Every supported entity in `text`, as non-overlapping spans sorted by position.
     pub fn detect(&self, text: &str, query: &Query<'_>) -> Result<Vec<Entity>, Error> {
-        let _ = (text, query);
-        todo!("detect")
+        if !self.kinds.is_rules_only() {
+            return Err(Error::Inference {
+                stage: policy::STAGE_DETECT,
+            });
+        }
+        let found = rules::scan(text, query.country_hint)
+            .into_iter()
+            .filter(|e| self.kinds.contains(e.kind))
+            .collect();
+        Ok(policy::apply(found, query.include_uncertain))
     }
 
     /// Entities grouped into contacts, plus everything that could not be assigned.
     pub fn extract_contacts(&self, text: &str, query: &Query<'_>) -> Result<Extraction, Error> {
         let _ = (text, query);
-        todo!("extract_contacts")
+        Err(Error::Inference {
+            stage: policy::STAGE_GROUP,
+        })
     }
 
     /// Split text already known to be an address into components. Offsets are relative to `text`.
     pub fn parse_address(&self, text: &str, query: &Query<'_>) -> Result<Entity, Error> {
         let _ = (text, query);
-        todo!("parse_address")
+        Err(Error::Inference {
+            stage: policy::STAGE_PARSE,
+        })
     }
 
     /// The kinds this instance was loaded for.
     pub fn kinds(&self) -> KindSet {
         self.kinds
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn labels_round_trip() {
+        for k in Kind::ALL {
+            assert_eq!(Kind::from_str_label(k.as_str()), Some(k));
+        }
+        for l in AddressLabel::ALL {
+            assert_eq!(AddressLabel::from_str_label(l.as_str()), Some(l));
+        }
+        assert_eq!(Source::from_str_label("rules"), Some(Source::Rules));
+        assert_eq!(Kind::from_str_label("Person"), None);
     }
 }

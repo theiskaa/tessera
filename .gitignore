@@ -18,6 +18,8 @@ internal/
 /runs/
 
 # python baselines under bench/
+/bench/phone-tables/cache/
+/bench/**/output/
 __pycache__/
 /bench/.venv/
 

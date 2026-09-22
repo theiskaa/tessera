@@ -1,0 +1,46 @@
+{
+  "cases": [
+    {
+      "name": "tokyo placeholder international",
+      "input": "+81 3-1234-5678",
+      "country_hint": [],
+      "expected": [
+        {
+          "kind": "phone",
+          "text": "+81 3-1234-5678",
+          "start": 0,
+          "end": 15,
+          "normalized": "+81312345678",
+          "region": "JP",
+          "min_confidence": 0.75
+        }
+      ]
+    },
+    {
+      "name": "tokyo placeholder national in japanese prose",
+      "input": "電話：03-1234-5678まで",
+      "country_hint": [
+        "JP"
+      ],
+      "expected": [
+        {
+          "kind": "phone",
+          "text": "03-1234-5678",
+          "start": 9,
+          "end": 21,
+          "normalized": "+81312345678",
+          "region": "JP",
+          "min_confidence": 0.75
+        }
+      ]
+    },
+    {
+      "name": "fullwidth digits are not scanned yet",
+      "input": "０３－１２３４－５６７８",
+      "country_hint": [
+        "JP"
+      ],
+      "expected": []
+    }
+  ]
+}

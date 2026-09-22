@@ -8,15 +8,14 @@ edition = "2024"
 rust-version = "1.96"
 repository = "https://github.com/theiskaa/tessera"
 
+[workspace.dependencies]
+tessera = { path = "tessera", default-features = true }
+anyhow = "1"
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+wasm-bindgen = "0.2"
+
 [profile.release]
 lto = "thin"
 codegen-units = 1
-
-# wasm-pack build tessera --features wasm --profile wasm
-[profile.wasm]
-inherits = "release"
-opt-level = "z"
-lto = true
-codegen-units = 1
-panic = "abort"
-strip = true

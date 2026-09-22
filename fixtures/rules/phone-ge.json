@@ -1,0 +1,52 @@
+{
+  "cases": [
+    {
+      "name": "tbilisi landline from the spec example",
+      "input": "+995 32 212 3456",
+      "country_hint": [],
+      "expected": [
+        {
+          "kind": "phone",
+          "text": "+995 32 212 3456",
+          "start": 0,
+          "end": 16,
+          "normalized": "+995322123456",
+          "region": "GE",
+          "min_confidence": 0.75
+        }
+      ]
+    },
+    {
+      "name": "too short to be a number",
+      "input": "+995 32 21",
+      "country_hint": [],
+      "synthetic_invalid": true,
+      "expected": []
+    },
+    {
+      "name": "georgian prose around a national number without a hint",
+      "input": "დარეკეთ 032 212 3456",
+      "country_hint": [],
+      "synthetic_invalid": true,
+      "expected": []
+    },
+    {
+      "name": "georgian prose around a national number with a hint",
+      "input": "დარეკეთ 032 212 3456",
+      "country_hint": [
+        "GE"
+      ],
+      "expected": [
+        {
+          "kind": "phone",
+          "text": "032 212 3456",
+          "start": 22,
+          "end": 34,
+          "normalized": "+995322123456",
+          "region": "GE",
+          "min_confidence": 0.75
+        }
+      ]
+    }
+  ]
+}

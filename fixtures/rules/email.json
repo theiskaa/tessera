@@ -1,0 +1,115 @@
+{
+  "cases": [
+    {
+      "name": "plain address in prose",
+      "input": "Contact nino@kavkaz-freight.example today",
+      "expected": [
+        {
+          "kind": "email",
+          "text": "nino@kavkaz-freight.example",
+          "start": 8,
+          "end": 35,
+          "normalized": "nino@kavkaz-freight.example",
+          "min_confidence": 0.99
+        }
+      ]
+    },
+    {
+      "name": "mixed case domain and trailing period",
+      "input": "Mail: Nino.Beridze@Kavkaz-Freight.EXAMPLE.",
+      "expected": [
+        {
+          "kind": "email",
+          "text": "Nino.Beridze@Kavkaz-Freight.EXAMPLE",
+          "start": 6,
+          "end": 41,
+          "normalized": "Nino.Beridze@kavkaz-freight.example",
+          "min_confidence": 0.99
+        }
+      ]
+    },
+    {
+      "name": "parentheses and plus addressing",
+      "input": "(support+billing@help.test)",
+      "expected": [
+        {
+          "kind": "email",
+          "text": "support+billing@help.test",
+          "start": 1,
+          "end": 26,
+          "normalized": "support+billing@help.test",
+          "min_confidence": 0.99
+        }
+      ]
+    },
+    {
+      "name": "mailto prefix and subdomain",
+      "input": "see mailto:ops@a.b.example now",
+      "expected": [
+        {
+          "kind": "email",
+          "text": "ops@a.b.example",
+          "start": 11,
+          "end": 26,
+          "normalized": "ops@a.b.example",
+          "min_confidence": 0.99
+        }
+      ]
+    },
+    {
+      "name": "georgian prose with suffix after the address",
+      "input": "მისწერეთ nino@kavkaz-freight.example-ზე",
+      "expected": [
+        {
+          "kind": "email",
+          "text": "nino@kavkaz-freight.example",
+          "start": 25,
+          "end": 52,
+          "normalized": "nino@kavkaz-freight.example",
+          "min_confidence": 0.99
+        }
+      ]
+    },
+    {
+      "name": "two addresses on one line",
+      "input": "a@x.example, b@y.example",
+      "expected": [
+        {
+          "kind": "email",
+          "text": "a@x.example",
+          "start": 0,
+          "end": 11,
+          "normalized": "a@x.example",
+          "min_confidence": 0.99
+        },
+        {
+          "kind": "email",
+          "text": "b@y.example",
+          "start": 13,
+          "end": 24,
+          "normalized": "b@y.example",
+          "min_confidence": 0.99
+        }
+      ]
+    },
+    {
+      "name": "invalid shapes are not emails",
+      "input": "a..b@x.example user@localhost @example.com nino@kavkaz",
+      "expected": []
+    },
+    {
+      "name": "numeric domain is medium confidence",
+      "input": "root@10.0.0.1",
+      "expected": [
+        {
+          "kind": "email",
+          "text": "root@10.0.0.1",
+          "start": 0,
+          "end": 13,
+          "normalized": "root@10.0.0.1",
+          "min_confidence": 0.7
+        }
+      ]
+    }
+  ]
+}

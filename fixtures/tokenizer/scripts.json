@@ -1,0 +1,376 @@
+{
+  "cases": [
+    {
+      "name": "georgian name city and postcode",
+      "input": "ნინო ბერიძე, თბილისი 0108",
+      "tokens": [
+        {
+          "text": "ნინო",
+          "start": 0,
+          "end": 12,
+          "class": "alpha",
+          "script": "georgian",
+          "utf16_start": 0,
+          "utf16_end": 4
+        },
+        {
+          "text": " ",
+          "start": 12,
+          "end": 13,
+          "class": "space",
+          "script": "other",
+          "utf16_start": 4,
+          "utf16_end": 5
+        },
+        {
+          "text": "ბერიძე",
+          "start": 13,
+          "end": 31,
+          "class": "alpha",
+          "script": "georgian",
+          "utf16_start": 5,
+          "utf16_end": 11
+        },
+        {
+          "text": ",",
+          "start": 31,
+          "end": 32,
+          "class": "punct",
+          "script": "other",
+          "utf16_start": 11,
+          "utf16_end": 12
+        },
+        {
+          "text": " ",
+          "start": 32,
+          "end": 33,
+          "class": "space",
+          "script": "other",
+          "utf16_start": 12,
+          "utf16_end": 13
+        },
+        {
+          "text": "თბილისი",
+          "start": 33,
+          "end": 54,
+          "class": "alpha",
+          "script": "georgian",
+          "utf16_start": 13,
+          "utf16_end": 20
+        },
+        {
+          "text": " ",
+          "start": 54,
+          "end": 55,
+          "class": "space",
+          "script": "other",
+          "utf16_start": 20,
+          "utf16_end": 21
+        },
+        {
+          "text": "0108",
+          "start": 55,
+          "end": 59,
+          "class": "digit",
+          "script": "other",
+          "utf16_start": 21,
+          "utf16_end": 25
+        }
+      ]
+    },
+    {
+      "name": "cyrillic name",
+      "input": "Иван Петров",
+      "tokens": [
+        {
+          "text": "Иван",
+          "start": 0,
+          "end": 8,
+          "class": "alpha",
+          "script": "cyrillic",
+          "utf16_start": 0,
+          "utf16_end": 4
+        },
+        {
+          "text": " ",
+          "start": 8,
+          "end": 9,
+          "class": "space",
+          "script": "other",
+          "utf16_start": 4,
+          "utf16_end": 5
+        },
+        {
+          "text": "Петров",
+          "start": 9,
+          "end": 21,
+          "class": "alpha",
+          "script": "cyrillic",
+          "utf16_start": 5,
+          "utf16_end": 11
+        }
+      ]
+    },
+    {
+      "name": "arabic street",
+      "input": "شارع الملك فهد",
+      "tokens": [
+        {
+          "text": "شارع",
+          "start": 0,
+          "end": 8,
+          "class": "alpha",
+          "script": "arabic",
+          "utf16_start": 0,
+          "utf16_end": 4
+        },
+        {
+          "text": " ",
+          "start": 8,
+          "end": 9,
+          "class": "space",
+          "script": "other",
+          "utf16_start": 4,
+          "utf16_end": 5
+        },
+        {
+          "text": "الملك",
+          "start": 9,
+          "end": 19,
+          "class": "alpha",
+          "script": "arabic",
+          "utf16_start": 5,
+          "utf16_end": 10
+        },
+        {
+          "text": " ",
+          "start": 19,
+          "end": 20,
+          "class": "space",
+          "script": "other",
+          "utf16_start": 10,
+          "utf16_end": 11
+        },
+        {
+          "text": "فهد",
+          "start": 20,
+          "end": 26,
+          "class": "alpha",
+          "script": "arabic",
+          "utf16_start": 11,
+          "utf16_end": 14
+        }
+      ]
+    },
+    {
+      "name": "japanese address without spaces",
+      "input": "東京都千代田区1-1",
+      "tokens": [
+        {
+          "text": "東",
+          "start": 0,
+          "end": 3,
+          "class": "alpha",
+          "script": "han",
+          "utf16_start": 0,
+          "utf16_end": 1
+        },
+        {
+          "text": "京",
+          "start": 3,
+          "end": 6,
+          "class": "alpha",
+          "script": "han",
+          "utf16_start": 1,
+          "utf16_end": 2
+        },
+        {
+          "text": "都",
+          "start": 6,
+          "end": 9,
+          "class": "alpha",
+          "script": "han",
+          "utf16_start": 2,
+          "utf16_end": 3
+        },
+        {
+          "text": "千",
+          "start": 9,
+          "end": 12,
+          "class": "alpha",
+          "script": "han",
+          "utf16_start": 3,
+          "utf16_end": 4
+        },
+        {
+          "text": "代",
+          "start": 12,
+          "end": 15,
+          "class": "alpha",
+          "script": "han",
+          "utf16_start": 4,
+          "utf16_end": 5
+        },
+        {
+          "text": "田",
+          "start": 15,
+          "end": 18,
+          "class": "alpha",
+          "script": "han",
+          "utf16_start": 5,
+          "utf16_end": 6
+        },
+        {
+          "text": "区",
+          "start": 18,
+          "end": 21,
+          "class": "alpha",
+          "script": "han",
+          "utf16_start": 6,
+          "utf16_end": 7
+        },
+        {
+          "text": "1",
+          "start": 21,
+          "end": 22,
+          "class": "digit",
+          "script": "other",
+          "utf16_start": 7,
+          "utf16_end": 8
+        },
+        {
+          "text": "-",
+          "start": 22,
+          "end": 23,
+          "class": "punct",
+          "script": "other",
+          "utf16_start": 8,
+          "utf16_end": 9
+        },
+        {
+          "text": "1",
+          "start": 23,
+          "end": 24,
+          "class": "digit",
+          "script": "other",
+          "utf16_start": 9,
+          "utf16_end": 10
+        }
+      ]
+    },
+    {
+      "name": "hiragana run then han",
+      "input": "さいたま市",
+      "tokens": [
+        {
+          "text": "さいたま",
+          "start": 0,
+          "end": 12,
+          "class": "alpha",
+          "script": "hiragana",
+          "utf16_start": 0,
+          "utf16_end": 4
+        },
+        {
+          "text": "市",
+          "start": 12,
+          "end": 15,
+          "class": "alpha",
+          "script": "han",
+          "utf16_start": 4,
+          "utf16_end": 5
+        }
+      ]
+    },
+    {
+      "name": "katakana company name with legal form",
+      "input": "トヨタ自動車",
+      "tokens": [
+        {
+          "text": "トヨタ",
+          "start": 0,
+          "end": 9,
+          "class": "alpha",
+          "script": "katakana",
+          "utf16_start": 0,
+          "utf16_end": 3
+        },
+        {
+          "text": "自",
+          "start": 9,
+          "end": 12,
+          "class": "alpha",
+          "script": "han",
+          "utf16_start": 3,
+          "utf16_end": 4
+        },
+        {
+          "text": "動",
+          "start": 12,
+          "end": 15,
+          "class": "alpha",
+          "script": "han",
+          "utf16_start": 4,
+          "utf16_end": 5
+        },
+        {
+          "text": "車",
+          "start": 15,
+          "end": 18,
+          "class": "alpha",
+          "script": "han",
+          "utf16_start": 5,
+          "utf16_end": 6
+        }
+      ]
+    },
+    {
+      "name": "script change inside a word",
+      "input": "Tbilisiთბილისი",
+      "tokens": [
+        {
+          "text": "Tbilisi",
+          "start": 0,
+          "end": 7,
+          "class": "alpha",
+          "script": "latin",
+          "utf16_start": 0,
+          "utf16_end": 7
+        },
+        {
+          "text": "თბილისი",
+          "start": 7,
+          "end": 28,
+          "class": "alpha",
+          "script": "georgian",
+          "utf16_start": 7,
+          "utf16_end": 14
+        }
+      ]
+    },
+    {
+      "name": "georgian letters followed by digits do not merge",
+      "input": "რუსთაველის14",
+      "tokens": [
+        {
+          "text": "რუსთაველის",
+          "start": 0,
+          "end": 30,
+          "class": "alpha",
+          "script": "georgian",
+          "utf16_start": 0,
+          "utf16_end": 10
+        },
+        {
+          "text": "14",
+          "start": 30,
+          "end": 32,
+          "class": "digit",
+          "script": "other",
+          "utf16_start": 10,
+          "utf16_end": 12
+        }
+      ]
+    }
+  ]
+}

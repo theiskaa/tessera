@@ -1,0 +1,99 @@
+{
+  "cases": [
+    {
+      "name": "london drama range international",
+      "input": "+44 20 7946 0958",
+      "country_hint": [],
+      "expected": [
+        {
+          "kind": "phone",
+          "text": "+44 20 7946 0958",
+          "start": 0,
+          "end": 16,
+          "normalized": "+442079460958",
+          "region": "GB",
+          "min_confidence": 0.99
+        }
+      ]
+    },
+    {
+      "name": "london drama range national",
+      "input": "Tel 020 7946 0958",
+      "country_hint": [
+        "GB"
+      ],
+      "expected": [
+        {
+          "kind": "phone",
+          "text": "020 7946 0958",
+          "start": 4,
+          "end": 17,
+          "normalized": "+442079460958",
+          "region": "GB",
+          "min_confidence": 0.99
+        }
+      ]
+    },
+    {
+      "name": "mobile drama range",
+      "input": "m: 07700 900123",
+      "country_hint": [
+        "GB"
+      ],
+      "expected": [
+        {
+          "kind": "phone",
+          "text": "07700 900123",
+          "start": 3,
+          "end": 15,
+          "normalized": "+447700900123",
+          "region": "GB",
+          "min_confidence": 0.75
+        }
+      ]
+    },
+    {
+      "name": "leeds drama range with international prefix 00",
+      "input": "0044 113 496 0123",
+      "country_hint": [],
+      "expected": [
+        {
+          "kind": "phone",
+          "text": "0044 113 496 0123",
+          "start": 0,
+          "end": 17,
+          "normalized": "+441134960123",
+          "region": "GB",
+          "min_confidence": 0.99
+        }
+      ]
+    },
+    {
+      "name": "two numbers and an extension",
+      "input": "020 7946 0958 ext 4 or 07700 900123",
+      "country_hint": [
+        "GB"
+      ],
+      "expected": [
+        {
+          "kind": "phone",
+          "text": "020 7946 0958",
+          "start": 0,
+          "end": 13,
+          "normalized": "+442079460958",
+          "region": "GB",
+          "min_confidence": 0.99
+        },
+        {
+          "kind": "phone",
+          "text": "07700 900123",
+          "start": 23,
+          "end": 35,
+          "normalized": "+447700900123",
+          "region": "GB",
+          "min_confidence": 0.75
+        }
+      ]
+    }
+  ]
+}

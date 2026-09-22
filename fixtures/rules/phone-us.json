@@ -1,0 +1,78 @@
+{
+  "cases": [
+    {
+      "name": "international with dashes",
+      "input": "+1 202-555-0143",
+      "country_hint": [],
+      "expected": [
+        {
+          "kind": "phone",
+          "text": "+1 202-555-0143",
+          "start": 0,
+          "end": 15,
+          "normalized": "+12025550143",
+          "region": "US",
+          "min_confidence": 0.99
+        }
+      ]
+    },
+    {
+      "name": "national with area code in parentheses",
+      "input": "Call (202) 555-0199 today",
+      "country_hint": [
+        "US"
+      ],
+      "expected": [
+        {
+          "kind": "phone",
+          "text": "(202) 555-0199",
+          "start": 5,
+          "end": 19,
+          "normalized": "+12025550199",
+          "region": "US",
+          "min_confidence": 0.99
+        }
+      ]
+    },
+    {
+      "name": "dots as separators",
+      "input": "Call 202.555.0170 now",
+      "country_hint": [
+        "US"
+      ],
+      "expected": [
+        {
+          "kind": "phone",
+          "text": "202.555.0170",
+          "start": 5,
+          "end": 17,
+          "normalized": "+12025550170",
+          "region": "US",
+          "min_confidence": 0.99
+        }
+      ]
+    },
+    {
+      "name": "national number without a hint is dropped",
+      "input": "(202) 555-0199",
+      "country_hint": [],
+      "expected": []
+    },
+    {
+      "name": "seven digit local number is too short for a us region",
+      "input": "555-0100",
+      "country_hint": [
+        "US"
+      ],
+      "expected": []
+    },
+    {
+      "name": "hard negatives",
+      "input": "ip 10.0.0.1 date 2024-01-15 price $555-0100 id 202555014312 iban GB29NWBK60161331926819",
+      "country_hint": [
+        "US"
+      ],
+      "expected": []
+    }
+  ]
+}
