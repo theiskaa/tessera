@@ -2,7 +2,7 @@
   "source": "gleif-lei",
   "kind": "org",
   "use": "planned",
-  "status": "inventoried",
+  "status": "sampled",
   "url": "https://api.gleif.org/api/v1/lei-records",
   "index_url": "https://www.gleif.org/en/lei-data/gleif-golden-copy",
   "upstream": "GLEIF Global LEI Index",
@@ -39,5 +39,43 @@
   "dropped_tags": {},
   "verified_on": "2026-09-22",
   "verified_by": "theiskaa",
-  "notes": ""
+  "notes": "",
+  "sample": {
+    "date": "2026-09-22",
+    "kept": {
+      "gb": 100,
+      "de": 100,
+      "ge": 100,
+      "us": 100,
+      "jp": 100
+    },
+    "pages": {
+      "gb": {
+        "page": 3,
+        "last_page": 1055,
+        "total_active": 210975
+      },
+      "de": {
+        "page": 3,
+        "last_page": 1200,
+        "total_active": 239870
+      },
+      "ge": {
+        "page": 1,
+        "last_page": 1,
+        "total_active": 159
+      },
+      "us": {
+        "page": 3,
+        "last_page": 1703,
+        "total_active": 340545
+      },
+      "jp": {
+        "page": 3,
+        "last_page": 64,
+        "total_active": 12622
+      }
+    },
+    "page_size": 200
+  }
 }

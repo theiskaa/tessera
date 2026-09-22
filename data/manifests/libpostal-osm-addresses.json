@@ -2,7 +2,7 @@
   "source": "libpostal-osm-addresses",
   "kind": "address",
   "use": "planned",
-  "status": "inventoried",
+  "status": "sampled",
   "url": "https://archive.org/download/libpostal-parser-training-data-20170304/formatted_addresses_tagged.random.tsv.gz",
   "index_url": "https://github.com/openvenues/libpostal/blob/master/README.md",
   "upstream": "OpenStreetMap",
@@ -29,5 +29,25 @@
   "dropped_tags": {},
   "verified_on": "2026-09-22",
   "verified_by": "theiskaa",
-  "notes": "Training set date 20170304 from the repository file current_parser_training_set (verified 2026-09-22). The README lists the files under https://archive.org/download/libpostal-parser-training-data-YYYYMMDD/; the older libpostal.s3.amazonaws.com location returns 403. README label: '(ODBL): OSM addresses'. Size on archive.org: 8033490172 bytes."
+  "notes": "Training set date 20170304 from the repository file current_parser_training_set (verified 2026-09-22). The README lists the files under https://archive.org/download/libpostal-parser-training-data-YYYYMMDD/; the older libpostal.s3.amazonaws.com location returns 403. README label: '(ODBL): OSM addresses'. Size on archive.org: 8033490172 bytes.",
+  "sample": {
+    "date": "2026-09-22",
+    "lines_read": 211995,
+    "line_budget": 20000000,
+    "quota": 100,
+    "kept": {
+      "gb": 100,
+      "de": 100,
+      "ge": 100,
+      "us": 100,
+      "jp": 100
+    },
+    "slice_sha256": {
+      "gb": "469432c496ca03abf2f6417cc127ee865cd8ea89fbeb4d21324d0006ba1f7ec3",
+      "de": "513165b733d1ea53ff70e3ab2a43069a4107ee4f06a4203723f305bece1adfd7",
+      "ge": "abe8d05bdafabf52aba5a44ffc47383d8e67f45aeea23b4a3fb5bdbb9168e890",
+      "us": "3959aeb3eeb86454ebd5ce4ac4d26f16034c0f1a23c65a9268a6f7d983085d38",
+      "jp": "1be76ce7320837259f4b657e3598fc4e3fed3fc8a0e941b77283103dd9f12185"
+    }
+  }
 }

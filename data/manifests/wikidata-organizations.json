@@ -2,7 +2,7 @@
   "source": "wikidata-organizations",
   "kind": "org",
   "use": "planned",
-  "status": "inventoried",
+  "status": "sampled",
   "url": "https://query.wikidata.org/sparql",
   "index_url": "https://www.wikidata.org/wiki/Wikidata:Licensing",
   "upstream": "Wikidata",
@@ -36,5 +36,17 @@
   "dropped_tags": {},
   "verified_on": "2026-09-22",
   "verified_by": "theiskaa",
-  "notes": ""
+  "notes": "",
+  "sample": {
+    "date": "2026-09-22",
+    "kept": {
+      "gb": 100,
+      "de": 100,
+      "ge": 100,
+      "us": 100,
+      "jp": 100
+    },
+    "query": "ORGS in internal/bench/inspect/sample_wikidata.py",
+    "seed": 42
+  }
 }
