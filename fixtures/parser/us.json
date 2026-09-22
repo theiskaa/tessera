@@ -1,0 +1,84 @@
+{
+  "cases": [
+    {
+      "name": "avenue with directional and state",
+      "country": "US",
+      "input": "1600 Pennsylvania Avenue NW, Washington, DC 20500",
+      "components": [
+        {
+          "label": "house_number",
+          "text": "1600",
+          "start": 0,
+          "end": 4
+        },
+        {
+          "label": "road",
+          "text": "Pennsylvania Avenue NW",
+          "start": 5,
+          "end": 27
+        },
+        {
+          "label": "city",
+          "text": "Washington",
+          "start": 29,
+          "end": 39
+        },
+        {
+          "label": "region",
+          "text": "DC",
+          "start": 41,
+          "end": 43
+        },
+        {
+          "label": "postcode",
+          "text": "20500",
+          "start": 44,
+          "end": 49
+        }
+      ]
+    },
+    {
+      "name": "suite first",
+      "country": "US",
+      "input": "Suite 300, 500 Main St, Springfield, IL 62701",
+      "components": [
+        {
+          "label": "unit",
+          "text": "Suite 300",
+          "start": 0,
+          "end": 9
+        },
+        {
+          "label": "house_number",
+          "text": "500",
+          "start": 11,
+          "end": 14
+        },
+        {
+          "label": "road",
+          "text": "Main St",
+          "start": 15,
+          "end": 22
+        },
+        {
+          "label": "city",
+          "text": "Springfield",
+          "start": 24,
+          "end": 35
+        },
+        {
+          "label": "region",
+          "text": "IL",
+          "start": 37,
+          "end": 39
+        },
+        {
+          "label": "postcode",
+          "text": "62701",
+          "start": 40,
+          "end": 45
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,41 @@
+{
+  "cases": [
+    {
+      "name": "postal mark, prefecture, ward, district, block number",
+      "country": "JP",
+      "input": "〒100-0001 東京都千代田区千代田1-1",
+      "components": [
+        {
+          "label": "postcode",
+          "text": "100-0001",
+          "start": 3,
+          "end": 11
+        },
+        {
+          "label": "region",
+          "text": "東京都",
+          "start": 12,
+          "end": 21
+        },
+        {
+          "label": "city",
+          "text": "千代田区",
+          "start": 21,
+          "end": 33
+        },
+        {
+          "label": "suburb",
+          "text": "千代田",
+          "start": 33,
+          "end": 42
+        },
+        {
+          "label": "house_number",
+          "text": "1-1",
+          "start": 42,
+          "end": 45
+        }
+      ]
+    }
+  ]
+}

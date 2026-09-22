@@ -1,0 +1,109 @@
+{
+  "cases": [
+    {
+      "name": "single line with postcode",
+      "country": "GB",
+      "input": "221B Baker Street, London NW1 6XE",
+      "components": [
+        {
+          "label": "house_number",
+          "text": "221B",
+          "start": 0,
+          "end": 4
+        },
+        {
+          "label": "road",
+          "text": "Baker Street",
+          "start": 5,
+          "end": 17
+        },
+        {
+          "label": "city",
+          "text": "London",
+          "start": 19,
+          "end": 25
+        },
+        {
+          "label": "postcode",
+          "text": "NW1 6XE",
+          "start": 26,
+          "end": 33
+        }
+      ]
+    },
+    {
+      "name": "spec example with unit and country",
+      "country": "GB",
+      "input": "Flat 4, 221B Baker Street, London NW1 6XE, UK",
+      "components": [
+        {
+          "label": "unit",
+          "text": "Flat 4",
+          "start": 0,
+          "end": 6
+        },
+        {
+          "label": "house_number",
+          "text": "221B",
+          "start": 8,
+          "end": 12
+        },
+        {
+          "label": "road",
+          "text": "Baker Street",
+          "start": 13,
+          "end": 25
+        },
+        {
+          "label": "city",
+          "text": "London",
+          "start": 27,
+          "end": 33
+        },
+        {
+          "label": "postcode",
+          "text": "NW1 6XE",
+          "start": 34,
+          "end": 41
+        },
+        {
+          "label": "country",
+          "text": "UK",
+          "start": 43,
+          "end": 45
+        }
+      ]
+    },
+    {
+      "name": "multi line",
+      "country": "GB",
+      "input": "10 Downing Street\nLondon\nSW1A 2AA",
+      "components": [
+        {
+          "label": "house_number",
+          "text": "10",
+          "start": 0,
+          "end": 2
+        },
+        {
+          "label": "road",
+          "text": "Downing Street",
+          "start": 3,
+          "end": 17
+        },
+        {
+          "label": "city",
+          "text": "London",
+          "start": 18,
+          "end": 24
+        },
+        {
+          "label": "postcode",
+          "text": "SW1A 2AA",
+          "start": 25,
+          "end": 33
+        }
+      ]
+    }
+  ]
+}

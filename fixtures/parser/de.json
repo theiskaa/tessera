@@ -1,0 +1,72 @@
+{
+  "cases": [
+    {
+      "name": "road name with particle and number after",
+      "country": "DE",
+      "input": "Unter den Linden 77, 10117 Berlin",
+      "components": [
+        {
+          "label": "road",
+          "text": "Unter den Linden",
+          "start": 0,
+          "end": 16
+        },
+        {
+          "label": "house_number",
+          "text": "77",
+          "start": 17,
+          "end": 19
+        },
+        {
+          "label": "postcode",
+          "text": "10117",
+          "start": 21,
+          "end": 26
+        },
+        {
+          "label": "city",
+          "text": "Berlin",
+          "start": 27,
+          "end": 33
+        }
+      ]
+    },
+    {
+      "name": "compound street suffix, letter in house number, country line",
+      "country": "DE",
+      "input": "Musterstraße 12a\n80331 München\nDeutschland",
+      "components": [
+        {
+          "label": "road",
+          "text": "Musterstraße",
+          "start": 0,
+          "end": 13
+        },
+        {
+          "label": "house_number",
+          "text": "12a",
+          "start": 14,
+          "end": 17
+        },
+        {
+          "label": "postcode",
+          "text": "80331",
+          "start": 18,
+          "end": 23
+        },
+        {
+          "label": "city",
+          "text": "München",
+          "start": 24,
+          "end": 32
+        },
+        {
+          "label": "country",
+          "text": "Deutschland",
+          "start": 33,
+          "end": 44
+        }
+      ]
+    }
+  ]
+}

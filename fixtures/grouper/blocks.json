@@ -1,0 +1,192 @@
+{
+  "cases": [
+    {
+      "name": "one signature block",
+      "country": "GE",
+      "input": "Thanks, see you on Monday.\n\nNino Beridze\nKavkaz Freight LLC\n14 Rustaveli Avenue, Tbilisi 0108, Georgia\n+995 32 212 3456\nnino@kavkaz-freight.example\n",
+      "entities": [
+        {
+          "kind": "person",
+          "text": "Nino Beridze",
+          "start": 28,
+          "end": 40
+        },
+        {
+          "kind": "org",
+          "text": "Kavkaz Freight LLC",
+          "start": 41,
+          "end": 59
+        },
+        {
+          "kind": "address",
+          "text": "14 Rustaveli Avenue, Tbilisi 0108, Georgia",
+          "start": 60,
+          "end": 102
+        },
+        {
+          "kind": "phone",
+          "text": "+995 32 212 3456",
+          "start": 103,
+          "end": 119
+        },
+        {
+          "kind": "email",
+          "text": "nino@kavkaz-freight.example",
+          "start": 120,
+          "end": 147
+        }
+      ],
+      "contacts": [
+        {
+          "person": 0,
+          "org": 1,
+          "addresses": [
+            2
+          ],
+          "emails": [
+            4
+          ],
+          "phones": [
+            3
+          ]
+        }
+      ],
+      "unassigned": []
+    },
+    {
+      "name": "two signatures separated by a blank line",
+      "country": "GB",
+      "input": "Jane O'Brien\njane@acme.example\n\nJohn Smith\njohn@acme.example\n",
+      "entities": [
+        {
+          "kind": "person",
+          "text": "Jane O'Brien",
+          "start": 0,
+          "end": 12
+        },
+        {
+          "kind": "email",
+          "text": "jane@acme.example",
+          "start": 13,
+          "end": 30
+        },
+        {
+          "kind": "person",
+          "text": "John Smith",
+          "start": 32,
+          "end": 42
+        },
+        {
+          "kind": "email",
+          "text": "john@acme.example",
+          "start": 43,
+          "end": 60
+        }
+      ],
+      "contacts": [
+        {
+          "person": 0,
+          "org": null,
+          "addresses": [],
+          "emails": [
+            1
+          ],
+          "phones": []
+        },
+        {
+          "person": 2,
+          "org": null,
+          "addresses": [],
+          "emails": [
+            3
+          ],
+          "phones": []
+        }
+      ],
+      "unassigned": []
+    },
+    {
+      "name": "phone without an anchor stays unassigned",
+      "country": "GB",
+      "input": "Call +44 20 7946 0958 for help.\n\nAcme Ltd\nacme@acme.example\n",
+      "entities": [
+        {
+          "kind": "phone",
+          "text": "+44 20 7946 0958",
+          "start": 5,
+          "end": 21
+        },
+        {
+          "kind": "org",
+          "text": "Acme Ltd",
+          "start": 33,
+          "end": 41
+        },
+        {
+          "kind": "email",
+          "text": "acme@acme.example",
+          "start": 42,
+          "end": 59
+        }
+      ],
+      "contacts": [
+        {
+          "person": null,
+          "org": 1,
+          "addresses": [],
+          "emails": [
+            2
+          ],
+          "phones": []
+        }
+      ],
+      "unassigned": [
+        0
+      ]
+    },
+    {
+      "name": "email local part ties to the matching person in one block",
+      "country": "GB",
+      "input": "Jane O'Brien and John Smith\njohn@acme.example\n",
+      "entities": [
+        {
+          "kind": "person",
+          "text": "Jane O'Brien",
+          "start": 0,
+          "end": 12
+        },
+        {
+          "kind": "person",
+          "text": "John Smith",
+          "start": 17,
+          "end": 27
+        },
+        {
+          "kind": "email",
+          "text": "john@acme.example",
+          "start": 28,
+          "end": 45
+        }
+      ],
+      "contacts": [
+        {
+          "person": 0,
+          "org": null,
+          "addresses": [],
+          "emails": [],
+          "phones": []
+        },
+        {
+          "person": 1,
+          "org": null,
+          "addresses": [],
+          "emails": [
+            2
+          ],
+          "phones": []
+        }
+      ],
+      "unassigned": []
+    }
+  ]
+}

@@ -1,0 +1,72 @@
+{
+  "cases": [
+    {
+      "name": "spec example in latin script",
+      "country": "GE",
+      "input": "14 Rustaveli Avenue, Tbilisi 0108, Georgia",
+      "components": [
+        {
+          "label": "house_number",
+          "text": "14",
+          "start": 0,
+          "end": 2
+        },
+        {
+          "label": "road",
+          "text": "Rustaveli Avenue",
+          "start": 3,
+          "end": 19
+        },
+        {
+          "label": "city",
+          "text": "Tbilisi",
+          "start": 21,
+          "end": 28
+        },
+        {
+          "label": "postcode",
+          "text": "0108",
+          "start": 29,
+          "end": 33
+        },
+        {
+          "label": "country",
+          "text": "Georgia",
+          "start": 35,
+          "end": 42
+        }
+      ]
+    },
+    {
+      "name": "georgian script with road term after the name",
+      "country": "GE",
+      "input": "რუსთაველის გამზირი 14, თბილისი 0108",
+      "components": [
+        {
+          "label": "road",
+          "text": "რუსთაველის გამზირი",
+          "start": 0,
+          "end": 52
+        },
+        {
+          "label": "house_number",
+          "text": "14",
+          "start": 53,
+          "end": 55
+        },
+        {
+          "label": "city",
+          "text": "თბილისი",
+          "start": 57,
+          "end": 78
+        },
+        {
+          "label": "postcode",
+          "text": "0108",
+          "start": 79,
+          "end": 83
+        }
+      ]
+    }
+  ]
+}

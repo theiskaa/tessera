@@ -1,0 +1,52 @@
+{
+  "cases": [
+    {
+      "name": "names that are places months and companies",
+      "country": "US",
+      "input": "Georgia and Jordan visited in April. Ford shares rose 2% to $12.50 on 2024-01-15.",
+      "expected": [],
+      "must_not": [
+        {
+          "kind": "person",
+          "text": "Georgia"
+        },
+        {
+          "kind": "person",
+          "text": "Jordan"
+        },
+        {
+          "kind": "person",
+          "text": "April"
+        },
+        {
+          "kind": "person",
+          "text": "Ford"
+        },
+        {
+          "kind": "phone",
+          "text": "2024-01-15"
+        },
+        {
+          "kind": "address",
+          "text": "Georgia"
+        }
+      ]
+    },
+    {
+      "name": "identifiers and ip addresses",
+      "country": "GB",
+      "input": "Order 20255501431 shipped from 10.0.0.1, IBAN GB29NWBK60161331926819.",
+      "expected": [],
+      "must_not": [
+        {
+          "kind": "phone",
+          "text": "20255501431"
+        },
+        {
+          "kind": "phone",
+          "text": "10.0.0.1"
+        }
+      ]
+    }
+  ]
+}

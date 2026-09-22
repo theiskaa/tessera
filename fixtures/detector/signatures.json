@@ -1,0 +1,137 @@
+{
+  "cases": [
+    {
+      "name": "spec example signature",
+      "country": "GE",
+      "input": "Thanks, see you on Monday.\n\nNino Beridze\nKavkaz Freight LLC\n14 Rustaveli Avenue, Tbilisi 0108, Georgia\n+995 32 212 3456\nnino@kavkaz-freight.example\n",
+      "expected": [
+        {
+          "kind": "person",
+          "text": "Nino Beridze",
+          "start": 28,
+          "end": 40
+        },
+        {
+          "kind": "org",
+          "text": "Kavkaz Freight LLC",
+          "start": 41,
+          "end": 59
+        },
+        {
+          "kind": "address",
+          "text": "14 Rustaveli Avenue, Tbilisi 0108, Georgia",
+          "start": 60,
+          "end": 102
+        },
+        {
+          "kind": "phone",
+          "text": "+995 32 212 3456",
+          "start": 103,
+          "end": 119
+        },
+        {
+          "kind": "email",
+          "text": "nino@kavkaz-freight.example",
+          "start": 120,
+          "end": 147
+        }
+      ],
+      "must_not": [
+        {
+          "kind": "person",
+          "text": "Monday"
+        },
+        {
+          "kind": "person",
+          "text": "Rustaveli"
+        }
+      ]
+    },
+    {
+      "name": "honorific in salutation and closing before name",
+      "country": "GB",
+      "input": "Dear Dr Smith,\n\nRegards,\nJane O'Brien\nAcme Ltd\n",
+      "expected": [
+        {
+          "kind": "person",
+          "text": "Smith",
+          "start": 8,
+          "end": 13
+        },
+        {
+          "kind": "person",
+          "text": "Jane O'Brien",
+          "start": 25,
+          "end": 37
+        },
+        {
+          "kind": "org",
+          "text": "Acme Ltd",
+          "start": 38,
+          "end": 46
+        }
+      ],
+      "must_not": [
+        {
+          "kind": "person",
+          "text": "Regards"
+        },
+        {
+          "kind": "person",
+          "text": "Dear Dr Smith"
+        }
+      ]
+    },
+    {
+      "name": "us letterhead",
+      "country": "US",
+      "input": "Acme Corporation\n500 Main St, Springfield, IL 62701\n(202) 555-0199\n",
+      "expected": [
+        {
+          "kind": "org",
+          "text": "Acme Corporation",
+          "start": 0,
+          "end": 16
+        },
+        {
+          "kind": "address",
+          "text": "500 Main St, Springfield, IL 62701",
+          "start": 17,
+          "end": 51
+        },
+        {
+          "kind": "phone",
+          "text": "(202) 555-0199",
+          "start": 52,
+          "end": 66
+        }
+      ],
+      "must_not": []
+    },
+    {
+      "name": "georgian signature",
+      "country": "GE",
+      "input": "პატივისცემით,\nნინო ბერიძე\nშპს კავკაზ ფრეიტი\n",
+      "expected": [
+        {
+          "kind": "person",
+          "text": "ნინო ბერიძე",
+          "start": 38,
+          "end": 69
+        },
+        {
+          "kind": "org",
+          "text": "შპს კავკაზ ფრეიტი",
+          "start": 70,
+          "end": 117
+        }
+      ],
+      "must_not": [
+        {
+          "kind": "person",
+          "text": "პატივისცემით"
+        }
+      ]
+    }
+  ]
+}
