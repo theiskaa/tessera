@@ -1,0 +1,29 @@
+[package]
+name = "tessera"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+description = "Find people, organizations, addresses, emails, and phone numbers in text and assemble them into contacts, locally"
+keywords = ["ner", "address", "contacts", "wasm", "extraction"]
+categories = ["text-processing", "wasm"]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = []
+wasm = ["dep:wasm-bindgen", "dep:js-sys"]
+markdown = ["dep:pulldown-cmark"]
+cli = ["dep:serde", "dep:serde_json"]
+
+[dependencies]
+thiserror = "2"
+wasm-bindgen = { version = "0.2", optional = true }
+js-sys = { version = "0.3", optional = true }
+pulldown-cmark = { version = "0.13", default-features = false, optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
+serde_json = { version = "1", optional = true }
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = ["-Oz"]

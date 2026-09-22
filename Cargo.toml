@@ -1,0 +1,22 @@
+[workspace]
+resolver = "3"
+members = ["tessera"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.96"
+repository = "https://github.com/theiskaa/tessera"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+
+# wasm-pack build tessera --features wasm --profile wasm
+[profile.wasm]
+inherits = "release"
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

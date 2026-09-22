@@ -1,0 +1,30 @@
+# private working notes
+CLAUDE.md
+internal/
+
+# rust
+/target/
+*.profraw
+*.profdata
+
+# wasm-pack and trunk output
+/tessera/pkg/
+/site/dist/
+
+# corpora, shards, checkpoints, and run directories
+/data/raw/
+/data/interim/
+/data/processed/
+/runs/
+
+# python baselines under bench/
+__pycache__/
+/bench/.venv/
+
+# node
+node_modules/
+
+# editors and os
+.DS_Store
+.idea/
+.vscode/
