@@ -5,13 +5,13 @@
 
 mod common;
 
-use js_sys::{Array, JsString, Object, Promise, Reflect, Uint8Array};
+use js_sys::{Array, Function, JsString, Object, Promise, Reflect, Uint8Array};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 use wasm_bindgen_test::wasm_bindgen_test as test;
 
 use tessera::internal::display_confidence;
-use tessera::wasm::JsTessera;
+use tessera::wasm::{JsTessera, create_instance};
 use tessera::{Error, Query};
 
 fn prop(obj: &JsValue, key: &str) -> JsValue {
@@ -443,4 +443,191 @@ async fn disposed_instance_rejects() {
     assert_tessera_error(&err, "DISPOSED");
     let err = rejected(tessera.detect(&text("a@b.example"), None)).await;
     assert_tessera_error(&err, "DISPOSED");
+}
+
+/// A `blob:` URL serving `bytes`, so a fetch succeeds without the test server knowing the file.
+fn blob_url(bytes: &[u8]) -> String {
+    let make = Function::new_with_args("bytes", "return URL.createObjectURL(new Blob([bytes]))");
+    make.call1(&JsValue::NULL, &Uint8Array::from(bytes))
+        .unwrap()
+        .as_string()
+        .unwrap()
+}
+
+fn with_url(url: &str, integrity: &str) -> JsValue {
+    options(&format!(
+        r#"{{"kinds":["address"],"modelUrl":"{url}","integrity":"{integrity}"}}"#
+    ))
+}
+
+/// Runs `create_instance` with the global `fetch` replaced by `stand_in`. No other test can see
+/// the stand-in because wasm-bindgen-test runs tests one at a time (`CONCURRENCY = 1` in its
+/// runtime), so even a stand-in that is awaited is gone before the next test starts. Callers whose
+/// stand-in is never called also settle on their first poll, which would keep them safe without
+/// that guarantee.
+async fn create_with_fetch(stand_in: &JsValue, opts: JsValue) -> Result<JsTessera, JsValue> {
+    let global = js_sys::global();
+    let key = text("fetch");
+    let real = Reflect::get(&global, &key).unwrap();
+    Reflect::set(&global, &key, stand_in).unwrap();
+    let result = create_instance(opts).await;
+    Reflect::set(&global, &key, &real).unwrap();
+    result
+}
+
+#[test]
+async fn create_from_a_url_parses() {
+    let url = blob_url(common::BUNDLE);
+    let tessera = create_instance(with_url(&url, common::bundle_checksum()))
+        .await
+        .unwrap();
+    let got =
+        resolved(tessera.parse_address(&text("221B Baker Street, London NW1 6XE"), None)).await;
+    assert_eq!(string(&got, "kind"), "address");
+    let components: Array = prop(&got, "components").dyn_into().unwrap();
+    assert!(components.length() > 0);
+}
+
+#[test]
+async fn create_from_bytes_parses() {
+    let array = Uint8Array::from(common::BUNDLE);
+    for bytes in [JsValue::from(array.clone()), array.buffer().into()] {
+        let opts = options(&address_options());
+        Reflect::set(&opts, &text("modelBytes"), &bytes).unwrap();
+        let tessera = create_instance(opts).await.unwrap();
+        let got = resolved(tessera.parse_address(&text("10 Downing Street, London"), None)).await;
+        assert_eq!(string(&got, "kind"), "address");
+    }
+}
+
+#[test]
+async fn model_bytes_win_over_the_url() {
+    let never = Function::new_no_args("throw new Error('fetch was called')");
+    let opts = with_url(
+        "http://127.0.0.1:1/never.safetensors",
+        common::bundle_checksum(),
+    );
+    Reflect::set(
+        &opts,
+        &text("modelBytes"),
+        &Uint8Array::from(common::BUNDLE),
+    )
+    .unwrap();
+    assert!(create_with_fetch(&never, opts).await.is_ok());
+}
+
+#[test]
+async fn a_fetched_bundle_is_verified() {
+    let url = blob_url(common::BUNDLE);
+    let err = create_instance(with_url(&url, "sha256-0000"))
+        .await
+        .err()
+        .unwrap();
+    assert_tessera_error(&err, "CHECKSUM_MISMATCH");
+}
+
+#[test]
+async fn http_404_is_model_fetch_failed_with_status() {
+    // The wasm-bindgen-test server serves the test page and answers unknown paths with 404.
+    let url = "/does-not-exist.safetensors";
+    let err = create_instance(with_url(url, common::bundle_checksum()))
+        .await
+        .err()
+        .unwrap();
+    assert_tessera_error(&err, "MODEL_FETCH_FAILED");
+    let message = string(&err, "message");
+    assert!(
+        message.contains(url) && message.contains("http 404"),
+        "{message}"
+    );
+}
+
+#[test]
+async fn unreachable_url_is_model_fetch_failed() {
+    let url = "http://127.0.0.1:1/none.safetensors";
+    let err = create_instance(with_url(url, common::bundle_checksum()))
+        .await
+        .err()
+        .unwrap();
+    assert_tessera_error(&err, "MODEL_FETCH_FAILED");
+    assert!(string(&err, "message").starts_with(url));
+}
+
+#[test]
+async fn rules_only_skips_fetch() {
+    let never = Function::new_no_args("throw new Error('fetch was called')");
+    let opts = options(r#"{"kinds":["email"],"modelUrl":"http://127.0.0.1:1/never"}"#);
+    let tessera = create_with_fetch(&never, opts).await.unwrap();
+    assert_eq!(kind_labels(&tessera), ["email"]);
+}
+
+#[test]
+async fn missing_model_source_is_bundle_invalid() {
+    let err = create_instance(options(r#"{"kinds":["phone","address"]}"#))
+        .await
+        .err()
+        .unwrap();
+    assert_tessera_error(&err, "BUNDLE_INVALID");
+    assert_eq!(
+        string(&err, "message"),
+        "modelUrl or modelBytes is required for kinds [address, phone]"
+    );
+}
+
+#[test]
+async fn no_fetch_is_unsupported_runtime() {
+    let err = create_with_fetch(&JsValue::UNDEFINED, with_url("/bundle", "sha256-0000"))
+        .await
+        .err()
+        .unwrap();
+    assert_tessera_error(&err, "UNSUPPORTED_RUNTIME");
+}
+
+#[test]
+async fn bad_create_options_are_type_errors() {
+    for json in [
+        r#"{"kinds":["address"],"modelUrl":5}"#,
+        r#"{"kinds":["address"],"modelBytes":"bytes"}"#,
+        r#"{"kinds":["email"],"modelBytes":[1,2]}"#,
+        r#"{"kinds":[]}"#,
+        r#"{"kinds":["address"],"modelBytes":null,"integrity":7}"#,
+    ] {
+        assert_type_error(&create_instance(options(json)).await.err().unwrap());
+    }
+}
+
+#[test]
+async fn awaited_fetch_failures_are_model_fetch_failed() {
+    let url = "/stand-in.safetensors";
+    for (body, expected) in [
+        ("return Promise.reject('offline')", Some("offline")),
+        (
+            "return Promise.resolve({})",
+            Some("fetch did not return a Response"),
+        ),
+        (
+            "return Promise.resolve(new Response('', { status: 500 }))",
+            Some("http 500"),
+        ),
+        // A body read twice fails, with a message that differs between engines.
+        (
+            "return (async () => { const r = new Response('x'); await r.arrayBuffer(); return r; })()",
+            None,
+        ),
+    ] {
+        let stand_in = Function::new_no_args(body);
+        let err = create_with_fetch(&stand_in, with_url(url, common::bundle_checksum()))
+            .await
+            .err()
+            .unwrap();
+        assert_tessera_error(&err, "MODEL_FETCH_FAILED");
+        let message = string(&err, "message");
+        match expected {
+            Some(detail) => assert_eq!(message, format!("{url}: {detail}")),
+            None => assert!(
+                message.starts_with(&format!("{url}: ")) && message.len() > url.len() + 2,
+                "{message}"
+            ),
+        }
+    }
 }

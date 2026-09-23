@@ -1,10 +1,13 @@
-//! Feature `wasm`: the JavaScript `Tessera` class. Offsets cross this boundary as UTF-16 code
-//! units, result objects carry a `text` field, and every library failure is a JS `Error` named
-//! `TesseraError` with a stable `code`. Calls return a `Promise`, so a worker-backed instance
-//! can keep the shape of this in-thread one. Fetching the bundle and the worker are not here.
+//! Feature `wasm`: the JavaScript `Tessera` class and `createInstance`, which fetches and
+//! verifies the bundle. Offsets cross this boundary as UTF-16 code units, result objects carry a
+//! `text` field, and every library failure is a JS `Error` named `TesseraError` with a stable
+//! `code`. Calls return a `Promise`, so a worker-backed instance can keep the shape of this
+//! in-thread one. Instantiating the module and the worker are not here.
 
-use js_sys::{Array, ArrayBuffer, Object, Promise, Reflect, TypeError, Uint8Array};
+use js_sys::{Array, ArrayBuffer, Function, Object, Promise, Reflect, TypeError, Uint8Array};
 use wasm_bindgen::prelude::*;
+use wasm_bindgen_futures::JsFuture;
+use web_sys::Response;
 
 use crate::policy::display_confidence;
 use crate::{Config, Entity, Error, Kind, KindSet, Query, Tessera, token};
@@ -29,17 +32,11 @@ impl JsTessera {
         options: Option<JsValue>,
     ) -> Result<JsTessera, JsValue> {
         let options = options.unwrap_or_default();
-        let bytes = bundle_bytes(bytes)?;
+        let bytes = byte_view(bytes)
+            .ok_or_else(|| TypeError::new("bundle bytes must be a Uint8Array or an ArrayBuffer"))?;
         let kinds = kinds_option(&options)?;
         let integrity = string_option(&options, "integrity")?;
-        let inner = Tessera::load(
-            &bytes,
-            Config {
-                kinds,
-                expected_checksum: integrity.as_deref(),
-            },
-        )?;
-        Ok(JsTessera { inner: Some(inner) })
+        construct(&bytes.to_vec(), kinds, integrity.as_deref())
     }
 
     /// The kinds this instance was loaded for, as labels in taxonomy order; empty once disposed.
@@ -98,6 +95,104 @@ impl JsTessera {
             tessera_error("DISPOSED", "this Tessera instance has been disposed", None)
         })
     }
+}
+
+/// `createInstance(options)`: build an instance once the module is instantiated. Called by the
+/// package's `createTessera`.
+///
+/// Takes the options of [`JsTessera::load`] plus `modelBytes`, a `Uint8Array` or `ArrayBuffer`,
+/// and `modelUrl`, fetched with the global `fetch` when `modelBytes` is absent. A rules-only
+/// `kinds` set needs neither and fetches nothing. Rejects with `BUNDLE_INVALID` when a model
+/// kind has no bundle source, `UNSUPPORTED_RUNTIME` when the bundle must be fetched and the
+/// runtime has no `fetch`, and `MODEL_FETCH_FAILED` when the request, its status, or its body
+/// fails; otherwise rejects as `Tessera.load` throws (`TypeError`, `CHECKSUM_MISMATCH`, …).
+#[wasm_bindgen(js_name = createInstance)]
+pub async fn create_instance(
+    #[wasm_bindgen(
+        unchecked_param_type = "{ kinds?: string[]; integrity?: string; modelUrl?: string; modelBytes?: Uint8Array | ArrayBuffer }"
+    )]
+    options: JsValue,
+) -> Result<JsTessera, JsValue> {
+    let kinds = kinds_option(&options)?;
+    let integrity = string_option(&options, "integrity")?;
+    let given = option(&options, "modelBytes")?
+        .map(|v| {
+            byte_view(&v).ok_or_else(|| type_error("modelBytes", "a Uint8Array or an ArrayBuffer"))
+        })
+        .transpose()?;
+    let url = string_option(&options, "modelUrl")?;
+    let bytes = match (given, url) {
+        _ if kinds.is_rules_only() => Vec::new(),
+        (Some(given), _) => given.to_vec(),
+        (None, Some(url)) => fetch_bundle(&url).await?,
+        (None, None) => {
+            let labels: Vec<&str> = Kind::ALL
+                .iter()
+                .filter(|k| kinds.contains(**k))
+                .map(|k| k.as_str())
+                .collect();
+            let message = format!(
+                "modelUrl or modelBytes is required for kinds [{}]",
+                labels.join(", ")
+            );
+            return Err(tessera_error("BUNDLE_INVALID", &message, None));
+        }
+    };
+    construct(&bytes, kinds, integrity.as_deref())
+}
+
+fn construct(bytes: &[u8], kinds: KindSet, integrity: Option<&str>) -> Result<JsTessera, JsValue> {
+    let inner = Tessera::load(
+        bytes,
+        Config {
+            kinds,
+            expected_checksum: integrity,
+        },
+    )?;
+    Ok(JsTessera { inner: Some(inner) })
+}
+
+/// The bundle at `url`, fetched through the global object's `fetch` rather than `window`'s,
+/// because a worker, Node, and Bun have no `window`.
+async fn fetch_bundle(url: &str) -> Result<Vec<u8>, JsValue> {
+    let global = js_sys::global();
+    let fetch = Reflect::get(&global, &JsValue::from_str("fetch"))
+        .ok()
+        .and_then(|f| f.dyn_into::<Function>().ok())
+        .ok_or_else(|| {
+            tessera_error(
+                "UNSUPPORTED_RUNTIME",
+                "this runtime has no fetch; pass modelBytes instead",
+                None,
+            )
+        })?;
+    let failed =
+        |detail: &str| tessera_error("MODEL_FETCH_FAILED", &format!("{url}: {detail}"), None);
+    let pending = fetch
+        .call1(&global, &JsValue::from_str(url))
+        .map_err(|e| failed(&describe(&e)))?;
+    let response: Response = JsFuture::from(Promise::resolve(&pending))
+        .await
+        .map_err(|e| failed(&describe(&e)))?
+        .dyn_into()
+        .map_err(|_| failed("fetch did not return a Response"))?;
+    if !response.ok() {
+        return Err(failed(&format!("http {}", response.status())));
+    }
+    let body = response.array_buffer().map_err(|e| failed(&describe(&e)))?;
+    let buffer = JsFuture::from(body)
+        .await
+        .map_err(|e| failed(&describe(&e)))?;
+    Ok(Uint8Array::new(&buffer).to_vec())
+}
+
+/// The message of a thrown or rejected value, which need not be an `Error`.
+fn describe(value: &JsValue) -> String {
+    value
+        .dyn_ref::<js_sys::Error>()
+        .map(|e| String::from(e.message()))
+        .or_else(|| value.as_string())
+        .unwrap_or_else(|| "unknown error".into())
 }
 
 fn settle(outcome: Result<JsValue, JsValue>) -> Promise {
@@ -273,15 +368,13 @@ fn kinds_option(options: &JsValue) -> Result<KindSet, JsValue> {
     })
 }
 
-/// The bundle as bytes, from the `Uint8Array` or `ArrayBuffer` a caller is likely to hold.
-fn bundle_bytes(bytes: &JsValue) -> Result<Vec<u8>, JsValue> {
+/// A view of the bytes in the `Uint8Array` or `ArrayBuffer` a caller is likely to hold, without
+/// copying them; `None` for anything else.
+fn byte_view(bytes: &JsValue) -> Option<Uint8Array> {
     if let Some(array) = bytes.dyn_ref::<Uint8Array>() {
-        return Ok(array.to_vec());
+        return Some(array.clone());
     }
-    if let Some(buffer) = bytes.dyn_ref::<ArrayBuffer>() {
-        return Ok(Uint8Array::new(buffer).to_vec());
-    }
-    Err(TypeError::new("bundle bytes must be a Uint8Array or an ArrayBuffer").into())
+    bytes.dyn_ref::<ArrayBuffer>().map(|b| Uint8Array::new(b))
 }
 
 /// The text argument, checked rather than coerced, so a non-string rejects the returned promise.
