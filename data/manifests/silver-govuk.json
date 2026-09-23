@@ -1,0 +1,23 @@
+{
+  "source": "silver-govuk",
+  "kind": "silver",
+  "use": "detector training (train 90%, valid 10%); never test, never versioned",
+  "url": "https://www.gov.uk/api/search.json (list); https://www.gov.uk/api/content<link> (text)",
+  "license": "OGL-3.0",
+  "attribution": "Contains public sector information licensed under the Open Government Licence v3.0.",
+  "date_range": "2024",
+  "documents": 2000,
+  "labels": "data/interim/silver/govuk.jsonl",
+  "sha256": "9400f30d1e86574514cbf4b6c2099dbc3f27ad1927c3938d00be142f9e891729",
+  "teacher": "urchade/gliner_multi-v2.1",
+  "threshold": 0.5,
+  "window_stride_chars": 1200,
+  "window_overlap_chars": 300,
+  "filters": "overlapping spans keep the earlier; spans with no letter or with only lowercase Latin letters are dropped",
+  "entities_per_kind": {
+    "person": 10817,
+    "org": 27456,
+    "address": 2806
+  },
+  "labelled": "2026-09-23"
+}

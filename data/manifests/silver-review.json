@@ -1,0 +1,120 @@
+{
+  "rounds": [
+    {
+      "round": 1,
+      "sheet_rows": 3649,
+      "documents": 200,
+      "reviewers": 1,
+      "reviewed_by": "model",
+      "sample_seed": 42,
+      "per_kind": {
+        "person": {
+          "counts": {
+            "correct": 368,
+            "wrong_boundary": 139,
+            "not_entity": 169,
+            "wrong_kind": 6,
+            "missing": 47
+          },
+          "precision": 0.5396,
+          "recall_estimate": 0.6643,
+          "accepted": false
+        },
+        "org": {
+          "counts": {
+            "correct": 1765,
+            "not_entity": 506,
+            "wrong_boundary": 77,
+            "wrong_kind": 1,
+            "missing": 315
+          },
+          "precision": 0.7514,
+          "recall_estimate": 0.8183,
+          "accepted": false
+        },
+        "address": {
+          "counts": {
+            "wrong_boundary": 144,
+            "not_entity": 106,
+            "wrong_kind": 2,
+            "correct": 3,
+            "missing": 1
+          },
+          "precision": 0.0118,
+          "recall_estimate": 0.0203,
+          "accepted": false
+        }
+      },
+      "threshold_sweep": {
+        "0.6": {
+          "person": {
+            "precision": 0.5735,
+            "recall_estimate": 0.6552
+          },
+          "org": {
+            "precision": 0.7765,
+            "recall_estimate": 0.7779
+          },
+          "address": {
+            "precision": 0.0136,
+            "recall_estimate": 0.0203
+          }
+        },
+        "0.7": {
+          "person": {
+            "precision": 0.6034,
+            "recall_estimate": 0.648
+          },
+          "org": {
+            "precision": 0.7955,
+            "recall_estimate": 0.7126
+          },
+          "address": {
+            "precision": 0.0159,
+            "recall_estimate": 0.0203
+          }
+        },
+        "0.8": {
+          "person": {
+            "precision": 0.6461,
+            "recall_estimate": 0.6227
+          },
+          "org": {
+            "precision": 0.833,
+            "recall_estimate": 0.6222
+          },
+          "address": {
+            "precision": 0.0195,
+            "recall_estimate": 0.0203
+          }
+        },
+        "0.9": {
+          "person": {
+            "precision": 0.7358,
+            "recall_estimate": 0.5632
+          },
+          "org": {
+            "precision": 0.8577,
+            "recall_estimate": 0.4386
+          },
+          "address": {
+            "precision": 0.0316,
+            "recall_estimate": 0.0203
+          }
+        }
+      }
+    }
+  ],
+  "source": "silver-review",
+  "thresholds": {
+    "precision": 0.85,
+    "recall_estimate": 0.8
+  },
+  "accepted_kinds": [],
+  "decision": "no kind met precision >= 0.85 and recall >= 0.80 at threshold 0.5, and the threshold sweep (0.6 to 0.9, measured on the reviewed sample) shows no threshold that does; per the plan every kind is excluded from silver training and the detector trains on synthetic documents only",
+  "excluded_kinds": [
+    "person",
+    "org",
+    "address"
+  ]
+}

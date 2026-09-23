@@ -1,0 +1,7 @@
+gliner>=0.2
+transformers>=4.40,<5
+sentencepiece
+protobuf
+requests
+beautifulsoup4
+pytest
