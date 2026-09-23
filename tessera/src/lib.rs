@@ -54,6 +54,27 @@ pub mod internal {
     ) -> Result<ParseTrace, crate::Error> {
         tessera.trace(text)
     }
+
+    /// The intermediates of the detector over one whole document, for the golden-vector gate.
+    #[derive(Debug, Clone)]
+    pub struct DetectTrace {
+        /// Byte spans of the retained (non-whitespace) tokens.
+        pub token_spans: Vec<(usize, usize)>,
+        /// Features of the retained tokens, with rule spans found without a country hint.
+        pub features: Vec<TokenFeatures>,
+        /// Whether each retained token lies inside an email or phone.
+        pub masked: Vec<bool>,
+        /// Logits `[tokens, DETECTOR_LABELS]`, row-major, before softmax.
+        pub logits: Vec<f32>,
+        /// The most probable label per retained token, `O` where masked.
+        pub decoded: Vec<u8>,
+    }
+
+    /// The detector's forward pass over all of `text` as one window, keeping every
+    /// intermediate.
+    pub fn detect_trace(tessera: &crate::Tessera, text: &str) -> Result<DetectTrace, crate::Error> {
+        tessera.detect_trace(text)
+    }
 }
 
 use std::ops::BitOr;
@@ -486,23 +507,12 @@ impl Tessera {
         detector: &model::Tagger,
         query: &Query<'_>,
     ) -> Result<Vec<Entity>, Error> {
-        let tokens = token::tokenize(text);
-        let rule_spans: Vec<(usize, usize)> =
-            rule_entities.iter().map(|e| (e.start, e.end)).collect();
-        let all_feats =
-            features::featurize(text, &tokens, &rule_spans, None, &model.feature_config);
-        let retained: Vec<usize> = tokens
-            .iter()
-            .enumerate()
-            .filter(|(_, t)| features::is_content(t))
-            .map(|(i, _)| i)
-            .collect();
-        let feats: Vec<features::TokenFeatures> =
-            retained.iter().map(|&i| all_feats[i].clone()).collect();
-        let masked: Vec<bool> = feats
-            .iter()
-            .map(|f| f.flags & features::flag::IN_RULE_SPAN != 0)
-            .collect();
+        let DetectorInputs {
+            tokens,
+            retained,
+            feats,
+            masked,
+        } = detector_inputs(text, rule_entities, model);
         let breaks = chunk::paragraph_breaks(&tokens, &retained);
         let n = retained.len();
         let mut candidates = Vec::new();
@@ -547,6 +557,47 @@ impl Tessera {
             out.push(e);
         }
         Ok(out)
+    }
+
+    /// The detector over all of `text` as one window, with rule spans found without a country
+    /// hint, exactly as the trainer encodes its golden cases.
+    fn detect_trace(&self, text: &str) -> Result<internal::DetectTrace, Error> {
+        let stage = Error::Inference {
+            stage: policy::STAGE_DETECT,
+        };
+        let model = self.model.as_ref().ok_or(stage.clone())?;
+        let detector = model.detector.as_ref().ok_or(stage)?;
+        let inputs = detector_inputs(text, &rules::scan(text, &[]), model);
+        let logits = detector.forward(&inputs.feats);
+        let mut probs = logits.clone();
+        model::kernels::softmax_rows(&mut probs, detector.labels());
+        let decoded = probs
+            .chunks(detector.labels())
+            .zip(&inputs.masked)
+            .map(|(row, &m)| {
+                if m {
+                    0
+                } else {
+                    row.iter()
+                        .enumerate()
+                        .fold((0, f32::NEG_INFINITY), |best, (i, &p)| {
+                            if p > best.1 { (i, p) } else { best }
+                        })
+                        .0 as u8
+                }
+            })
+            .collect();
+        Ok(internal::DetectTrace {
+            token_spans: inputs
+                .retained
+                .iter()
+                .map(|&i| (inputs.tokens[i].start, inputs.tokens[i].end))
+                .collect(),
+            features: inputs.feats,
+            masked: inputs.masked,
+            logits,
+            decoded,
+        })
     }
 
     /// Parses a detected address on its own text, as the parser was trained, and decides
@@ -692,8 +743,44 @@ impl Tessera {
     }
 }
 
-/// A model entity over retained positions `first..=last`, with quotes trimmed from both ends
-/// and, for names, trailing `,` `.` `;` `:` trimmed; `None` when nothing is left.
+/// What the detector reads for one document: its tokens, the retained (non-whitespace)
+/// positions, their features computed over the whole document, and which of them lie inside a
+/// rule span.
+struct DetectorInputs {
+    tokens: Vec<token::Token>,
+    retained: Vec<usize>,
+    feats: Vec<features::TokenFeatures>,
+    masked: Vec<bool>,
+}
+
+fn detector_inputs(text: &str, rule_entities: &[Entity], model: &Model) -> DetectorInputs {
+    let tokens = token::tokenize(text);
+    let rule_spans: Vec<(usize, usize)> = rule_entities.iter().map(|e| (e.start, e.end)).collect();
+    let all_feats = features::featurize(text, &tokens, &rule_spans, None, &model.feature_config);
+    let retained: Vec<usize> = tokens
+        .iter()
+        .enumerate()
+        .filter(|(_, t)| features::is_content(t))
+        .map(|(i, _)| i)
+        .collect();
+    let feats: Vec<features::TokenFeatures> =
+        retained.iter().map(|&i| all_feats[i].clone()).collect();
+    let masked = feats
+        .iter()
+        .map(|f| f.flags & features::flag::IN_RULE_SPAN != 0)
+        .collect();
+    DetectorInputs {
+        tokens,
+        retained,
+        feats,
+        masked,
+    }
+}
+
+/// A model entity over retained positions `first..=last`, trimmed of what the model tends to
+/// sweep in at the edges: quotes at either end, a bracket whose partner lies outside the span or
+/// a pair wrapping all of it, trailing `,` `;` `:`, and a trailing `.` except on an address
+/// ending in an abbreviation (`Main St.`). `None` when nothing is left.
 fn span_entity(
     text: &str,
     tokens: &[token::Token],
@@ -705,24 +792,57 @@ fn span_entity(
     const QUOTES: &[&str] = &[
         "\"", "'", "\u{201c}", "\u{201d}", "\u{2018}", "\u{2019}", "\u{ab}", "\u{bb}", "\u{201e}",
     ];
-    const NAME_TAIL: &[&str] = &[",", ".", ";", ":"];
+    const BRACKETS: &[(&str, &str)] = &[
+        ("(", ")"),
+        ("[", "]"),
+        ("\u{ff08}", "\u{ff09}"),
+        ("\u{300c}", "\u{300d}"),
+        ("\u{300e}", "\u{300f}"),
+        ("\u{3010}", "\u{3011}"),
+    ];
+    const TAIL: &[&str] = &[",", ";", ":"];
     let at = |i: usize| {
         let t = &tokens[retained[i]];
         &text[t.start..t.end]
     };
-    loop {
-        if first < last && QUOTES.contains(&at(first)) {
+    let holds =
+        |range: std::ops::RangeInclusive<usize>, s: &str| range.into_iter().any(|i| at(i) == s);
+    let abbreviation = |i: usize| {
+        let word = at(i);
+        word.chars().count() <= 4 && word.chars().all(char::is_alphabetic)
+    };
+    while first < last {
+        let opener = BRACKETS.iter().find(|(open, _)| at(first) == *open);
+        let closer = BRACKETS.iter().find(|(_, close)| at(last) == *close);
+        let period = at(last) == "."
+            && (matches!(kind, Kind::Person | Kind::Org) || !abbreviation(last - 1));
+        if QUOTES.contains(&at(first)) {
             first += 1;
-        } else if first < last
-            && (QUOTES.contains(&at(last))
-                || (matches!(kind, Kind::Person | Kind::Org) && NAME_TAIL.contains(&at(last))))
+        } else if QUOTES.contains(&at(last)) || TAIL.contains(&at(last)) || period {
+            last -= 1;
+        } else if let Some((_, close)) = opener
+            && ((at(last) == *close && !holds(first + 1..=last - 1, close))
+                || !holds(first + 1..=last, close))
+        {
+            first += 1;
+            if at(last) == *close {
+                last -= 1;
+            }
+        } else if let Some((open, _)) = closer
+            && !holds(first..=last - 1, open)
         {
             last -= 1;
         } else {
             break;
         }
     }
-    if QUOTES.contains(&at(first)) {
+    let lone = at(first);
+    if first == last
+        && (QUOTES.contains(&lone)
+            || TAIL.contains(&lone)
+            || lone == "."
+            || BRACKETS.iter().any(|(o, c)| lone == *o || lone == *c))
+    {
         return None;
     }
     Some(Entity {
@@ -833,5 +953,59 @@ mod tests {
         }
         assert_eq!(Source::from_str_label("rules"), Some(Source::Rules));
         assert_eq!(Kind::from_str_label("Person"), None);
+    }
+
+    /// `span_entity` over every content token of `text`, as the text it keeps.
+    fn trimmed(kind: Kind, text: &str) -> Option<&str> {
+        let tokens = token::tokenize(text);
+        let retained: Vec<usize> = tokens
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| features::is_content(t))
+            .map(|(i, _)| i)
+            .collect();
+        span_entity(text, &tokens, &retained, kind, (0, retained.len() - 1), 0.9)
+            .map(|e| &text[e.start..e.end])
+    }
+
+    #[test]
+    fn span_edges_are_trimmed() {
+        let cases = [
+            (
+                Kind::Person,
+                "\u{201c}Anna Schmidt\u{201d},",
+                Some("Anna Schmidt"),
+            ),
+            (
+                Kind::Org,
+                "Nippon Freight Co., Ltd.",
+                Some("Nippon Freight Co., Ltd"),
+            ),
+            (
+                Kind::Org,
+                "\u{ff08}株式会社ハルカ\u{ff09}",
+                Some("株式会社ハルカ"),
+            ),
+            (Kind::Org, "株式会社ハルカ\u{ff09}", Some("株式会社ハルカ")),
+            (Kind::Org, "(Acme Ltd", Some("Acme Ltd")),
+            (Kind::Org, "Acme (UK)", Some("Acme (UK)")),
+            (Kind::Org, "(UK) Acme (Europe)", Some("(UK) Acme (Europe)")),
+            (
+                Kind::Address,
+                "14 Rustaveli Avenue, Tbilisi 0108.",
+                Some("14 Rustaveli Avenue, Tbilisi 0108"),
+            ),
+            (
+                Kind::Address,
+                "221 Canal Street, Leeds,",
+                Some("221 Canal Street, Leeds"),
+            ),
+            (Kind::Address, "1 Main St.", Some("1 Main St.")),
+            (Kind::Person, "\"", None),
+            (Kind::Org, "(", None),
+        ];
+        for (kind, text, want) in cases {
+            assert_eq!(trimmed(kind, text), want, "{text:?}");
+        }
     }
 }

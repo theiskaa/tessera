@@ -132,7 +132,7 @@ fn model_kinds_need_a_bundle() {
 
 #[test]
 fn each_way_a_header_can_be_wrong() {
-    let cases: [(&str, &str, Error); 10] = [
+    let cases: [(&str, &str, Error); 12] = [
         (r#""dtype":"I8""#, r#""dtype":"F32""#, Error::BundleInvalid),
         (
             "parser.head.bias",
@@ -145,10 +145,16 @@ fn each_way_a_header_can_be_wrong() {
             Error::BundleInvalid,
         ),
         (
-            r#""nets":"parser""#,
+            r#""nets":"parser,detector""#,
             r#""nets":"detector""#,
             Error::BundleInvalid,
         ),
+        (
+            "detector.head.bias",
+            "detector.head.bias2",
+            Error::BundleInvalid,
+        ),
+        ("B-PERSON", "B-PERSONS", Error::BundleInvalid),
         (
             r#"\"flag_bits\":23"#,
             r#"\"flag_bits\":24"#,
@@ -266,15 +272,20 @@ fn hostile_float_weights_do_not_panic() {
 
 #[test]
 fn kinds_without_their_network_are_invalid() {
+    let parser_only = with_header_edit(r#""nets":"parser,detector""#, r#""nets":"parser""#);
     for kinds in [Kind::Person.into(), Kind::Org | Kind::Address, Kind::all()] {
-        let got = Tessera::load(
-            common::BUNDLE,
-            Config {
-                kinds,
-                expected_checksum: None,
-            },
-        );
-        assert_eq!(got.map(|_| ()), Err(Error::BundleInvalid), "{kinds:?}");
+        let load = |bytes: &[u8]| {
+            Tessera::load(
+                bytes,
+                Config {
+                    kinds,
+                    expected_checksum: None,
+                },
+            )
+            .map(|_| ())
+        };
+        assert_eq!(load(common::BUNDLE), Ok(()), "{kinds:?}");
+        assert_eq!(load(&parser_only), Err(Error::BundleInvalid), "{kinds:?}");
     }
 }
 
@@ -331,10 +342,11 @@ fn a_newer_bundle_is_unsupported_even_with_other_changes() {
 }
 
 #[test]
-fn a_model_instance_does_not_detect_until_the_detector_ships() {
+fn a_model_instance_detects_with_the_shipped_detector() {
     let tessera = common::load_tessera();
-    assert!(matches!(
-        tessera.detect("mail me at a@example.com", &tessera::Query::default()),
-        Err(Error::Inference { stage: "detect" })
-    ));
+    let found = tessera
+        .detect("mail me at a@example.com", &tessera::Query::default())
+        .unwrap();
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].kind, Kind::Email);
 }

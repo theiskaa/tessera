@@ -1,0 +1,176 @@
+{
+  "cases": [
+    {
+      "name": "a Japanese signature",
+      "input": "お世話になっております。\n\n山田太郎\n株式会社サクラ物流\n〒150-0002 東京都渋谷区渋谷2丁目21-1\ntaro.yamada@sakura-logistics.example",
+      "expected": [
+        {
+          "kind": "person",
+          "text": "山田太郎",
+          "start": 38,
+          "end": 50
+        },
+        {
+          "kind": "org",
+          "text": "株式会社サクラ物流",
+          "start": 51,
+          "end": 78
+        },
+        {
+          "kind": "address",
+          "text": "〒150-0002 東京都渋谷区渋谷2丁目21-1",
+          "start": 79,
+          "end": 126
+        },
+        {
+          "kind": "email",
+          "text": "taro.yamada@sakura-logistics.example",
+          "start": 127,
+          "end": 163
+        }
+      ],
+      "must_not": []
+    },
+    {
+      "name": "family name first without a space",
+      "input": "佐藤花子\nhanako.sato@midori.example",
+      "expected": [
+        {
+          "kind": "person",
+          "text": "佐藤花子",
+          "start": 0,
+          "end": 12
+        },
+        {
+          "kind": "email",
+          "text": "hanako.sato@midori.example",
+          "start": 13,
+          "end": 39
+        }
+      ],
+      "must_not": []
+    },
+    {
+      "name": "department and name",
+      "input": "株式会社みどり商事\n営業部 鈴木一郎\n〒530-0001 大阪府大阪市北区梅田1丁目2-3",
+      "expected": [
+        {
+          "kind": "org",
+          "text": "株式会社みどり商事",
+          "start": 0,
+          "end": 27
+        },
+        {
+          "kind": "person",
+          "text": "鈴木一郎",
+          "start": 38,
+          "end": 50
+        },
+        {
+          "kind": "address",
+          "text": "〒530-0001 大阪府大阪市北区梅田1丁目2-3",
+          "start": 51,
+          "end": 103
+        }
+      ],
+      "must_not": []
+    },
+    {
+      "name": "closing and email",
+      "input": "よろしくお願いいたします。\n田中健\ntanaka@hikari-denki.example",
+      "expected": [
+        {
+          "kind": "person",
+          "text": "田中健",
+          "start": 40,
+          "end": 49
+        },
+        {
+          "kind": "email",
+          "text": "tanaka@hikari-denki.example",
+          "start": 50,
+          "end": 77
+        }
+      ],
+      "must_not": []
+    },
+    {
+      "name": "limited company with a Nagoya address",
+      "input": "有限会社オオタ製作所\n〒460-0008 愛知県名古屋市中区栄3丁目5-12",
+      "expected": [
+        {
+          "kind": "org",
+          "text": "有限会社オオタ製作所",
+          "start": 0,
+          "end": 30
+        },
+        {
+          "kind": "address",
+          "text": "〒460-0008 愛知県名古屋市中区栄3丁目5-12",
+          "start": 31,
+          "end": 84
+        }
+      ],
+      "must_not": []
+    },
+    {
+      "name": "a romanized Japanese signature",
+      "input": "Kenji Watanabe\nNippon Freight Co., Ltd.\n2-21-1 Shibuya, Shibuya-ku, Tokyo 150-0002, Japan\nkenji@nipponfreight.example",
+      "expected": [
+        {
+          "kind": "person",
+          "text": "Kenji Watanabe",
+          "start": 0,
+          "end": 14
+        },
+        {
+          "kind": "address",
+          "text": "2-21-1 Shibuya, Shibuya-ku, Tokyo 150-0002, Japan",
+          "start": 40,
+          "end": 89
+        },
+        {
+          "kind": "email",
+          "text": "kenji@nipponfreight.example",
+          "start": 90,
+          "end": 117
+        }
+      ],
+      "must_not": [],
+      "known_failure": true
+    },
+    {
+      "name": "person and company in parentheses",
+      "input": "担当：高橋美咲（株式会社ハルカ）",
+      "expected": [
+        {
+          "kind": "person",
+          "text": "高橋美咲",
+          "start": 9,
+          "end": 21
+        },
+        {
+          "kind": "org",
+          "text": "株式会社ハルカ",
+          "start": 24,
+          "end": 45
+        }
+      ],
+      "must_not": []
+    },
+    {
+      "name": "an address with a building line",
+      "input": "〒100-0005 東京都千代田区丸の内1丁目1-1\n丸の内ビル 12階",
+      "expected": [
+        {
+          "kind": "address",
+          "text": "〒100-0005 東京都千代田区丸の内1丁目1-1\n丸の内ビル 12階",
+          "start": 0,
+          "end": 74
+        }
+      ],
+      "must_not": [],
+      "known_failure": true
+    }
+  ]
+}

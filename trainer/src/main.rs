@@ -103,10 +103,14 @@ enum Command {
         #[arg(long, default_value = "internal/reports/m2-parser.md")]
         out: PathBuf,
     },
-    /// Write the safetensors bundle and golden vectors.
+    /// Write the two-network safetensors bundle and the golden vectors of both networks.
     Export {
+        /// The parser run.
         #[arg(long)]
-        run: PathBuf,
+        parser_run: PathBuf,
+        /// The detector run.
+        #[arg(long)]
+        detector_run: PathBuf,
         #[arg(long)]
         out: PathBuf,
         /// Date recorded in the bundle manifest, for example `$(date +%F)`.
@@ -178,7 +182,12 @@ fn main() -> anyhow::Result<()> {
                 quantize::run::<burn::backend::NdArray>(&run, &Default::default())
             }
         },
-        Command::Export { run, out, date } => export::run(&run, &out, &date),
+        Command::Export {
+            parser_run,
+            detector_run,
+            out,
+            date,
+        } => export::run(&parser_run, &detector_run, &out, &date),
         Command::Report {
             curve,
             run,

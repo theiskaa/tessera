@@ -47,6 +47,149 @@
           "text": "10.0.0.1"
         }
       ]
+    },
+    {
+      "name": "Georgia the country",
+      "input": "Our team will travel to Georgia next week.",
+      "expected": [],
+      "must_not": [
+        {
+          "kind": "person",
+          "text": "Georgia"
+        },
+        {
+          "kind": "address",
+          "text": "Georgia"
+        }
+      ]
+    },
+    {
+      "name": "Georgia the person",
+      "input": "Regards,\nGeorgia Palmer\ngeorgia.palmer@example.com",
+      "expected": [
+        {
+          "kind": "person",
+          "text": "Georgia Palmer",
+          "start": 9,
+          "end": 23
+        },
+        {
+          "kind": "email",
+          "text": "georgia.palmer@example.com",
+          "start": 24,
+          "end": 50
+        }
+      ],
+      "must_not": [],
+      "known_failure": true
+    },
+    {
+      "name": "Ford the company",
+      "input": "We ordered three vans from Ford last year.",
+      "expected": [
+        {
+          "kind": "org",
+          "text": "Ford",
+          "start": 27,
+          "end": 31
+        }
+      ],
+      "must_not": []
+    },
+    {
+      "name": "Mr Ford the person",
+      "input": "Please pass this to Mr Ford before Friday.",
+      "expected": [
+        {
+          "kind": "person",
+          "text": "Ford",
+          "start": 23,
+          "end": 27
+        }
+      ],
+      "must_not": [
+        {
+          "kind": "org",
+          "text": "Ford"
+        }
+      ],
+      "known_failure": true
+    },
+    {
+      "name": "a school named after a president",
+      "input": "The Abraham Lincoln High School band will perform on Saturday.",
+      "expected": [
+        {
+          "kind": "org",
+          "text": "Abraham Lincoln High School",
+          "start": 4,
+          "end": 31
+        }
+      ],
+      "must_not": [
+        {
+          "kind": "person",
+          "text": "Abraham Lincoln"
+        }
+      ],
+      "known_failure": true
+    },
+    {
+      "name": "numbers that are not phones",
+      "country": "GB",
+      "input": "IBAN GB29 NWBK 6016 1331 9268 19\nServer 192.168.10.24\nDate 2026-09-22\nTotal £1,240.00\nOrder 4021-7733-19\nTracking 1Z 999 AA1 01 2345 6784",
+      "expected": [],
+      "must_not": [
+        {
+          "kind": "phone",
+          "text": "6016 1331 9268 19"
+        },
+        {
+          "kind": "phone",
+          "text": "192.168.10.24"
+        },
+        {
+          "kind": "phone",
+          "text": "2026-09-22"
+        },
+        {
+          "kind": "phone",
+          "text": "4021-7733-19"
+        },
+        {
+          "kind": "phone",
+          "text": "01 2345 6784"
+        }
+      ]
+    },
+    {
+      "name": "a lone city is not an address",
+      "input": "The conference is in Manchester this year.",
+      "expected": [],
+      "must_not": [
+        {
+          "kind": "address",
+          "text": "Manchester"
+        }
+      ]
+    },
+    {
+      "name": "an avenue named after a person",
+      "input": "Please send it to 14 Rustaveli Avenue, Tbilisi 0108.",
+      "expected": [
+        {
+          "kind": "address",
+          "text": "14 Rustaveli Avenue, Tbilisi 0108",
+          "start": 18,
+          "end": 51
+        }
+      ],
+      "must_not": [
+        {
+          "kind": "person",
+          "text": "Rustaveli"
+        }
+      ]
     }
   ]
 }

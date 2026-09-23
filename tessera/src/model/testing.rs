@@ -1,32 +1,98 @@
-//! A bundle with detector weights for tests, until a trained detector ships: the committed
-//! parser bundle with small pseudo-random `detector.*` tensors appended and the manifest
-//! extended to list the detector. The outputs are meaningless; the shapes, masking, and
-//! pipeline invariants are what tests can check with it.
+//! Bundles with controlled contents for unit tests: the committed bundle cut down to its
+//! parser, and that parser with small pseudo-random `detector.*` tensors added. Outputs from the
+//! random detector are meaningless; the shapes, masking, and pipeline invariants are what tests
+//! can check with it.
+
+use serde_json::{Map, Value, json};
 
 use super::{DETECTOR_LABELS, HIDDEN, INPUT_DIM, KERNEL, NGRAM_DIM, SCRIPT_DIM, SHAPE_DIM};
 use super::{SCRIPT_ROWS, SHAPE_ROWS, bio};
 
-/// The committed bundle.
+/// A safetensors header and the tensor bytes it indexes.
+struct Parts {
+    header: Map<String, Value>,
+    data: Vec<u8>,
+}
+
+impl Parts {
+    fn read(bytes: &[u8]) -> Parts {
+        let n = u64::from_le_bytes(bytes[..8].try_into().unwrap()) as usize;
+        Parts {
+            header: serde_json::from_slice(&bytes[8..8 + n]).unwrap(),
+            data: bytes[8 + n..].to_vec(),
+        }
+    }
+
+    fn write(&self) -> Vec<u8> {
+        let header = serde_json::to_vec(&self.header).unwrap();
+        let mut out = (header.len() as u64).to_le_bytes().to_vec();
+        out.extend_from_slice(&header);
+        out.extend_from_slice(&self.data);
+        out
+    }
+
+    fn metadata(&mut self) -> &mut Map<String, Value> {
+        self.header["__metadata__"].as_object_mut().unwrap()
+    }
+
+    fn add(&mut self, name: &str, dtype: &str, shape: &[usize], payload: &[u8]) {
+        let begin = self.data.len();
+        self.data.extend_from_slice(payload);
+        let end = self.data.len();
+        self.header.insert(
+            name.to_string(),
+            json!({ "dtype": dtype, "shape": shape, "data_offsets": [begin, end] }),
+        );
+    }
+}
+
+/// The committed bundle with every `detector.*` tensor removed and the manifest listing only
+/// the parser, as a parser-only bundle from Milestone 2 would be.
 pub(crate) fn parser_bundle() -> Vec<u8> {
     let path = concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../models/tessera-v1.safetensors"
     );
-    std::fs::read(path).unwrap()
+    let full = Parts::read(&std::fs::read(path).unwrap());
+    let mut kept: Vec<(&String, &Value)> = full
+        .header
+        .iter()
+        .filter(|(name, _)| name.starts_with("parser."))
+        .collect();
+    kept.sort_by_key(|(_, entry)| entry["data_offsets"][0].as_u64().unwrap());
+    let mut out = Parts {
+        header: Map::new(),
+        data: Vec::new(),
+    };
+    out.header
+        .insert("__metadata__".into(), full.header["__metadata__"].clone());
+    for (name, entry) in kept {
+        let range = |i: usize| entry["data_offsets"][i].as_u64().unwrap() as usize;
+        let shape: Vec<usize> = entry["shape"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|d| d.as_u64().unwrap() as usize)
+            .collect();
+        out.add(
+            name,
+            entry["dtype"].as_str().unwrap(),
+            &shape,
+            &full.data[range(0)..range(1)],
+        );
+    }
+    let metadata = out.metadata();
+    metadata.insert("nets".into(), json!("parser"));
+    metadata.insert("detector_labels".into(), json!("[]"));
+    out.write()
 }
 
-/// The committed bundle plus a detector with `blocks` random residual blocks.
+/// The parser-only bundle plus a detector with `blocks` random residual blocks.
 pub(crate) fn with_random_detector(seed: u64, blocks: usize) -> Vec<u8> {
-    let bytes = parser_bundle();
-    let n = u64::from_le_bytes(bytes[..8].try_into().unwrap()) as usize;
-    let header = std::str::from_utf8(&bytes[8..8 + n]).unwrap();
-    let mut data = bytes[8 + n..].to_vec();
-    let buckets = header
-        .split("\\\"hash_buckets\\\":")
-        .nth(1)
-        .and_then(|rest| rest.split(|c: char| !c.is_ascii_digit()).next())
-        .and_then(|d| d.parse::<usize>().ok())
-        .unwrap();
+    let mut parts = Parts::read(&parser_bundle());
+    let feature_config: Value =
+        serde_json::from_str(parts.metadata()["feature_config"].as_str().unwrap()).unwrap();
+    let buckets = feature_config["hash_buckets"].as_u64().unwrap() as usize;
     let mut state = seed | 1;
     let mut next = move || {
         state ^= state << 13;
@@ -34,18 +100,7 @@ pub(crate) fn with_random_detector(seed: u64, blocks: usize) -> Vec<u8> {
         state ^= state << 17;
         state
     };
-    let mut entries = String::new();
-    let mut add = |name: &str, dtype: &str, shape: &[usize], payload: Vec<u8>| {
-        let begin = data.len();
-        data.extend_from_slice(&payload);
-        let dims: Vec<String> = shape.iter().map(ToString::to_string).collect();
-        entries.push_str(&format!(
-            r#","{name}":{{"dtype":"{dtype}","shape":[{}],"data_offsets":[{begin},{}]}}"#,
-            dims.join(","),
-            data.len()
-        ));
-    };
-    let mut int8 = |name: &str, shape: &[usize], channels: usize| {
+    let mut int8 = |name: String, shape: &[usize], channels: usize| {
         let count: usize = shape.iter().product();
         let values: Vec<u8> = (0..count)
             .map(|_| ((next() % 7) as u8).wrapping_sub(3))
@@ -53,67 +108,60 @@ pub(crate) fn with_random_detector(seed: u64, blocks: usize) -> Vec<u8> {
         let scales: Vec<u8> = std::iter::repeat_n(0.02f32, channels)
             .flat_map(f32::to_le_bytes)
             .collect();
-        (values, scales, name.to_string(), shape.to_vec(), channels)
+        (name, shape.to_vec(), values, scales)
     };
-    let zeros = |len: usize| vec![0u8; len * 4];
     let mut tensors = vec![
-        int8("detector.embed.ngram", &[buckets + 1, NGRAM_DIM], NGRAM_DIM),
         int8(
-            "detector.embed.script",
+            "detector.embed.ngram".into(),
+            &[buckets + 1, NGRAM_DIM],
+            NGRAM_DIM,
+        ),
+        int8(
+            "detector.embed.script".into(),
             &[SCRIPT_ROWS, SCRIPT_DIM],
             SCRIPT_DIM,
         ),
-        int8("detector.embed.shape", &[SHAPE_ROWS, SHAPE_DIM], SHAPE_DIM),
-        int8("detector.proj.weight", &[HIDDEN, INPUT_DIM], HIDDEN),
         int8(
-            "detector.head.weight",
+            "detector.embed.shape".into(),
+            &[SHAPE_ROWS, SHAPE_DIM],
+            SHAPE_DIM,
+        ),
+        int8("detector.proj.weight".into(), &[HIDDEN, INPUT_DIM], HIDDEN),
+        int8(
+            "detector.head.weight".into(),
             &[DETECTOR_LABELS, HIDDEN],
             DETECTOR_LABELS,
         ),
     ];
     for i in 0..blocks {
         tensors.push(int8(
-            &format!("detector.block{i}.conv.weight"),
+            format!("detector.block{i}.conv.weight"),
             &[HIDDEN, HIDDEN, KERNEL],
             HIDDEN,
         ));
     }
-    for (values, scales, name, shape, _) in tensors {
-        add(&name, "I8", &shape, values);
-        add(&format!("{name}.scale"), "F32", &[scales.len() / 4], scales);
-    }
-    add("detector.proj.bias", "F32", &[HIDDEN], zeros(HIDDEN));
-    add(
-        "detector.head.bias",
-        "F32",
-        &[DETECTOR_LABELS],
-        zeros(DETECTOR_LABELS),
-    );
-    for i in 0..blocks {
-        add(
-            &format!("detector.block{i}.conv.bias"),
+    for (name, shape, values, scales) in tensors {
+        parts.add(&name, "I8", &shape, &values);
+        parts.add(
+            &format!("{name}.scale"),
             "F32",
-            &[HIDDEN],
-            zeros(HIDDEN),
+            &[scales.len() / 4],
+            &scales,
         );
     }
-    let labels: Vec<String> = bio::detector_label_strings()
-        .iter()
-        .map(|l| format!("\\\"{l}\\\""))
-        .collect();
-    let header = header
-        .replacen(r#""nets":"parser""#, r#""nets":"parser,detector""#, 1)
-        .replacen(
-            r#""detector_labels":"[]""#,
-            &format!(r#""detector_labels":"[{}]""#, labels.join(",")),
-            1,
-        );
-    let body = header.trim_end().strip_suffix('}').unwrap();
-    let header = format!("{body}{entries}}}");
-    let mut out = (header.len() as u64).to_le_bytes().to_vec();
-    out.extend_from_slice(header.as_bytes());
-    out.extend_from_slice(&data);
-    out
+    let mut zeros = vec![("detector.proj.bias".to_string(), HIDDEN)];
+    zeros.push(("detector.head.bias".to_string(), DETECTOR_LABELS));
+    for i in 0..blocks {
+        zeros.push((format!("detector.block{i}.conv.bias"), HIDDEN));
+    }
+    for (name, len) in zeros {
+        parts.add(&name, "F32", &[len], &vec![0u8; len * 4]);
+    }
+    let labels = serde_json::to_string(&bio::detector_label_strings()).unwrap();
+    let metadata = parts.metadata();
+    metadata.insert("nets".into(), json!("parser,detector"));
+    metadata.insert("detector_labels".into(), json!(labels));
+    parts.write()
 }
 
 #[cfg(test)]

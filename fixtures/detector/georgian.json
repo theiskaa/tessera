@@ -1,0 +1,193 @@
+{
+  "cases": [
+    {
+      "name": "the spec's signature in Georgian script",
+      "input": "მადლობა, შეხვედრამდე ორშაბათს.\n\nნინო ბერიძე\nშპს კავკასიის ტვირთი\nრუსთაველის გამზირი 14, თბილისი 0108\nnino@kavkaz-freight.example",
+      "expected": [
+        {
+          "kind": "person",
+          "text": "ნინო ბერიძე",
+          "start": 84,
+          "end": 115
+        },
+        {
+          "kind": "org",
+          "text": "შპს კავკასიის ტვირთი",
+          "start": 116,
+          "end": 172
+        },
+        {
+          "kind": "address",
+          "text": "რუსთაველის გამზირი 14, თბილისი 0108",
+          "start": 173,
+          "end": 256
+        },
+        {
+          "kind": "email",
+          "text": "nino@kavkaz-freight.example",
+          "start": 257,
+          "end": 284
+        }
+      ],
+      "must_not": []
+    },
+    {
+      "name": "an avenue named after a poet is not a person",
+      "input": "ოფისი მდებარეობს: რუსთაველის გამზირი 12, თბილისი 0108",
+      "expected": [
+        {
+          "kind": "address",
+          "text": "რუსთაველის გამზირი 12, თბილისი 0108",
+          "start": 48,
+          "end": 131
+        }
+      ],
+      "must_not": [
+        {
+          "kind": "person",
+          "text": "რუსთაველის"
+        }
+      ]
+    },
+    {
+      "name": "closing and joint-stock company",
+      "input": "პატივისცემით,\nგიორგი კაპანაძე\nსს ქართული ფინანსები",
+      "expected": [
+        {
+          "kind": "person",
+          "text": "გიორგი კაპანაძე",
+          "start": 38,
+          "end": 81
+        },
+        {
+          "kind": "org",
+          "text": "სს ქართული ფინანსები",
+          "start": 82,
+          "end": 138
+        }
+      ],
+      "must_not": []
+    },
+    {
+      "name": "a Latin-script Georgian signature",
+      "input": "Best regards,\nLevan Gelashvili\nGeoTrans LLC\n12 Chavchavadze Avenue, Tbilisi 0179, Georgia\nlevan@geotrans.example",
+      "expected": [
+        {
+          "kind": "person",
+          "text": "Levan Gelashvili",
+          "start": 14,
+          "end": 30
+        },
+        {
+          "kind": "org",
+          "text": "GeoTrans LLC",
+          "start": 31,
+          "end": 43
+        },
+        {
+          "kind": "address",
+          "text": "12 Chavchavadze Avenue, Tbilisi 0179, Georgia",
+          "start": 44,
+          "end": 89
+        },
+        {
+          "kind": "email",
+          "text": "levan@geotrans.example",
+          "start": 90,
+          "end": 112
+        }
+      ],
+      "must_not": []
+    },
+    {
+      "name": "a Batumi address",
+      "input": "თამარ ჯაფარიძე\nშპს ბათუმის ნავსადგური\nგოგებაშვილის ქუჩა 5, ბათუმი 6000",
+      "expected": [
+        {
+          "kind": "person",
+          "text": "თამარ ჯაფარიძე",
+          "start": 0,
+          "end": 40
+        },
+        {
+          "kind": "org",
+          "text": "შპს ბათუმის ნავსადგური",
+          "start": 41,
+          "end": 103
+        },
+        {
+          "kind": "address",
+          "text": "გოგებაშვილის ქუჩა 5, ბათუმი 6000",
+          "start": 104,
+          "end": 180
+        }
+      ],
+      "must_not": [],
+      "known_failure": true
+    },
+    {
+      "name": "contact line",
+      "input": "კონტაქტი: ნიკა მელაძე, nika@alfatech.example",
+      "expected": [
+        {
+          "kind": "person",
+          "text": "ნიკა მელაძე",
+          "start": 26,
+          "end": 57
+        },
+        {
+          "kind": "email",
+          "text": "nika@alfatech.example",
+          "start": 59,
+          "end": 80
+        }
+      ],
+      "must_not": []
+    },
+    {
+      "name": "address then director",
+      "input": "მისამართი: აღმაშენებლის გამზირი 45, თბილისი 0112\nდირექტორი: ანა ლომიძე",
+      "expected": [
+        {
+          "kind": "address",
+          "text": "აღმაშენებლის გამზირი 45, თბილისი 0112",
+          "start": 29,
+          "end": 118
+        },
+        {
+          "kind": "person",
+          "text": "ანა ლომიძე",
+          "start": 148,
+          "end": 176
+        }
+      ],
+      "must_not": [],
+      "known_failure": true
+    },
+    {
+      "name": "company letterhead",
+      "input": "შპს მთის წყარო\nმარჯანიშვილის ქუჩა 7, თბილისი 0102\ninfo@mtiswkaro.example",
+      "expected": [
+        {
+          "kind": "org",
+          "text": "შპს მთის წყარო",
+          "start": 0,
+          "end": 38
+        },
+        {
+          "kind": "address",
+          "text": "მარჯანიშვილის ქუჩა 7, თბილისი 0102",
+          "start": 39,
+          "end": 121
+        },
+        {
+          "kind": "email",
+          "text": "info@mtiswkaro.example",
+          "start": 122,
+          "end": 144
+        }
+      ],
+      "must_not": []
+    }
+  ]
+}

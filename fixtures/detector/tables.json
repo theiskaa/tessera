@@ -1,0 +1,264 @@
+{
+  "cases": [
+    {
+      "name": "tab table",
+      "input": "Name\tCompany\tEmail\nAnna Schmidt\tNordlicht Verlag GmbH\tanna@nordlicht.example\nJames Carter\tBlue Ridge Supply Co\tjcarter@blueridge.test\nMaria Lopez\tSolano Foods Inc\tmaria@solano.example",
+      "expected": [
+        {
+          "kind": "person",
+          "text": "Anna Schmidt",
+          "start": 19,
+          "end": 31
+        },
+        {
+          "kind": "org",
+          "text": "Nordlicht Verlag GmbH",
+          "start": 32,
+          "end": 53
+        },
+        {
+          "kind": "email",
+          "text": "anna@nordlicht.example",
+          "start": 54,
+          "end": 76
+        },
+        {
+          "kind": "person",
+          "text": "James Carter",
+          "start": 77,
+          "end": 89
+        },
+        {
+          "kind": "org",
+          "text": "Blue Ridge Supply Co",
+          "start": 90,
+          "end": 110
+        },
+        {
+          "kind": "email",
+          "text": "jcarter@blueridge.test",
+          "start": 111,
+          "end": 133
+        },
+        {
+          "kind": "person",
+          "text": "Maria Lopez",
+          "start": 134,
+          "end": 145
+        },
+        {
+          "kind": "org",
+          "text": "Solano Foods Inc",
+          "start": 146,
+          "end": 162
+        },
+        {
+          "kind": "email",
+          "text": "maria@solano.example",
+          "start": 163,
+          "end": 183
+        }
+      ],
+      "must_not": [],
+      "known_failure": true
+    },
+    {
+      "name": "pipe table",
+      "country": "GB",
+      "input": "| Contact | Phone |\n| --- | --- |\n| Oliver Bennett | +44 113 496 0123 |\n| Sarah Collins | +44 20 7946 0987 |\n| Tom Hughes | 07700 900456 |",
+      "expected": [
+        {
+          "kind": "person",
+          "text": "Oliver Bennett",
+          "start": 36,
+          "end": 50
+        },
+        {
+          "kind": "phone",
+          "text": "+44 113 496 0123",
+          "start": 53,
+          "end": 69
+        },
+        {
+          "kind": "person",
+          "text": "Sarah Collins",
+          "start": 74,
+          "end": 87
+        },
+        {
+          "kind": "phone",
+          "text": "+44 20 7946 0987",
+          "start": 90,
+          "end": 106
+        },
+        {
+          "kind": "person",
+          "text": "Tom Hughes",
+          "start": 111,
+          "end": 121
+        },
+        {
+          "kind": "phone",
+          "text": "07700 900456",
+          "start": 124,
+          "end": 136
+        }
+      ],
+      "must_not": []
+    },
+    {
+      "name": "tab table of addresses",
+      "input": "Site\tAddress\nWarehouse\t14 Wharf Road, Leeds LS1 4AP\nReturns\t3 Castle Street, Manchester M3 4LZ",
+      "expected": [
+        {
+          "kind": "address",
+          "text": "14 Wharf Road, Leeds LS1 4AP",
+          "start": 23,
+          "end": 51
+        },
+        {
+          "kind": "address",
+          "text": "3 Castle Street, Manchester M3 4LZ",
+          "start": 60,
+          "end": 94
+        }
+      ],
+      "must_not": []
+    },
+    {
+      "name": "comma-separated rows",
+      "country": "US",
+      "input": "Customer,Phone\nDaniel Price,(212) 555-0142\nGrace Liu,(415) 555-0199",
+      "expected": [
+        {
+          "kind": "person",
+          "text": "Daniel Price",
+          "start": 15,
+          "end": 27
+        },
+        {
+          "kind": "phone",
+          "text": "(212) 555-0142",
+          "start": 28,
+          "end": 42
+        },
+        {
+          "kind": "person",
+          "text": "Grace Liu",
+          "start": 43,
+          "end": 52
+        },
+        {
+          "kind": "phone",
+          "text": "(415) 555-0199",
+          "start": 53,
+          "end": 67
+        }
+      ],
+      "must_not": []
+    },
+    {
+      "name": "pipe table of vendors",
+      "input": "| Vendor | Contact |\n| Meridian Health Partners | Grace Liu |\n| Brightwater Energy Ltd | Daniel Okafor |",
+      "expected": [
+        {
+          "kind": "org",
+          "text": "Meridian Health Partners",
+          "start": 23,
+          "end": 47
+        },
+        {
+          "kind": "person",
+          "text": "Grace Liu",
+          "start": 50,
+          "end": 59
+        },
+        {
+          "kind": "org",
+          "text": "Brightwater Energy Ltd",
+          "start": 64,
+          "end": 86
+        },
+        {
+          "kind": "person",
+          "text": "Daniel Okafor",
+          "start": 89,
+          "end": 102
+        }
+      ],
+      "must_not": [],
+      "known_failure": true
+    },
+    {
+      "name": "tab table with German companies",
+      "input": "Firma\tOrt\nWeber Logistik GmbH\tHamburg\nRhein Maschinenbau AG\tKöln",
+      "expected": [
+        {
+          "kind": "org",
+          "text": "Weber Logistik GmbH",
+          "start": 10,
+          "end": 29
+        },
+        {
+          "kind": "org",
+          "text": "Rhein Maschinenbau AG",
+          "start": 38,
+          "end": 59
+        }
+      ],
+      "must_not": [
+        {
+          "kind": "address",
+          "text": "Hamburg"
+        },
+        {
+          "kind": "address",
+          "text": "Köln"
+        }
+      ]
+    },
+    {
+      "name": "amounts only",
+      "input": "Item\tQty\tPrice\nModel X-200\t2\t£89.99\nType 7 adapter\t1\t£12.50",
+      "expected": [],
+      "must_not": [
+        {
+          "kind": "phone",
+          "text": "89.99"
+        }
+      ]
+    },
+    {
+      "name": "names and emails without a header",
+      "input": "Emma Clarke\temma.clarke@pennine.example\nRachel Adams\trachel@adamswebb.test",
+      "expected": [
+        {
+          "kind": "person",
+          "text": "Emma Clarke",
+          "start": 0,
+          "end": 11
+        },
+        {
+          "kind": "email",
+          "text": "emma.clarke@pennine.example",
+          "start": 12,
+          "end": 39
+        },
+        {
+          "kind": "person",
+          "text": "Rachel Adams",
+          "start": 40,
+          "end": 52
+        },
+        {
+          "kind": "email",
+          "text": "rachel@adamswebb.test",
+          "start": 53,
+          "end": 74
+        }
+      ],
+      "must_not": [],
+      "known_failure": true
+    }
+  ]
+}

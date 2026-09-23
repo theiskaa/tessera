@@ -186,6 +186,22 @@ impl Config {
         self.net_config(crate::dataset::PARSER_LABELS)
     }
 
+    /// The network this run trains, by its task.
+    pub fn tagger_net_config(&self) -> crate::net::TaggerNetConfig {
+        match self.task {
+            Task::Parser => self.parser_net_config(),
+            Task::Detector => self.detector_net_config(),
+        }
+    }
+
+    /// The tensor-name prefix of this run's network in the bundle.
+    pub fn net_name(&self) -> &'static str {
+        match self.task {
+            Task::Parser => "parser",
+            Task::Detector => "detector",
+        }
+    }
+
     /// The detector network these settings describe.
     pub fn detector_net_config(&self) -> crate::net::TaggerNetConfig {
         self.net_config(crate::detector::DETECTOR_LABELS)

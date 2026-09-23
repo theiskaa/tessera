@@ -9,6 +9,20 @@ use serde::Deserialize;
 #[cfg(target_arch = "wasm32")]
 wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
+/// Prints a line in the test output: stderr natively, the browser console under wasm, where
+/// `wasm-bindgen-test` relays it.
+#[allow(unused_macros)]
+macro_rules! report {
+    ($($arg:tt)*) => {{
+        #[cfg(target_arch = "wasm32")]
+        wasm_bindgen_test::console_log!($($arg)*);
+        #[cfg(not(target_arch = "wasm32"))]
+        eprintln!($($arg)*);
+    }};
+}
+#[allow(unused_imports)]
+pub(crate) use report;
+
 /// The release bundle, embedded.
 pub const BUNDLE: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -159,10 +173,19 @@ pub fn rules_fixtures() -> Vec<(&'static str, RulesFixture)> {
 }
 
 pub fn load_tessera() -> tessera::Tessera {
+    load_with(tessera::Kind::Address | tessera::Kind::Email | tessera::Kind::Phone)
+}
+
+/// The versioned bundle loaded for every kind, both networks built.
+pub fn load_all() -> tessera::Tessera {
+    load_with(tessera::Kind::all())
+}
+
+fn load_with(kinds: tessera::KindSet) -> tessera::Tessera {
     tessera::Tessera::load(
         BUNDLE,
         tessera::Config {
-            kinds: tessera::Kind::Address | tessera::Kind::Email | tessera::Kind::Phone,
+            kinds,
             expected_checksum: Some(bundle_checksum()),
         },
     )
@@ -175,6 +198,9 @@ pub struct Golden {
     pub int8_logits: Vec<Vec<f32>>,
     pub decoded: Vec<u8>,
     pub tolerance: f32,
+    /// Detector goldens only: whether each position lies inside an email or phone.
+    #[serde(default)]
+    pub masked: Vec<bool>,
 }
 
 #[derive(Deserialize)]
@@ -247,6 +273,95 @@ pub fn parser_fixtures() -> Vec<(&'static str, ParserFixture)> {
                     case.name,
                     c.label,
                     c.text
+                );
+            }
+        }
+        (name, fixture)
+    })
+    .collect()
+}
+
+#[derive(Deserialize)]
+pub struct DetectorFixture {
+    pub cases: Vec<DetectorCase>,
+}
+
+#[derive(Deserialize)]
+pub struct DetectorCase {
+    pub name: String,
+    #[serde(default)]
+    pub country: Option<String>,
+    pub input: String,
+    pub expected: Vec<DetectorExpected>,
+    #[serde(default)]
+    pub must_not: Vec<MustNot>,
+    /// A case the current model gets wrong; the test asserts it still fails, so a fix is noticed.
+    #[serde(default)]
+    pub known_failure: bool,
+}
+
+#[derive(Deserialize)]
+pub struct DetectorExpected {
+    pub kind: String,
+    pub text: String,
+    pub start: usize,
+    pub end: usize,
+}
+
+#[derive(Deserialize)]
+pub struct MustNot {
+    pub kind: String,
+    pub text: String,
+}
+
+/// Detector fixtures, with every expected entity's `text` checked against its offsets.
+pub fn detector_fixtures() -> Vec<(&'static str, DetectorFixture)> {
+    [
+        (
+            "georgian",
+            include_str!("../../../fixtures/detector/georgian.json"),
+        ),
+        (
+            "japanese",
+            include_str!("../../../fixtures/detector/japanese.json"),
+        ),
+        (
+            "letterheads-de",
+            include_str!("../../../fixtures/detector/letterheads-de.json"),
+        ),
+        (
+            "negatives",
+            include_str!("../../../fixtures/detector/negatives.json"),
+        ),
+        (
+            "prose-en",
+            include_str!("../../../fixtures/detector/prose-en.json"),
+        ),
+        (
+            "signatures",
+            include_str!("../../../fixtures/detector/signatures.json"),
+        ),
+        (
+            "signatures-gb",
+            include_str!("../../../fixtures/detector/signatures-gb.json"),
+        ),
+        (
+            "tables",
+            include_str!("../../../fixtures/detector/tables.json"),
+        ),
+    ]
+    .into_iter()
+    .map(|(name, src)| {
+        let fixture: DetectorFixture = parse(name, src);
+        for case in &fixture.cases {
+            for e in &case.expected {
+                assert_eq!(
+                    case.input.get(e.start..e.end),
+                    Some(e.text.as_str()),
+                    "fixture {name}: `{}` offsets of {} {:?}",
+                    case.name,
+                    e.kind,
+                    e.text
                 );
             }
         }

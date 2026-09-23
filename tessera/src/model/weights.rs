@@ -348,11 +348,7 @@ mod tests {
     use super::*;
 
     fn bundle_bytes() -> Vec<u8> {
-        let path = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../models/tessera-v1.safetensors"
-        );
-        std::fs::read(path).unwrap()
+        crate::model::testing::parser_bundle()
     }
 
     #[test]

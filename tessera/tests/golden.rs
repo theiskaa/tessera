@@ -1,5 +1,6 @@
-//! Golden-vector gate: the hand-written forward pass must reproduce the trainer's quantized
-//! outputs from `models/golden/parser/`, natively and in the browser. Features, logits, and
+//! Golden-vector gate: the hand-written forward passes must reproduce the trainer's quantized
+//! outputs from `models/golden/parser/` and `models/golden/detector/`, natively and in the
+//! browser. Features, logits, and
 //! decoded labels are checked in that order because each fails for a different reason.
 
 mod common;
@@ -18,18 +19,7 @@ macro_rules! golden {
     };
 }
 
-/// Prints a line in the test output: stderr natively, the browser console under wasm, where
-/// `wasm-bindgen-test` relays it.
-macro_rules! report {
-    ($($arg:tt)*) => {{
-        #[cfg(target_arch = "wasm32")]
-        wasm_bindgen_test::console_log!($($arg)*);
-        #[cfg(not(target_arch = "wasm32"))]
-        eprintln!($($arg)*);
-    }};
-}
-
-// A browser cannot list a directory, so every file in models/golden/parser/ is named here;
+// A browser cannot list a directory, so every golden file is named here;
 // `the_case_list_names_every_golden_file` fails natively when the two drift apart.
 const PARSER_CASES: &[(&str, &str)] = &[
     ("de-01", golden!("parser/de-01.json")),
@@ -61,6 +51,64 @@ const PARSER_CASES: &[(&str, &str)] = &[
     ("us-04", golden!("parser/us-04.json")),
 ];
 
+const DETECTOR_CASES: &[(&str, &str)] = &[
+    ("letterhead-de", golden!("detector/letterhead-de.json")),
+    ("one-word", golden!("detector/one-word.json")),
+    ("prose-negatives", golden!("detector/prose-negatives.json")),
+    ("rules-only", golden!("detector/rules-only.json")),
+    ("signature-gb", golden!("detector/signature-gb.json")),
+    ("signature-ge", golden!("detector/signature-ge.json")),
+    ("signature-jp", golden!("detector/signature-jp.json")),
+    ("table-tab", golden!("detector/table-tab.json")),
+];
+
+/// Checks one trace against its golden case in the order features, logits, decoded labels, and
+/// returns the largest logit difference.
+fn check_case(
+    name: &str,
+    case: &common::Golden,
+    token_spans: &[(usize, usize)],
+    features: &[tessera::internal::TokenFeatures],
+    logits: &[f32],
+    decoded: &[u8],
+) -> f32 {
+    assert_eq!(token_spans, case.input.tokens, "{name}: token spans differ");
+    assert_eq!(
+        features.len(),
+        case.input.features.len(),
+        "{name}: token count differs"
+    );
+    for (i, (got, want)) in features.iter().zip(&case.input.features).enumerate() {
+        assert_eq!(
+            got.ngram_ids, want.ngram_ids,
+            "{name}: token {i} n-gram ids differ"
+        );
+        assert_eq!(
+            (got.script, got.shape, got.flags),
+            (want.script, want.shape, want.flags),
+            "{name}: token {i} script, shape, or flags differ"
+        );
+    }
+    let want: Vec<f32> = case.int8_logits.iter().flatten().copied().collect();
+    assert_eq!(logits.len(), want.len(), "{name}: logit count differs");
+    assert!(
+        logits.iter().all(|v| v.is_finite()),
+        "{name}: a logit is not finite"
+    );
+    let max_diff = logits
+        .iter()
+        .zip(&want)
+        .map(|(a, b)| (a - b).abs())
+        .fold(0f32, f32::max);
+    assert!(
+        max_diff <= case.tolerance,
+        "{name}: max logit difference {max_diff} exceeds {}",
+        case.tolerance
+    );
+    assert_eq!(decoded, case.decoded, "{name}: decoded labels differ");
+    max_diff
+}
+
 #[test]
 fn parser_golden_vectors() {
     let tessera = common::load_tessera();
@@ -70,49 +118,15 @@ fn parser_golden_vectors() {
     for &(name, json) in PARSER_CASES {
         let case: common::Golden = common::parse(name, json);
         let trace = tessera::internal::parse_address_trace(&tessera, &case.input.text).unwrap();
-        assert_eq!(
-            trace.token_spans, case.input.tokens,
-            "{name}: token spans differ"
+        let diff = check_case(
+            name,
+            &case,
+            &trace.token_spans,
+            &trace.features,
+            &trace.logits,
+            &trace.decoded,
         );
-        assert_eq!(
-            trace.features.len(),
-            case.input.features.len(),
-            "{name}: token count differs"
-        );
-        for (i, (got, want)) in trace.features.iter().zip(&case.input.features).enumerate() {
-            assert_eq!(
-                got.ngram_ids, want.ngram_ids,
-                "{name}: token {i} n-gram ids differ"
-            );
-            assert_eq!(
-                (got.script, got.shape, got.flags),
-                (want.script, want.shape, want.flags),
-                "{name}: token {i} script, shape, or flags differ"
-            );
-        }
-        let want: Vec<f32> = case.int8_logits.iter().flatten().copied().collect();
-        assert_eq!(
-            trace.logits.len(),
-            want.len(),
-            "{name}: logit count differs"
-        );
-        assert!(
-            trace.logits.iter().all(|v| v.is_finite()),
-            "{name}: a logit is not finite"
-        );
-        let max_diff = trace
-            .logits
-            .iter()
-            .zip(&want)
-            .map(|(a, b)| (a - b).abs())
-            .fold(0f32, f32::max);
-        assert!(
-            max_diff <= case.tolerance,
-            "{name}: max logit difference {max_diff} exceeds {}",
-            case.tolerance
-        );
-        worst = worst.max(max_diff);
-        assert_eq!(trace.decoded, case.decoded, "{name}: decoded labels differ");
+        worst = worst.max(diff);
         longest = trace
             .features
             .iter()
@@ -129,22 +143,50 @@ fn parser_golden_vectors() {
         checked >= 16,
         "expected at least 16 golden cases, found {checked}"
     );
-    report!("golden: {checked} cases, max logit difference {worst:e}");
+    common::report!("golden parser: {checked} cases, max logit difference {worst:e}");
+}
+
+#[test]
+fn detector_golden_vectors() {
+    let tessera = common::load_all();
+    let mut worst = 0f32;
+    for &(name, json) in DETECTOR_CASES {
+        let case: common::Golden = common::parse(name, json);
+        let trace = tessera::internal::detect_trace(&tessera, &case.input.text).unwrap();
+        assert_eq!(trace.masked, case.masked, "{name}: decode mask differs");
+        let diff = check_case(
+            name,
+            &case,
+            &trace.token_spans,
+            &trace.features,
+            &trace.logits,
+            &trace.decoded,
+        );
+        worst = worst.max(diff);
+    }
+    common::report!(
+        "golden detector: {} cases, max logit difference {worst:e}",
+        DETECTOR_CASES.len()
+    );
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
-fn the_case_list_names_every_golden_file() {
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../models/golden/parser");
-    let mut on_disk: Vec<String> = std::fs::read_dir(&dir)
-        .unwrap()
-        .map(|e| e.unwrap().file_name().into_string().unwrap())
-        .collect();
-    on_disk.sort();
-    let mut listed: Vec<String> = PARSER_CASES
-        .iter()
-        .map(|(name, _)| format!("{name}.json"))
-        .collect();
-    listed.sort();
-    assert_eq!(listed, on_disk);
+fn the_case_lists_name_every_golden_file() {
+    for (net, cases) in [("parser", PARSER_CASES), ("detector", DETECTOR_CASES)] {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../models/golden")
+            .join(net);
+        let mut on_disk: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect();
+        on_disk.sort();
+        let mut listed: Vec<String> = cases
+            .iter()
+            .map(|(name, _)| format!("{name}.json"))
+            .collect();
+        listed.sort();
+        assert_eq!(listed, on_disk, "models/golden/{net}");
+    }
 }

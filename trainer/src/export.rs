@@ -1,9 +1,11 @@
 //! `trainer export`: the shipping bundle and the golden vectors.
 //!
-//! The bundle is the quantized safetensors file with the manifest in its metadata header, so
-//! one fetch and one checksum cover everything the library needs. Golden vectors hold, per
-//! case, the features the trainer computed, the f32 logits, the dequantized int8 logits, and
-//! the decoded labels, so the library can check its features and its forward pass separately.
+//! The bundle is one safetensors file holding both quantized networks, `parser.*` and
+//! `detector.*`, with the manifest in its metadata header, so one fetch and one checksum cover
+//! everything the library needs. Golden vectors hold, per case, the features the trainer
+//! computed, the f32 logits, the dequantized int8 logits, and the decoded labels (and for the
+//! detector the rule-span mask), so the library can check its features and its forward pass
+//! separately.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -15,13 +17,15 @@ use burn::prelude::*;
 use burn::tensor::activation::softmax;
 use safetensors::SafeTensors;
 use sha2::{Digest, Sha256};
-use tessera::internal::parser_label_strings;
+use tessera::internal::{detector_label_strings, parser_label_strings};
 
+use crate::config::{Config, Task};
 use crate::data::{Split, read_shard};
 use crate::dataset::{
     Encoded, FLAG_BITS, MAX_NGRAMS_PER_TOKEN, PARSER_LABELS, ParserBatch, ParserBatcher,
     SCRIPT_ROWS, SHAPE_ROWS, encode,
 };
+use crate::detector::{self, DETECTOR_LABELS};
 use crate::model_eval::decode_probs;
 use crate::net::TaggerNet;
 use crate::quantize::{self, F32Tensor, QTensor};
@@ -35,6 +39,41 @@ pub const GOLDEN_TOLERANCE: f64 = 1e-3;
 const GOLDEN_PER_COUNTRY: usize = 4;
 const GOLDEN_LONG_TOKENS: usize = 200;
 
+/// Detector golden inputs, each one window: a GB signature, a DE letterhead, a Georgian
+/// signature, a Japanese signature, a tab table, prose with hard negatives, a document with
+/// only an email and a phone, and a one-word document. Contact details are reserved.
+const DETECTOR_GOLDEN_TEXTS: [(&str, &str); 8] = [
+    (
+        "signature-gb",
+        "Thanks again for the quick turnaround.\n\nKind regards,\n\nOliver Bennett\nHead of Operations\nHarbour Line Logistics Ltd\n14 Wharf Road, Leeds LS1 4AP\n+44 113 496 0123\noliver.bennett@harbourline.example",
+    ),
+    (
+        "letterhead-de",
+        "Brandt & Söhne GmbH\nFriedrichstraße 88\n10117 Berlin\nTel. 030 23125 456\n\n12. Oktober 2026\n\nSehr geehrte Frau Keller,\n\nanbei erhalten Sie die Unterlagen.\n\nMit freundlichen Grüßen\nJonas Weber",
+    ),
+    (
+        "signature-ge",
+        "მადლობა, შეხვედრამდე ორშაბათს.\n\nნინო ბერიძე\nშპს კავკასიის ტვირთი\nრუსთაველის გამზირი 14, თბილისი 0108\nnino@kavkaz-freight.example",
+    ),
+    (
+        "signature-jp",
+        "よろしくお願いいたします。\n\n山田太郎\n株式会社サクラ物流\n〒150-0002 東京都渋谷区渋谷2丁目21-1\ntaro.yamada@sakura-logistics.example",
+    ),
+    (
+        "table-tab",
+        "Name\tCompany\tEmail\nAnna Schmidt\tNordlicht Verlag GmbH\tanna@nordlicht.example\nJames Carter\tBlue Ridge Supply Co\tjcarter@blueridge.test",
+    ),
+    (
+        "prose-negatives",
+        "In April the team in Georgia met Ford engineers in Jordan. Grace Liu of Meridian Health Partners said the Abraham Lincoln High School project was on track, and May will review the plan.",
+    ),
+    (
+        "rules-only",
+        "Reach us at help@desk.example or (212) 555-0142.",
+    ),
+    ("one-word", "Hello"),
+];
+
 fn sha256_hex(bytes: &[u8]) -> String {
     hex(&Sha256::digest(bytes))
 }
@@ -46,11 +85,7 @@ pub(crate) fn hex(digest: &[u8]) -> String {
 
 /// The bundle's `__metadata__`: format, versions, label sets, feature settings, and data
 /// provenance.
-pub fn metadata(
-    cfg: &crate::config::Config,
-    snapshot: &str,
-    date: &str,
-) -> BTreeMap<String, String> {
+pub fn metadata(cfg: &Config, snapshot: &str, date: &str) -> BTreeMap<String, String> {
     let features = serde_json::json!({
         "ngram_sizes": cfg.features.ngram_sizes,
         "hash_buckets": cfg.features.hash_buckets,
@@ -64,29 +99,28 @@ pub fn metadata(
     BTreeMap::from([
         ("format".to_string(), FORMAT.to_string()),
         ("model_version".to_string(), MODEL_VERSION.to_string()),
-        ("nets".to_string(), "parser".to_string()),
-        ("detector_labels".to_string(), "[]".to_string()),
+        ("nets".to_string(), "parser,detector".to_string()),
         (
-            "parser_labels".to_string(),
-            serde_json::to_string(&parser_label_strings()).expect("strings serialize"),
+            "detector_labels".to_string(),
+            json(&detector_label_strings()),
         ),
+        ("parser_labels".to_string(), json(&parser_label_strings())),
         ("feature_config".to_string(), features.to_string()),
         (
             "phone_metadata_version".to_string(),
             "libphonenumber v9.0.33 generated tables".to_string(),
         ),
         ("supported_regions".to_string(), "[]".to_string()),
-        (
-            "experimental_regions".to_string(),
-            serde_json::to_string(&experimental).expect("strings serialize"),
-        ),
-        (
-            "training_snapshot".to_string(),
-            format!("parser-sample:{snapshot}"),
-        ),
+        ("experimental_regions".to_string(), json(&experimental)),
+        ("training_snapshot".to_string(), snapshot.to_string()),
         ("report_url".to_string(), String::new()),
         ("created".to_string(), date.to_string()),
     ])
+}
+
+/// A label or region list as the manifest stores it, a JSON array in a string.
+fn json<T: serde::Serialize>(v: &T) -> String {
+    serde_json::to_string(v).expect("lists of strings serialize")
 }
 
 /// Reads the quantized run file back into int8 tensors and f32 biases.
@@ -123,11 +157,15 @@ fn read_quantized(path: &Path) -> anyhow::Result<(Vec<QTensor>, Vec<F32Tensor>)>
     Ok((q, biases))
 }
 
-/// The library's forward pass is written for one architecture; the bundle does not describe
-/// it, so a run with another one must not be exported.
-fn check_library_shape(cfg: &crate::config::Config) -> anyhow::Result<()> {
-    let net = cfg.parser_net_config();
-    let ok = net.dilations == [1, 2, 4, 8]
+/// The library's forward passes are written for one architecture per network; the bundle
+/// does not describe it, so a run with another one must not be exported.
+fn check_library_shape(cfg: &Config) -> anyhow::Result<()> {
+    let net = cfg.tagger_net_config();
+    let dilations: &[usize] = match cfg.task {
+        Task::Parser => &[1, 2, 4, 8],
+        Task::Detector => &[1, 2, 4, 8, 16, 1],
+    };
+    let ok = net.dilations == dilations
         && net.kernel == 3
         && net.hidden == 96
         && net.ngram_dim == 48
@@ -135,8 +173,9 @@ fn check_library_shape(cfg: &crate::config::Config) -> anyhow::Result<()> {
         && net.shape_dim == 8;
     anyhow::ensure!(
         ok,
-        "the library runs dilations [1, 2, 4, 8], kernel 3, hidden 96, and embedding dims 48, 8, 8; \
-         this run has {:?}, {}, {}, and {}, {}, {}",
+        "the library runs the {} with dilations {dilations:?}, kernel 3, hidden 96, and embedding \
+         dims 48, 8, 8; this run has {:?}, {}, {}, and {}, {}, {}",
+        cfg.net_name(),
         net.dilations,
         net.kernel,
         net.hidden,
@@ -147,26 +186,106 @@ fn check_library_shape(cfg: &crate::config::Config) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// `trainer export`: writes the bundle, its checksum file, and the golden vectors.
-pub fn run(run_dir: &Path, out: &Path, date: &str) -> anyhow::Result<()> {
-    let cfg = crate::config::load(&run_dir.join("config.toml"))?;
+/// A trained run ready to ship: its config and its quantized weights.
+struct ShippedRun {
+    dir: PathBuf,
+    cfg: Config,
+    q: Vec<QTensor>,
+    biases: Vec<F32Tensor>,
+}
+
+fn load_run(dir: &Path, task: Task) -> anyhow::Result<ShippedRun> {
+    let cfg = crate::config::load(&dir.join("config.toml"))?;
+    anyhow::ensure!(
+        cfg.task == task,
+        "{} is a {:?} run, not a {task:?} run",
+        dir.display(),
+        cfg.task
+    );
     let gate: serde_json::Value = serde_json::from_slice(
-        &std::fs::read(run_dir.join("quantize.json"))
-            .with_context(|| format!("reading {}", run_dir.join("quantize.json").display()))?,
+        &std::fs::read(dir.join("quantize.json"))
+            .with_context(|| format!("reading {}", dir.join("quantize.json").display()))?,
     )?;
     anyhow::ensure!(
         gate["passed"] == true,
         "{} did not pass the quantization gate; run `trainer quantize` first",
-        run_dir.display()
+        dir.display()
     );
-    let (q, biases) = read_quantized(&run_dir.join("quantized.safetensors"))?;
     check_library_shape(&cfg)?;
-    let manifest = std::fs::read(&cfg.data.sample_manifest)
-        .with_context(|| format!("reading {}", cfg.data.sample_manifest))?;
-    let meta = metadata(&cfg, &sha256_hex(&manifest), date);
+    let (q, biases) = read_quantized(&dir.join("quantized.safetensors"))?;
+    Ok(ShippedRun {
+        dir: dir.to_path_buf(),
+        cfg,
+        q,
+        biases,
+    })
+}
 
+/// Both networks read features from one computation at inference, so their feature settings
+/// must be the same; the error names the first key that differs.
+fn check_same_features(parser: &Config, detector: &Config) -> anyhow::Result<()> {
+    let (a, b) = (
+        serde_json::to_value(&parser.features)?,
+        serde_json::to_value(&detector.features)?,
+    );
+    if let (Some(a), Some(b)) = (a.as_object(), b.as_object()) {
+        for (key, value) in a {
+            anyhow::ensure!(
+                b.get(key) == Some(value),
+                "the parser and detector runs differ in features.{key}: {value} against {}",
+                b.get(key).cloned().unwrap_or_default()
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Provenance of every data source the two networks learned from, as manifest checksums.
+fn training_snapshot(parser: &Config, detector: &Config) -> anyhow::Result<String> {
+    let manifests = PathBuf::from(&detector.data.manifests);
+    let mut parts = vec![(
+        "parser-sample".to_string(),
+        PathBuf::from(&parser.data.sample_manifest),
+    )];
+    for name in [
+        "detector-synthetic",
+        "wikidata-people",
+        "gleif-lei",
+        "wikidata-organizations",
+    ] {
+        parts.push((name.to_string(), manifests.join(format!("{name}.json"))));
+    }
+    parts
+        .iter()
+        .map(|(name, path)| {
+            let bytes =
+                std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
+            Ok(format!("{name}:{}", sha256_hex(&bytes)))
+        })
+        .collect::<anyhow::Result<Vec<_>>>()
+        .map(|p| p.join(","))
+}
+
+/// `trainer export`: writes the two-network bundle, its checksum file, and the golden vectors
+/// of both networks.
+pub fn run(parser_run: &Path, detector_run: &Path, out: &Path, date: &str) -> anyhow::Result<()> {
+    let parser = load_run(parser_run, Task::Parser)?;
+    let detector = load_run(detector_run, Task::Detector)?;
+    check_same_features(&parser.cfg, &detector.cfg)?;
+    let meta = metadata(
+        &parser.cfg,
+        &training_snapshot(&parser.cfg, &detector.cfg)?,
+        date,
+    );
     std::fs::create_dir_all(out)?;
     let bundle = out.join("tessera-v1.safetensors");
+    let q: Vec<QTensor> = parser.q.iter().chain(&detector.q).cloned().collect();
+    let biases: Vec<F32Tensor> = parser
+        .biases
+        .iter()
+        .chain(&detector.biases)
+        .cloned()
+        .collect();
     quantize::write_safetensors(&bundle, &q, &biases, Some(meta))?;
     let bytes = std::fs::read(&bundle)?;
     let checksum = format!("sha256-{}", sha256_hex(&bytes));
@@ -174,19 +293,33 @@ pub fn run(run_dir: &Path, out: &Path, date: &str) -> anyhow::Result<()> {
     println!("{} ({} bytes): {checksum}", bundle.display(), bytes.len());
 
     let device = Default::default();
-    let f32_model = quantize::load_best::<NdArray>(run_dir, &cfg, &device)?;
-    let dequantized: Vec<F32Tensor> = q
-        .iter()
-        .map(|t| quantize::dequantize(t, quantize::channel_axis(&t.name)))
-        .chain(biases.iter().cloned())
-        .collect();
-    let int8_model = quantize::inject::<NdArray>(&cfg.parser_net_config(), &dequantized, &device)?;
+    let fc = parser.cfg.features.to_tessera();
+    let (f32_parser, int8_parser) = models(&parser, &device)?;
     let golden_dir = out.join("golden").join("parser");
     std::fs::create_dir_all(&golden_dir)?;
-    let fc = cfg.features.to_tessera();
-    for (name, text) in golden_cases(&cfg, &fc)? {
+    for (name, text) in golden_cases(&parser.cfg, &fc)? {
         let enc = encode(&text, &[], &fc).map_err(|e| anyhow::anyhow!("{name}: {e}"))?;
-        let case = golden_case(&f32_model, &int8_model, &text, &enc, &device);
+        let case = golden_case("parser", &f32_parser, &int8_parser, &text, &enc, &device);
+        std::fs::write(
+            golden_dir.join(format!("{name}.json")),
+            golden_json(&case, 0) + "\n",
+        )?;
+    }
+    println!("golden vectors: {}", golden_dir.display());
+    let (f32_detector, int8_detector) = models(&detector, &device)?;
+    let golden_dir = out.join("golden").join("detector");
+    std::fs::create_dir_all(&golden_dir)?;
+    for (name, text) in DETECTOR_GOLDEN_TEXTS {
+        let enc = detector::encode_document(text, &[], &fc)
+            .map_err(|e| anyhow::anyhow!("{name}: {e}"))?;
+        let case = golden_case(
+            "detector",
+            &f32_detector,
+            &int8_detector,
+            text,
+            &enc,
+            &device,
+        );
         std::fs::write(
             golden_dir.join(format!("{name}.json")),
             golden_json(&case, 0) + "\n",
@@ -195,11 +328,11 @@ pub fn run(run_dir: &Path, out: &Path, date: &str) -> anyhow::Result<()> {
     println!("golden vectors: {}", golden_dir.display());
 
     let test = read_shard(
-        &PathBuf::from(&cfg.data.processed).join("test.parquet"),
+        &PathBuf::from(&parser.cfg.data.processed).join("test.parquet"),
         Split::Test,
     )?;
     let shipped = crate::model_eval::score_shipped(&bytes, &checksum, &test)?;
-    let eval_dir = run_dir.join("eval");
+    let eval_dir = parser.dir.join("eval");
     std::fs::create_dir_all(&eval_dir)?;
     std::fs::write(
         eval_dir.join("test-shipped.json"),
@@ -211,6 +344,28 @@ pub fn run(run_dir: &Path, out: &Path, date: &str) -> anyhow::Result<()> {
         shipped.exact_rate()
     );
     Ok(())
+}
+
+/// A run's best f32 model and the same model with its quantized weights dequantized, which is
+/// what the library computes.
+fn models(
+    run: &ShippedRun,
+    device: &burn::tensor::Device<NdArray>,
+) -> anyhow::Result<(TaggerNet<NdArray>, TaggerNet<NdArray>)> {
+    let f32_model = quantize::load_best::<NdArray>(&run.dir, &run.cfg, device)?;
+    let dequantized: Vec<F32Tensor> = run
+        .q
+        .iter()
+        .map(|t| quantize::dequantize(t, quantize::channel_axis(&t.name)))
+        .chain(run.biases.iter().cloned())
+        .collect();
+    let int8_model = quantize::inject::<NdArray>(
+        &run.cfg.tagger_net_config(),
+        &dequantized,
+        run.cfg.net_name(),
+        device,
+    )?;
+    Ok((f32_model, int8_model))
 }
 
 /// Indented JSON with every array of numbers or strings on one line, so a 200-token case is
@@ -302,7 +457,12 @@ fn golden_cases(
     Ok(out)
 }
 
-fn logits<B: Backend>(model: &TaggerNet<B>, enc: &Encoded, device: &B::Device) -> Vec<Vec<f32>> {
+fn logits<B: Backend>(
+    model: &TaggerNet<B>,
+    labels: usize,
+    enc: &Encoded,
+    device: &B::Device,
+) -> Vec<Vec<f32>> {
     let batch: ParserBatch<B> = ParserBatcher.batch(vec![enc.clone()], device);
     let out = model.forward(
         batch.ngram_ids,
@@ -312,21 +472,30 @@ fn logits<B: Backend>(model: &TaggerNet<B>, enc: &Encoded, device: &B::Device) -
         batch.mask.clone(),
     );
     let flat: Vec<f32> = out.into_data().to_vec().expect("logits are f32");
-    flat.chunks(PARSER_LABELS)
+    flat.chunks(labels)
         .take(enc.token_spans.len())
         .map(<[f32]>::to_vec)
         .collect()
 }
 
+/// One golden case. The parser's decoded labels are its transition-masked decode; the
+/// detector's are the most probable label per position, `O` where the rule-span mask is set,
+/// which the file also records.
 fn golden_case(
+    net: &str,
     f32_model: &TaggerNet<NdArray>,
     int8_model: &TaggerNet<NdArray>,
     text: &str,
     enc: &Encoded,
     device: &burn::tensor::Device<NdArray>,
 ) -> serde_json::Value {
-    let f32_logits = logits(f32_model, enc, device);
-    let int8_logits = logits(int8_model, enc, device);
+    let labels = if net == "detector" {
+        DETECTOR_LABELS
+    } else {
+        PARSER_LABELS
+    };
+    let f32_logits = logits(f32_model, labels, enc, device);
+    let int8_logits = logits(int8_model, labels, enc, device);
     let probs: Vec<Vec<f32>> = int8_logits
         .iter()
         .map(|row| {
@@ -337,15 +506,28 @@ fn golden_case(
                 .expect("probabilities are f32")
         })
         .collect();
-    let decoded: Vec<u8> = decode_probs(&probs).into_iter().map(|d| d.0).collect();
+    let masked: Vec<bool> = enc
+        .flags
+        .iter()
+        .map(|f| f & tessera::internal::flag::IN_RULE_SPAN != 0)
+        .collect();
+    let decoded: Vec<u8> = if net == "detector" {
+        probs
+            .iter()
+            .zip(&masked)
+            .map(|(p, &m)| if m { 0 } else { argmax(p) as u8 })
+            .collect()
+    } else {
+        decode_probs(&probs).into_iter().map(|d| d.0).collect()
+    };
     let features: Vec<serde_json::Value> = (0..enc.token_spans.len())
         .map(|t| {
             let ids: Vec<u32> = enc.ngram_ids[t].iter().map(|i| i - 1).collect();
             serde_json::json!({ "ngram_ids": ids, "script": enc.script[t], "shape": enc.shape[t], "flags": enc.flags[t] })
         })
         .collect();
-    serde_json::json!({
-        "net": "parser",
+    let mut case = serde_json::json!({
+        "net": net,
         "bundle_version": MODEL_VERSION,
         "input": {
             "text": text,
@@ -356,7 +538,21 @@ fn golden_case(
         "int8_logits": int8_logits,
         "decoded": decoded,
         "tolerance": GOLDEN_TOLERANCE,
-    })
+    });
+    if net == "detector" {
+        case["masked"] = serde_json::json!(masked);
+    }
+    case
+}
+
+fn argmax(p: &[f32]) -> usize {
+    p.iter()
+        .enumerate()
+        .fold(
+            (0, f32::MIN),
+            |best, (i, &v)| if v > best.1 { (i, v) } else { best },
+        )
+        .0
 }
 
 #[cfg(test)]
@@ -391,7 +587,7 @@ mod tests {
             &Path::new(env!("CARGO_MANIFEST_DIR")).join("../configs/parser-small.toml"),
         )
         .unwrap();
-        let m = metadata(&cfg, "abc", "2026-09-22");
+        let m = metadata(&cfg, "parser-sample:abc", "2026-09-22");
         for key in [
             "format",
             "model_version",

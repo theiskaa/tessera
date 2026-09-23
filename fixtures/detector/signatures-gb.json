@@ -1,0 +1,237 @@
+{
+  "cases": [
+    {
+      "name": "single signature",
+      "country": "GB",
+      "input": "Kind regards,\n\nOliver Bennett\nHarbour Line Logistics Ltd\n14 Wharf Road, Leeds LS1 4AP\n+44 113 496 0123\noliver.bennett@harbourline.example",
+      "expected": [
+        {
+          "kind": "person",
+          "text": "Oliver Bennett",
+          "start": 15,
+          "end": 29
+        },
+        {
+          "kind": "org",
+          "text": "Harbour Line Logistics Ltd",
+          "start": 30,
+          "end": 56
+        },
+        {
+          "kind": "address",
+          "text": "14 Wharf Road, Leeds LS1 4AP",
+          "start": 57,
+          "end": 85
+        },
+        {
+          "kind": "phone",
+          "text": "+44 113 496 0123",
+          "start": 86,
+          "end": 102
+        },
+        {
+          "kind": "email",
+          "text": "oliver.bennett@harbourline.example",
+          "start": 103,
+          "end": 137
+        }
+      ],
+      "must_not": [],
+      "known_failure": true
+    },
+    {
+      "name": "signature with a title line",
+      "country": "GB",
+      "input": "Best,\nSarah Collins\nFinance Director\nNorthgate Advisory LLP\nsarah.collins@northgate.example",
+      "expected": [
+        {
+          "kind": "person",
+          "text": "Sarah Collins",
+          "start": 6,
+          "end": 19
+        },
+        {
+          "kind": "org",
+          "text": "Northgate Advisory LLP",
+          "start": 37,
+          "end": 59
+        },
+        {
+          "kind": "email",
+          "text": "sarah.collins@northgate.example",
+          "start": 60,
+          "end": 91
+        }
+      ],
+      "must_not": [
+        {
+          "kind": "person",
+          "text": "Finance Director"
+        }
+      ],
+      "known_failure": true
+    },
+    {
+      "name": "signature with a drama mobile",
+      "country": "GB",
+      "input": "Cheers,\nTom Hughes\nM 07700 900456\ntom@hughesdesign.test",
+      "expected": [
+        {
+          "kind": "person",
+          "text": "Tom Hughes",
+          "start": 8,
+          "end": 18
+        },
+        {
+          "kind": "phone",
+          "text": "07700 900456",
+          "start": 21,
+          "end": 33
+        },
+        {
+          "kind": "email",
+          "text": "tom@hughesdesign.test",
+          "start": 34,
+          "end": 55
+        }
+      ],
+      "must_not": [],
+      "known_failure": true
+    },
+    {
+      "name": "two signatures in one thread",
+      "country": "GB",
+      "input": "Thanks, that works.\n\nRegards,\nEmma Clarke\nPennine Water Services Ltd\nemma.clarke@pennine.example\n\n-----Original Message-----\nFrom: Tom Hughes\nSent: Monday\n\nCould you confirm the delivery date?\n\nTom Hughes\n+44 20 7946 0555",
+      "expected": [
+        {
+          "kind": "person",
+          "text": "Emma Clarke",
+          "start": 30,
+          "end": 41
+        },
+        {
+          "kind": "org",
+          "text": "Pennine Water Services Ltd",
+          "start": 42,
+          "end": 68
+        },
+        {
+          "kind": "email",
+          "text": "emma.clarke@pennine.example",
+          "start": 69,
+          "end": 96
+        },
+        {
+          "kind": "person",
+          "text": "Tom Hughes",
+          "start": 194,
+          "end": 204
+        },
+        {
+          "kind": "phone",
+          "text": "+44 20 7946 0555",
+          "start": 205,
+          "end": 221
+        }
+      ],
+      "must_not": []
+    },
+    {
+      "name": "an eponymous company in a signature",
+      "country": "GB",
+      "input": "Regards,\nDaniel Price\nFord\n+44 20 7946 0321",
+      "expected": [
+        {
+          "kind": "person",
+          "text": "Daniel Price",
+          "start": 9,
+          "end": 21
+        },
+        {
+          "kind": "org",
+          "text": "Ford",
+          "start": 22,
+          "end": 26
+        },
+        {
+          "kind": "phone",
+          "text": "+44 20 7946 0321",
+          "start": 27,
+          "end": 43
+        }
+      ],
+      "must_not": []
+    },
+    {
+      "name": "a person named April",
+      "country": "GB",
+      "input": "See you then.\n\nRegards,\nApril Morgan\napril.morgan@riverside.example",
+      "expected": [
+        {
+          "kind": "person",
+          "text": "April Morgan",
+          "start": 24,
+          "end": 36
+        },
+        {
+          "kind": "email",
+          "text": "april.morgan@riverside.example",
+          "start": 37,
+          "end": 67
+        }
+      ],
+      "must_not": []
+    },
+    {
+      "name": "April the month",
+      "country": "GB",
+      "input": "We will ship the order in April.\n\nRegards,\nJames Walker",
+      "expected": [
+        {
+          "kind": "person",
+          "text": "James Walker",
+          "start": 43,
+          "end": 55
+        }
+      ],
+      "must_not": [
+        {
+          "kind": "person",
+          "text": "April"
+        }
+      ]
+    },
+    {
+      "name": "a multi-line address in a signature",
+      "country": "GB",
+      "input": "Kind regards\nRachel Adams\nAdams & Webb Solicitors\n3 Castle Street\nManchester M3 4LZ\n+44 161 496 0789",
+      "expected": [
+        {
+          "kind": "person",
+          "text": "Rachel Adams",
+          "start": 13,
+          "end": 25
+        },
+        {
+          "kind": "org",
+          "text": "Adams & Webb Solicitors",
+          "start": 26,
+          "end": 49
+        },
+        {
+          "kind": "address",
+          "text": "3 Castle Street\nManchester M3 4LZ",
+          "start": 50,
+          "end": 83
+        },
+        {
+          "kind": "phone",
+          "text": "+44 161 496 0789",
+          "start": 84,
+          "end": 100
+        }
+      ],
+      "must_not": []
+    }
+  ]
+}

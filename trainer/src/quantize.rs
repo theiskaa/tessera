@@ -1,6 +1,7 @@
 //! `trainer quantize`: per-output-channel symmetric int8 weights with f32 scales, biases kept
-//! in f32, written as `runs/<name>/quantized.safetensors` under the shipping tensor names,
-//! then re-scored on the validation split; the run fails if component F1 drops by more than
+//! in f32, written as `runs/<name>/quantized.safetensors` under the shipping tensor names
+//! (`parser.*` or `detector.*`), then re-scored on the validation split; the run fails if its
+//! F1 (component F1 for the parser, macro exact span F1 for the detector) drops by more than
 //! `MAX_F1_DROP`.
 //!
 //! For a weight whose first dimension indexes output channels:
@@ -19,6 +20,7 @@ use burn::record::{FullPrecisionSettings, NamedMpkFileRecorder};
 use burn::tensor::TensorData;
 
 use crate::data::{LabelledExample, Split, read_shard};
+use crate::detector;
 use crate::model_eval::{encode_examples, quick_score};
 use crate::net::{TaggerNet, TaggerNetConfig};
 
@@ -62,47 +64,47 @@ fn to_vec<B: Backend, const D: usize>(t: Tensor<B, D>) -> (Vec<usize>, Vec<f32>)
     )
 }
 
-/// Every parameter of the parser under its shipping name. Linear weights are transposed from
-/// Burn's `[in, out]` to `[out, in]`; conv weights keep `[out, in, kernel]`.
-pub fn extract<B: Backend>(model: &TaggerNet<B>) -> Vec<F32Tensor> {
+/// Every parameter of a tagger under its shipping name, `<net>.*`. Linear weights are
+/// transposed from Burn's `[in, out]` to `[out, in]`; conv weights keep `[out, in, kernel]`.
+pub fn extract<B: Backend>(model: &TaggerNet<B>, net: &str) -> Vec<F32Tensor> {
     let mut out = Vec::new();
     let mut push = |name: String, (shape, data): (Vec<usize>, Vec<f32>)| {
         out.push(F32Tensor { name, shape, data })
     };
     push(
-        "parser.embed.ngram".into(),
+        format!("{net}.embed.ngram"),
         to_vec(model.ngram.weight.val()),
     );
     push(
-        "parser.embed.script".into(),
+        format!("{net}.embed.script"),
         to_vec(model.script.weight.val()),
     );
     push(
-        "parser.embed.shape".into(),
+        format!("{net}.embed.shape"),
         to_vec(model.shape.weight.val()),
     );
     push(
-        "parser.proj.weight".into(),
+        format!("{net}.proj.weight"),
         to_vec(model.proj.weight.val().transpose()),
     );
     if let Some(b) = &model.proj.bias {
-        push("parser.proj.bias".into(), to_vec(b.val()));
+        push(format!("{net}.proj.bias"), to_vec(b.val()));
     }
     for (i, block) in model.blocks.iter().enumerate() {
         push(
-            format!("parser.block{i}.conv.weight"),
+            format!("{net}.block{i}.conv.weight"),
             to_vec(block.conv.weight.val()),
         );
         if let Some(b) = &block.conv.bias {
-            push(format!("parser.block{i}.conv.bias"), to_vec(b.val()));
+            push(format!("{net}.block{i}.conv.bias"), to_vec(b.val()));
         }
     }
     push(
-        "parser.head.weight".into(),
+        format!("{net}.head.weight"),
         to_vec(model.head.weight.val().transpose()),
     );
     if let Some(b) = &model.head.bias {
-        push("parser.head.bias".into(), to_vec(b.val()));
+        push(format!("{net}.head.bias"), to_vec(b.val()));
     }
     out
 }
@@ -122,10 +124,11 @@ fn tensor<B: Backend, const D: usize>(
     ))
 }
 
-/// A model whose parameters are `tensors`, given in the shipping names and layouts.
+/// A model whose parameters are `tensors`, given in the shipping names `<net>.*` and layouts.
 pub fn inject<B: Backend>(
     cfg: &TaggerNetConfig,
     tensors: &[F32Tensor],
+    net: &str,
     device: &B::Device,
 ) -> anyhow::Result<TaggerNet<B>> {
     let by_name: HashMap<&str, &F32Tensor> = tensors.iter().map(|t| (t.name.as_str(), t)).collect();
@@ -136,29 +139,31 @@ pub fn inject<B: Backend>(
             .with_context(|| format!("missing tensor `{name}`"))
     };
     let mut model = cfg.init::<B>(device);
-    model.ngram.weight = Param::from_tensor(tensor(get("parser.embed.ngram")?, device)?);
-    model.script.weight = Param::from_tensor(tensor(get("parser.embed.script")?, device)?);
-    model.shape.weight = Param::from_tensor(tensor(get("parser.embed.shape")?, device)?);
-    model.proj.weight =
-        Param::from_tensor(tensor::<B, 2>(get("parser.proj.weight")?, device)?.transpose());
+    model.ngram.weight = Param::from_tensor(tensor(get(&format!("{net}.embed.ngram"))?, device)?);
+    model.script.weight = Param::from_tensor(tensor(get(&format!("{net}.embed.script"))?, device)?);
+    model.shape.weight = Param::from_tensor(tensor(get(&format!("{net}.embed.shape"))?, device)?);
+    model.proj.weight = Param::from_tensor(
+        tensor::<B, 2>(get(&format!("{net}.proj.weight"))?, device)?.transpose(),
+    );
     model.proj.bias = Some(Param::from_tensor(tensor(
-        get("parser.proj.bias")?,
+        get(&format!("{net}.proj.bias"))?,
         device,
     )?));
     for (i, block) in model.blocks.iter_mut().enumerate() {
         block.conv.weight = Param::from_tensor(tensor(
-            get(&format!("parser.block{i}.conv.weight"))?,
+            get(&format!("{net}.block{i}.conv.weight"))?,
             device,
         )?);
         block.conv.bias = Some(Param::from_tensor(tensor(
-            get(&format!("parser.block{i}.conv.bias"))?,
+            get(&format!("{net}.block{i}.conv.bias"))?,
             device,
         )?));
     }
-    model.head.weight =
-        Param::from_tensor(tensor::<B, 2>(get("parser.head.weight")?, device)?.transpose());
+    model.head.weight = Param::from_tensor(
+        tensor::<B, 2>(get(&format!("{net}.head.weight"))?, device)?.transpose(),
+    );
     model.head.bias = Some(Param::from_tensor(tensor(
-        get("parser.head.bias")?,
+        get(&format!("{net}.head.bias"))?,
         device,
     )?));
     Ok(model)
@@ -303,13 +308,13 @@ pub fn write_safetensors(
     std::fs::write(path, out).with_context(|| format!("writing {}", path.display()))
 }
 
-/// Loads a run's best checkpoint.
+/// Loads a run's best checkpoint, a parser or a detector as its config's task says.
 pub fn load_best<B: Backend>(
     run_dir: &Path,
     cfg: &crate::config::Config,
     device: &B::Device,
 ) -> anyhow::Result<TaggerNet<B>> {
-    cfg.parser_net_config()
+    cfg.tagger_net_config()
         .init::<B>(device)
         .load_file(
             run_dir.join("best"),
@@ -322,12 +327,70 @@ pub fn load_best<B: Backend>(
 /// F1 may drop by at most this much when the weights go to int8.
 const MAX_F1_DROP: f64 = 0.002;
 
+/// Validation F1 of the f32 and the int8 model, with the summary keys to record them under:
+/// component F1 and exact parses for the parser, macro exact span F1 for the detector.
+fn validation_scores<B: Backend>(
+    cfg: &crate::config::Config,
+    model: &TaggerNet<B>,
+    int8_model: &TaggerNet<B>,
+    device: &B::Device,
+) -> anyhow::Result<(f64, f64, serde_json::Map<String, serde_json::Value>)> {
+    let fc = cfg.features.to_tessera();
+    let processed = std::path::PathBuf::from(&cfg.data.processed);
+    let mut fields = serde_json::Map::new();
+    match cfg.task {
+        crate::config::Task::Parser => {
+            let valid: Vec<LabelledExample> =
+                read_shard(&processed.join("valid.parquet"), Split::Valid)?
+                    .into_iter()
+                    .filter(|e| !e.augmented)
+                    .collect();
+            let (kept, items) = encode_examples(&valid, &fc);
+            let f32_score = quick_score(model, &kept, &items, cfg.train.batch_size, device);
+            let int8_score = quick_score(int8_model, &kept, &items, cfg.train.batch_size, device);
+            fields.insert(
+                "valid_f32_component_f1".into(),
+                f32_score.component_f1.into(),
+            );
+            fields.insert(
+                "valid_int8_component_f1".into(),
+                int8_score.component_f1.into(),
+            );
+            fields.insert("valid_f32_exact".into(), f32_score.exact.into());
+            fields.insert("valid_int8_exact".into(), int8_score.exact.into());
+            Ok((f32_score.component_f1, int8_score.component_f1, fields))
+        }
+        crate::config::Task::Detector => {
+            let (docs, _) = detector::load_split(&processed, Split::Valid, &fc)?;
+            let gold: Vec<_> = docs.iter().map(|d| d.gold.clone()).collect();
+            let score = |m: &TaggerNet<B>| {
+                detector::score(
+                    &gold,
+                    &detector::predict(m, &docs, cfg.train.batch_size, device),
+                )
+            };
+            let (f32_score, int8_score) = (score(model), score(int8_model));
+            fields.insert(
+                "valid_f32_macro_exact_f1".into(),
+                f32_score.macro_exact_f1.into(),
+            );
+            fields.insert(
+                "valid_int8_macro_exact_f1".into(),
+                int8_score.macro_exact_f1.into(),
+            );
+            fields.insert("valid_int8".into(), serde_json::to_value(&int8_score)?);
+            Ok((f32_score.macro_exact_f1, int8_score.macro_exact_f1, fields))
+        }
+    }
+}
+
 /// `trainer quantize`: quantizes the best checkpoint and fails if validation F1 drops by more
 /// than the allowed margin.
 pub fn run<B: Backend>(run_dir: &Path, device: &B::Device) -> anyhow::Result<()> {
     let cfg = crate::config::load(&run_dir.join("config.toml"))?;
+    let net = cfg.net_name();
     let model = load_best::<B>(run_dir, &cfg, device)?;
-    let tensors = extract(&model);
+    let tensors = extract(&model, net);
     let (q, biases, dequantized) = quantize_all(&tensors);
     let path = run_dir.join("quantized.safetensors");
     write_safetensors(&path, &q, &biases, None)?;
@@ -337,44 +400,29 @@ pub fn run<B: Backend>(run_dir: &Path, device: &B::Device) -> anyhow::Result<()>
         .zip(&dequantized)
         .flat_map(|(a, b)| a.data.iter().zip(&b.data).map(|(x, y)| (x - y).abs()))
         .fold(0f32, f32::max);
-    let int8_model = inject::<B>(&cfg.parser_net_config(), &dequantized, device)?;
-    let fc = cfg.features.to_tessera();
-    let valid: Vec<LabelledExample> = read_shard(
-        &std::path::PathBuf::from(&cfg.data.processed).join("valid.parquet"),
-        Split::Valid,
-    )?
-    .into_iter()
-    .filter(|e| !e.augmented)
-    .collect();
-    let (kept, items) = encode_examples(&valid, &fc);
-    let f32_score = quick_score(&model, &kept, &items, cfg.train.batch_size, device);
-    let int8_score = quick_score(&int8_model, &kept, &items, cfg.train.batch_size, device);
+    let int8_model = inject::<B>(&cfg.tagger_net_config(), &dequantized, net, device)?;
+    let (f32_f1, int8_f1, fields) = validation_scores(&cfg, &model, &int8_model, device)?;
     let file_bytes = std::fs::metadata(&path)?.len();
-    let drop = f32_score.component_f1 - int8_score.component_f1;
+    let drop = f32_f1 - int8_f1;
     let passed = drop <= MAX_F1_DROP;
-    let summary = serde_json::json!({
-        "passed": passed,
-        "valid_f32_component_f1": f32_score.component_f1,
-        "valid_int8_component_f1": int8_score.component_f1,
-        "valid_f32_exact": f32_score.exact,
-        "valid_int8_exact": int8_score.exact,
-        "max_abs_weight_error": max_err,
-        "file_bytes": file_bytes,
-    });
+    let mut summary = serde_json::Map::new();
+    summary.insert("passed".into(), passed.into());
+    summary.extend(fields);
+    summary.insert("max_abs_weight_error".into(), max_err.into());
+    summary.insert("file_bytes".into(), file_bytes.into());
     std::fs::write(
         run_dir.join("quantize.json"),
         serde_json::to_string_pretty(&summary)? + "\n",
     )?;
     println!(
-        "valid component F1: f32 {:.4}, int8 {:.4}; max weight error {max_err:.2e}; {} bytes",
-        f32_score.component_f1, int8_score.component_f1, file_bytes
+        "{net} validation F1: f32 {f32_f1:.4}, int8 {int8_f1:.4}; max weight error {max_err:.2e}; {file_bytes} bytes"
     );
     if !passed {
         // Renamed so that `export`, which reads `quantized.safetensors`, cannot ship it.
         let rejected = run_dir.join("quantized.rejected.safetensors");
         std::fs::rename(&path, &rejected)?;
         bail!(
-            "int8 weights lose {drop:.4} component F1, over the {MAX_F1_DROP} limit; {} kept for inspection",
+            "int8 weights lose {drop:.4} F1, over the {MAX_F1_DROP} limit; {} kept for inspection",
             rejected.display()
         );
     }
@@ -433,7 +481,7 @@ mod tests {
         let device = Default::default();
         let cfg = TaggerNetConfig::new(64, vec![1, 2, 4, 8], crate::dataset::PARSER_LABELS);
         let model = cfg.init::<NdArray>(&device);
-        let tensors = extract(&model);
+        let tensors = extract(&model, "parser");
         assert_eq!(tensors.len(), 15);
         assert_eq!(
             tensors
@@ -451,7 +499,7 @@ mod tests {
                 .shape,
             vec![23, 96]
         );
-        let back = inject::<NdArray>(&cfg, &tensors, &device).unwrap();
-        assert_eq!(extract(&back), tensors);
+        let back = inject::<NdArray>(&cfg, &tensors, "parser", &device).unwrap();
+        assert_eq!(extract(&back, "parser"), tensors);
     }
 }

@@ -1,0 +1,220 @@
+{
+  "cases": [
+    {
+      "name": "GmbH letterhead with the Berlin fiction number",
+      "country": "DE",
+      "input": "Brandt & Söhne GmbH\nFriedrichstraße 88\n10117 Berlin\nTel. 030 23125 456",
+      "expected": [
+        {
+          "kind": "org",
+          "text": "Brandt & Söhne GmbH",
+          "start": 0,
+          "end": 20
+        },
+        {
+          "kind": "address",
+          "text": "Friedrichstraße 88\n10117 Berlin",
+          "start": 21,
+          "end": 53
+        },
+        {
+          "kind": "phone",
+          "text": "030 23125 456",
+          "start": 59,
+          "end": 72
+        }
+      ],
+      "must_not": []
+    },
+    {
+      "name": "formal closing",
+      "country": "DE",
+      "input": "Mit freundlichen Grüßen\n\nJonas Weber\nWeber Logistik GmbH\nHafenstraße 12, 20457 Hamburg\njonas.weber@weber-logistik.example",
+      "expected": [
+        {
+          "kind": "person",
+          "text": "Jonas Weber",
+          "start": 27,
+          "end": 38
+        },
+        {
+          "kind": "org",
+          "text": "Weber Logistik GmbH",
+          "start": 39,
+          "end": 58
+        },
+        {
+          "kind": "address",
+          "text": "Hafenstraße 12, 20457 Hamburg",
+          "start": 59,
+          "end": 89
+        },
+        {
+          "kind": "email",
+          "text": "jonas.weber@weber-logistik.example",
+          "start": 90,
+          "end": 124
+        }
+      ],
+      "must_not": []
+    },
+    {
+      "name": "postcode-first city line",
+      "country": "DE",
+      "input": "Nordlicht Verlag GmbH\nAm Markt 5\n04109 Leipzig\ninfo@nordlicht.example",
+      "expected": [
+        {
+          "kind": "org",
+          "text": "Nordlicht Verlag GmbH",
+          "start": 0,
+          "end": 21
+        },
+        {
+          "kind": "address",
+          "text": "Am Markt 5\n04109 Leipzig",
+          "start": 22,
+          "end": 46
+        },
+        {
+          "kind": "email",
+          "text": "info@nordlicht.example",
+          "start": 47,
+          "end": 69
+        }
+      ],
+      "must_not": []
+    },
+    {
+      "name": "letter body with a closing",
+      "country": "DE",
+      "input": "Sehr geehrte Damen und Herren,\n\nanbei erhalten Sie die Unterlagen.\n\nMit freundlichen Grüßen\nKatrin Vogel",
+      "expected": [
+        {
+          "kind": "person",
+          "text": "Katrin Vogel",
+          "start": 94,
+          "end": 106
+        }
+      ],
+      "must_not": []
+    },
+    {
+      "name": "doctor with a law firm",
+      "country": "DE",
+      "input": "Dr. Stefan Hoffmann\nHoffmann & Partner Rechtsanwälte\nKönigsallee 20\n40212 Düsseldorf\nTelefon (030) 23125-789",
+      "expected": [
+        {
+          "kind": "person",
+          "text": "Stefan Hoffmann",
+          "start": 4,
+          "end": 19
+        },
+        {
+          "kind": "org",
+          "text": "Hoffmann & Partner Rechtsanwälte",
+          "start": 20,
+          "end": 53
+        },
+        {
+          "kind": "address",
+          "text": "Königsallee 20\n40212 Düsseldorf",
+          "start": 54,
+          "end": 87
+        },
+        {
+          "kind": "phone",
+          "text": "(030) 23125-789",
+          "start": 96,
+          "end": 111
+        }
+      ],
+      "must_not": [],
+      "known_failure": true
+    },
+    {
+      "name": "pipe-separated signature",
+      "country": "DE",
+      "input": "Anna Schmidt | Einkauf | Rhein Maschinenbau AG\nIndustriestraße 7, 50667 Köln | +49 30 23125 234",
+      "expected": [
+        {
+          "kind": "person",
+          "text": "Anna Schmidt",
+          "start": 0,
+          "end": 12
+        },
+        {
+          "kind": "org",
+          "text": "Rhein Maschinenbau AG",
+          "start": 25,
+          "end": 46
+        },
+        {
+          "kind": "address",
+          "text": "Industriestraße 7, 50667 Köln",
+          "start": 47,
+          "end": 78
+        },
+        {
+          "kind": "phone",
+          "text": "+49 30 23125 234",
+          "start": 81,
+          "end": 97
+        }
+      ],
+      "must_not": [],
+      "known_failure": true
+    },
+    {
+      "name": "invoice number is not a phone",
+      "country": "DE",
+      "input": "Bäckerei Krüger KG\nLindenallee 3\n14469 Potsdam\n\nRechnung Nr. 2026-0412",
+      "expected": [
+        {
+          "kind": "org",
+          "text": "Bäckerei Krüger KG",
+          "start": 0,
+          "end": 20
+        },
+        {
+          "kind": "address",
+          "text": "Lindenallee 3\n14469 Potsdam",
+          "start": 21,
+          "end": 48
+        }
+      ],
+      "must_not": [
+        {
+          "kind": "phone",
+          "text": "2026-0412"
+        }
+      ]
+    },
+    {
+      "name": "on behalf of",
+      "country": "DE",
+      "input": "Mit freundlichen Grüßen\ni. A. Markus Braun\nSeidel Elektrotechnik GmbH\nmarkus.braun@seidel-et.test",
+      "expected": [
+        {
+          "kind": "person",
+          "text": "Markus Braun",
+          "start": 32,
+          "end": 44
+        },
+        {
+          "kind": "org",
+          "text": "Seidel Elektrotechnik GmbH",
+          "start": 45,
+          "end": 71
+        },
+        {
+          "kind": "email",
+          "text": "markus.braun@seidel-et.test",
+          "start": 72,
+          "end": 99
+        }
+      ],
+      "must_not": [],
+      "known_failure": true
+    }
+  ]
+}
