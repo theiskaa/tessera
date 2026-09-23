@@ -1,0 +1,44 @@
+[package]
+name = "site"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "site"
+path = "src/main.rs"
+
+[[bin]]
+name = "worker"
+path = "src/worker.rs"
+
+[dependencies]
+tessera.workspace = true
+serde.workspace = true
+leptos = { version = "0.8", features = ["csr"] }
+gloo-worker = { version = "0.6", features = ["futures"] }
+gloo-net = { version = "0.7", default-features = false, features = ["http"] }
+console_error_panic_hook = "0.1"
+js-sys = "0.3"
+wasm-bindgen.workspace = true
+web-sys = { version = "0.3", features = [
+    "Document",
+    "DomRect",
+    "ErrorEvent",
+    "HtmlDivElement",
+    "MediaQueryList",
+    "Node",
+    "ScrollBehavior",
+    "ScrollIntoViewOptions",
+    "ScrollLogicalPosition",
+    "ScrollToOptions",
+    "Url",
+    "Worker",
+] }
+
+[dev-dependencies]
+serde_json.workspace = true

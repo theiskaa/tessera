@@ -1,7 +1,8 @@
 # wasm-pack builds with its own fixed modes and ignores custom cargo profiles, so the
 # size-oriented release settings are applied here as profile overrides for wasm builds only;
 # native release builds of the trainer keep their speed-oriented profile.
-wasm_env := "CARGO_PROFILE_RELEASE_OPT_LEVEL=z CARGO_PROFILE_RELEASE_LTO=true CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1 CARGO_PROFILE_RELEASE_PANIC=abort CARGO_PROFILE_RELEASE_STRIP=true"
+size_env := "CARGO_PROFILE_RELEASE_OPT_LEVEL=z CARGO_PROFILE_RELEASE_LTO=true CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1 CARGO_PROFILE_RELEASE_PANIC=abort"
+wasm_env := size_env + " CARGO_PROFILE_RELEASE_STRIP=true"
 
 # `strip` drops the target-features section, so wasm-opt assumes MVP unless told what the wasm32
 # target enables by default since Rust 1.82. Only the SIMD build adds `--enable-simd`: an enabled
@@ -51,3 +52,9 @@ wasm-test +browsers="chrome firefox":
 js-test: wasm
     node tessera/js/test/smoke.mjs
     bun tessera/js/test/smoke.mjs
+
+# The showcase site in site/dist: the page, the inference worker, and the bundle. It takes
+# `size_env` but not strip: stripping drops the target-features section and Trunk's wasm-opt
+# then rejects `memory.copy`. Trunk.toml builds in release.
+site:
+    cd site && env {{size_env}} trunk build
