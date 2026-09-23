@@ -1,38 +1,7 @@
 {
   "cases": [
     {
-      "name": "single line with postcode",
-      "country": "GB",
-      "input": "221B Baker Street, London NW1 6XE",
-      "components": [
-        {
-          "label": "house_number",
-          "text": "221B",
-          "start": 0,
-          "end": 4
-        },
-        {
-          "label": "road",
-          "text": "Baker Street",
-          "start": 5,
-          "end": 17
-        },
-        {
-          "label": "city",
-          "text": "London",
-          "start": 19,
-          "end": 25
-        },
-        {
-          "label": "postcode",
-          "text": "NW1 6XE",
-          "start": 26,
-          "end": 33
-        }
-      ]
-    },
-    {
-      "name": "spec example with unit and country",
+      "name": "full address with flat",
       "country": "GB",
       "input": "Flat 4, 221B Baker Street, London NW1 6XE, UK",
       "components": [
@@ -75,7 +44,7 @@
       ]
     },
     {
-      "name": "multi line",
+      "name": "newline separated",
       "country": "GB",
       "input": "10 Downing Street\nLondon\nSW1A 2AA",
       "components": [
@@ -102,6 +71,254 @@
           "text": "SW1A 2AA",
           "start": 25,
           "end": 33
+        }
+      ]
+    },
+    {
+      "name": "unit with business park as outside text",
+      "country": "GB",
+      "input": "Unit 7 Riverside Business Park, Mill Lane, Leeds LS1 4AB",
+      "components": [
+        {
+          "label": "unit",
+          "text": "Unit 7",
+          "start": 0,
+          "end": 6
+        },
+        {
+          "label": "road",
+          "text": "Mill Lane",
+          "start": 32,
+          "end": 41
+        },
+        {
+          "label": "city",
+          "text": "Leeds",
+          "start": 43,
+          "end": 48
+        },
+        {
+          "label": "postcode",
+          "text": "LS1 4AB",
+          "start": 49,
+          "end": 56
+        }
+      ],
+      "expected_failure": "reads `Unit 7` as a house number and the business park, a venue the label map leaves outside the address, as a road"
+    },
+    {
+      "name": "level and suburb",
+      "country": "GB",
+      "input": "3rd Floor, 1 Canada Square, Canary Wharf, London E14 5AB",
+      "components": [
+        {
+          "label": "level",
+          "text": "3rd Floor",
+          "start": 0,
+          "end": 9
+        },
+        {
+          "label": "house_number",
+          "text": "1",
+          "start": 11,
+          "end": 12
+        },
+        {
+          "label": "road",
+          "text": "Canada Square",
+          "start": 13,
+          "end": 26
+        },
+        {
+          "label": "suburb",
+          "text": "Canary Wharf",
+          "start": 28,
+          "end": 40
+        },
+        {
+          "label": "city",
+          "text": "London",
+          "start": 42,
+          "end": 48
+        },
+        {
+          "label": "postcode",
+          "text": "E14 5AB",
+          "start": 49,
+          "end": 56
+        }
+      ]
+    },
+    {
+      "name": "po box",
+      "country": "GB",
+      "input": "PO Box 123, Manchester M1 1AA",
+      "components": [
+        {
+          "label": "po_box",
+          "text": "PO Box 123",
+          "start": 0,
+          "end": 10
+        },
+        {
+          "label": "city",
+          "text": "Manchester",
+          "start": 12,
+          "end": 22
+        },
+        {
+          "label": "postcode",
+          "text": "M1 1AA",
+          "start": 23,
+          "end": 29
+        }
+      ]
+    },
+    {
+      "name": "abbreviated road and country",
+      "country": "GB",
+      "input": "45 High St, Oxford, OX1 4AS, United Kingdom",
+      "components": [
+        {
+          "label": "house_number",
+          "text": "45",
+          "start": 0,
+          "end": 2
+        },
+        {
+          "label": "road",
+          "text": "High St",
+          "start": 3,
+          "end": 10
+        },
+        {
+          "label": "city",
+          "text": "Oxford",
+          "start": 12,
+          "end": 18
+        },
+        {
+          "label": "postcode",
+          "text": "OX1 4AS",
+          "start": 20,
+          "end": 27
+        },
+        {
+          "label": "country",
+          "text": "United Kingdom",
+          "start": 29,
+          "end": 43
+        }
+      ]
+    },
+    {
+      "name": "house name as outside text",
+      "country": "GB",
+      "input": "Rose Cottage, 12 Church Road, Bath BA1 1AA",
+      "components": [
+        {
+          "label": "house_number",
+          "text": "12",
+          "start": 14,
+          "end": 16
+        },
+        {
+          "label": "road",
+          "text": "Church Road",
+          "start": 17,
+          "end": 28
+        },
+        {
+          "label": "city",
+          "text": "Bath",
+          "start": 30,
+          "end": 34
+        },
+        {
+          "label": "postcode",
+          "text": "BA1 1AA",
+          "start": 35,
+          "end": 42
+        }
+      ]
+    },
+    {
+      "name": "flat with apostrophe road and region",
+      "country": "GB",
+      "input": "Flat 2B, 8 Queen's Crescent, Glasgow G4 9BL, Scotland",
+      "components": [
+        {
+          "label": "unit",
+          "text": "Flat 2B",
+          "start": 0,
+          "end": 7
+        },
+        {
+          "label": "house_number",
+          "text": "8",
+          "start": 9,
+          "end": 10
+        },
+        {
+          "label": "road",
+          "text": "Queen's Crescent",
+          "start": 11,
+          "end": 27
+        },
+        {
+          "label": "city",
+          "text": "Glasgow",
+          "start": 29,
+          "end": 36
+        },
+        {
+          "label": "postcode",
+          "text": "G4 9BL",
+          "start": 37,
+          "end": 43
+        },
+        {
+          "label": "region",
+          "text": "Scotland",
+          "start": 45,
+          "end": 53
+        }
+      ]
+    },
+    {
+      "name": "county is a district, as the label map sends state_district",
+      "country": "GB",
+      "input": "5 Church Lane, Aylesbury, Buckinghamshire HP20 1AA",
+      "components": [
+        {
+          "label": "house_number",
+          "text": "5",
+          "start": 0,
+          "end": 1
+        },
+        {
+          "label": "road",
+          "text": "Church Lane",
+          "start": 2,
+          "end": 13
+        },
+        {
+          "label": "city",
+          "text": "Aylesbury",
+          "start": 15,
+          "end": 24
+        },
+        {
+          "label": "district",
+          "text": "Buckinghamshire",
+          "start": 26,
+          "end": 41
+        },
+        {
+          "label": "postcode",
+          "text": "HP20 1AA",
+          "start": 42,
+          "end": 50
         }
       ]
     }

@@ -7,6 +7,7 @@
 //! binding boundary.
 
 mod features;
+mod model;
 mod policy;
 mod rules;
 mod token;
@@ -17,13 +18,39 @@ pub mod wasm;
 #[doc(hidden)]
 pub mod internal {
     pub use crate::features::{
-        FeatureConfig, TokenFeatures, featurize, flag, is_content, line_ranges,
+        FeatureConfig, MAX_NGRAMS_PER_TOKEN, TokenFeatures, featurize, flag, fnv1a, is_content,
+        line_ranges,
     };
+    pub use crate::model::bio::parser_label_strings;
+    pub use crate::model::{FLAG_BITS, PARSER_LABELS, SCRIPT_ROWS, SHAPE_ROWS};
     pub use crate::policy::display_confidence;
     pub use crate::rules::email::scan as scan_email;
     pub use crate::rules::phone::scan as scan_phone;
     pub use crate::rules::scan as scan_rules;
     pub use crate::token::{Script, Token, TokenClass, tokenize, utf16_offsets};
+
+    /// The intermediates of one `parse_address` call, for the golden-vector gate.
+    #[derive(Debug, Clone)]
+    pub struct ParseTrace {
+        /// Byte spans of the retained (non-whitespace) tokens.
+        pub token_spans: Vec<(usize, usize)>,
+        /// Features of the retained tokens.
+        pub features: Vec<TokenFeatures>,
+        /// Logits `[tokens, labels]`, row-major, before softmax.
+        pub logits: Vec<f32>,
+        /// Decoded label id per retained token.
+        pub decoded: Vec<u8>,
+        /// Probability of each decoded label.
+        pub probabilities: Vec<f32>,
+    }
+
+    /// `parse_address` up to decoding, keeping every intermediate.
+    pub fn parse_address_trace(
+        tessera: &crate::Tessera,
+        text: &str,
+    ) -> Result<ParseTrace, crate::Error> {
+        tessera.trace(text)
+    }
 }
 
 use std::ops::BitOr;
@@ -31,10 +58,15 @@ use std::ops::BitOr;
 /// Entity kinds the library can detect.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Kind {
+    /// A person's name.
     Person,
+    /// An organization's name.
     Org,
+    /// A postal address.
     Address,
+    /// An email address.
     Email,
+    /// A phone number.
     Phone,
 }
 
@@ -125,7 +157,9 @@ impl From<Kind> for KindSet {
 /// Which stage produced an entity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Source {
+    /// A trained network.
     Model,
+    /// The deterministic rules layer.
     Rules,
 }
 
@@ -150,17 +184,29 @@ impl Source {
 /// Address component labels, in taxonomy order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AddressLabel {
+    /// House or building number, `221B`.
     HouseNumber,
+    /// Street name with its type, `Baker Street`.
     Road,
+    /// Flat, apartment, or unit, `Flat 4`.
     Unit,
+    /// Floor, `3rd Floor`, `2. OG`.
     Level,
+    /// Neighbourhood within a city.
     Suburb,
+    /// City, town, or village.
     City,
+    /// County or city district.
     District,
+    /// State, province, or constituent country.
     Region,
+    /// Postal code.
     Postcode,
+    /// Country name.
     Country,
+    /// Post office box.
     PoBox,
+    /// A span the model found but could not label with confidence.
     Unknown,
 }
 
@@ -219,7 +265,8 @@ pub struct Component {
 }
 
 impl Component {
-    /// The component's text, sliced from the source the offsets refer to.
+    /// The component's text, sliced from the source the offsets refer to. Panics when given
+    /// any other string whose char boundaries differ.
     pub fn text<'a>(&self, source: &'a str) -> &'a str {
         &source[self.start..self.end]
     }
@@ -242,14 +289,16 @@ pub struct Entity {
     pub source: Source,
     /// Address only; empty for every other kind.
     pub components: Vec<Component>,
-    /// E.164 for phones, lowercased domain for emails; never a rewritten name or address.
+    /// E.164 for phones; for emails the address with its domain lowercased. Never a rewritten
+    /// name or address.
     pub normalized: Option<String>,
     /// Phone only, ISO 3166-1 alpha-2.
     pub region: Option<String>,
 }
 
 impl Entity {
-    /// The entity's text, sliced from the source the offsets refer to.
+    /// The entity's text, sliced from the source the offsets refer to. Panics when given any
+    /// other string whose char boundaries differ.
     pub fn text<'a>(&self, source: &'a str) -> &'a str {
         &source[self.start..self.end]
     }
@@ -290,16 +339,24 @@ pub struct Extraction {
 /// Failures are always typed; an empty successful result means inference ran and found nothing.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum Error {
-    #[error("weight bundle is invalid")]
+    /// The bundle is malformed, or lacks a network the requested kinds need.
+    #[error("weight bundle is invalid or lacks a network for the requested kinds")]
     BundleInvalid,
+    /// The bundle's bytes do not match `Config::expected_checksum`.
     #[error("weight bundle checksum does not match")]
     ChecksumMismatch,
-    #[error("weight bundle is newer than this library")]
+    /// The bundle is well formed but was built for another format or library version.
+    #[error("weight bundle was built for a different library version")]
     UnsupportedVersion,
+    /// The input is longer than the operation accepts.
     #[error("input exceeds the supported size")]
     InputTooLarge,
+    /// An operation ran that this instance cannot serve, or an internal invariant broke.
     #[error("inference failed in stage `{stage}`")]
-    Inference { stage: &'static str },
+    Inference {
+        /// The pipeline stage that failed.
+        stage: &'static str,
+    },
 }
 
 /// Load-time configuration.
@@ -314,7 +371,8 @@ pub struct Config<'a> {
 /// Per-call options.
 #[derive(Debug, Clone, Default)]
 pub struct Query<'a> {
-    /// Default regions for phone numbers written without a country code.
+    /// Default regions for phone numbers written without a country code. `parse_address`
+    /// ignores it.
     pub country_hint: &'a [&'a str],
     /// Return low-confidence results instead of omitting them.
     pub include_uncertain: bool,
@@ -324,6 +382,15 @@ pub struct Query<'a> {
 #[derive(Debug)]
 pub struct Tessera {
     kinds: KindSet,
+    model: Option<Model>,
+}
+
+/// What the bundle contributes once loaded: the networks and the settings their inputs need.
+#[derive(Debug)]
+struct Model {
+    parser: Option<model::Parser>,
+    feature_config: features::FeatureConfig,
+    version: String,
 }
 
 impl Tessera {
@@ -335,14 +402,39 @@ impl Tessera {
         if config.kinds.is_rules_only() {
             return Ok(Tessera {
                 kinds: config.kinds,
+                model: None,
             });
         }
-        // No bundle format exists before the parser ships; any bytes are invalid.
-        let _ = bundle;
-        Err(Error::BundleInvalid)
+        let bundle = model::weights::Bundle::parse(bundle, config.expected_checksum)?;
+        let needs_detector = [Kind::Person, Kind::Org]
+            .iter()
+            .any(|&k| config.kinds.contains(k));
+        if needs_detector && !bundle.has_net("detector") {
+            return Err(Error::BundleInvalid);
+        }
+        let parser = if config.kinds.contains(Kind::Address) {
+            if !bundle.has_net("parser") {
+                return Err(Error::BundleInvalid);
+            }
+            Some(model::Parser::new(&bundle)?)
+        } else {
+            None
+        };
+        Ok(Tessera {
+            kinds: config.kinds,
+            model: Some(Model {
+                parser,
+                feature_config: bundle.manifest.feature_config,
+                version: bundle.manifest.model_version,
+            }),
+        })
     }
 
     /// Every supported entity in `text`, as non-overlapping spans sorted by position.
+    ///
+    /// Until the detector ships, only a rules-only instance (emails and phones) can detect;
+    /// an instance loaded with a model kind returns `Error::Inference` here and serves
+    /// `parse_address` instead.
     pub fn detect(&self, text: &str, query: &Query<'_>) -> Result<Vec<Entity>, Error> {
         if !self.kinds.is_rules_only() {
             return Err(Error::Inference {
@@ -365,11 +457,85 @@ impl Tessera {
     }
 
     /// Split text already known to be an address into components. Offsets are relative to `text`.
+    ///
+    /// The input must be a single address of at most 256 non-whitespace tokens and 8 KiB;
+    /// longer input is `InputTooLarge`. Empty input gives an entity with no components and
+    /// confidence 0. Of `query`, only `include_uncertain` applies.
     pub fn parse_address(&self, text: &str, query: &Query<'_>) -> Result<Entity, Error> {
-        let _ = (text, query);
-        Err(Error::Inference {
-            stage: policy::STAGE_PARSE,
+        let trace = self.trace(text)?;
+        let found = model::bio::components(
+            &trace.token_spans,
+            &trace
+                .decoded
+                .iter()
+                .copied()
+                .zip(trace.probabilities.iter().copied())
+                .collect::<Vec<_>>(),
+        );
+        let components = policy::address_components(
+            policy::merge_touching_suburbs(policy::trim_separators(text, found)),
+            query.include_uncertain,
+        );
+        let confidence = policy::address_confidence(&components);
+        Ok(Entity {
+            kind: Kind::Address,
+            start: 0,
+            end: text.len(),
+            confidence,
+            review_recommended: confidence < policy::HIGH,
+            source: Source::Model,
+            components,
+            normalized: None,
+            region: None,
         })
+    }
+
+    /// `parse_address` up to decoding, keeping every intermediate.
+    fn trace(&self, text: &str) -> Result<internal::ParseTrace, Error> {
+        let stage = Error::Inference {
+            stage: policy::STAGE_PARSE,
+        };
+        let model = self.model.as_ref().ok_or(stage.clone())?;
+        let parser = model.parser.as_ref().ok_or(stage)?;
+        if text.len() > model::MAX_PARSE_BYTES {
+            return Err(Error::InputTooLarge);
+        }
+        let tokens = token::tokenize(text);
+        let retained = |t: &token::Token| {
+            !matches!(
+                t.class,
+                token::TokenClass::Space | token::TokenClass::Newline
+            )
+        };
+        if tokens.iter().filter(|t| retained(t)).count() > model::MAX_PARSE_TOKENS {
+            return Err(Error::InputTooLarge);
+        }
+        // The trainer featurizes addresses without a country, so the library must too.
+        let feats = features::featurize(text, &tokens, &[], None, &model.feature_config);
+        let (token_spans, features): (Vec<_>, Vec<_>) = tokens
+            .iter()
+            .zip(feats)
+            .filter(|(t, _)| retained(t))
+            .map(|(t, f)| ((t.start, t.end), f))
+            .unzip();
+        let logits = parser.forward(&features);
+        let mut probs = logits.clone();
+        model::kernels::softmax_rows(&mut probs, model::PARSER_LABELS);
+        let (decoded, probabilities) = model::bio::decode_probs(&probs, model::PARSER_LABELS)
+            .into_iter()
+            .unzip();
+        Ok(internal::ParseTrace {
+            token_spans,
+            features,
+            logits,
+            decoded,
+            probabilities,
+        })
+    }
+
+    /// The loaded bundle's model version, or `None` for a rules-only instance.
+    pub fn model_version(&self) -> Option<&str> {
+        self.model.as_ref().map(|m| m.version.as_str())
     }
 
     /// The kinds this instance was loaded for.

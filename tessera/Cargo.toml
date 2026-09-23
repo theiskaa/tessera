@@ -16,14 +16,12 @@ crate-type = ["cdylib", "rlib"]
 default = ["phone-metadata"]
 phone-metadata = []
 wasm = ["dep:wasm-bindgen", "dep:js-sys"]
-markdown = ["dep:pulldown-cmark"]
 cli = ["dep:serde", "dep:serde_json"]
 
 [dependencies]
 thiserror.workspace = true
 wasm-bindgen = { workspace = true, optional = true }
 js-sys = { version = "0.3", optional = true }
-pulldown-cmark = { version = "0.13", default-features = false, optional = true }
 serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 

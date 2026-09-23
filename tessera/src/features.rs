@@ -96,7 +96,7 @@ const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
 const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
 
 /// FNV-1a 64-bit hash of `bytes`, with `seed` mixed into the offset basis.
-pub(crate) fn fnv1a(bytes: &[u8], seed: u64) -> u64 {
+pub fn fnv1a(bytes: &[u8], seed: u64) -> u64 {
     let mut h = FNV_OFFSET ^ seed;
     for &b in bytes {
         h ^= u64::from(b);
@@ -105,7 +105,12 @@ pub(crate) fn fnv1a(bytes: &[u8], seed: u64) -> u64 {
     h
 }
 
-/// Hashed ids of the character n-grams of `^text$`, for each size in `config.ngram_sizes`.
+/// The network reads at most this many n-gram ids per token; generation stops here. Every
+/// n-gram of sizes 2 to 4 fits for tokens of up to 21 characters.
+pub const MAX_NGRAMS_PER_TOKEN: usize = 64;
+
+/// Hashed ids of the character n-grams of `^text$`, for each size in `config.ngram_sizes`
+/// in order, at most [`MAX_NGRAMS_PER_TOKEN`] of them.
 pub(crate) fn ngram_ids(text: &str, config: &FeatureConfig) -> Vec<u32> {
     let wrapped: Vec<char> = core::iter::once('^')
         .chain(text.chars())
@@ -119,6 +124,9 @@ pub(crate) fn ngram_ids(text: &str, config: &FeatureConfig) -> Vec<u32> {
             continue;
         }
         for w in wrapped.windows(n) {
+            if out.len() == MAX_NGRAMS_PER_TOKEN {
+                return out;
+            }
             buf.clear();
             buf.extend(w);
             out.push(
@@ -526,7 +534,7 @@ pub(crate) fn postcode_at(
     country: Option<&str>,
 ) -> Option<usize> {
     let tok = |k: usize| tokens.get(i + k).map(|t| (t, t.text(text)));
-    let (t0, s0) = tok(0)?;
+    let (_, s0) = tok(0)?;
     let shape0 = shape_string(s0);
     let two_tokens = |second: &dyn Fn(&str) -> bool| -> Option<usize> {
         let (t1, _) = tok(1)?;
@@ -576,7 +584,6 @@ pub(crate) fn postcode_at(
             })
             .flatten()
     };
-    let _ = t0;
     match country {
         Some("GB") => gb(),
         Some("US") => us(),

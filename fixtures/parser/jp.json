@@ -1,39 +1,324 @@
 {
   "cases": [
     {
-      "name": "postal mark, prefecture, ward, district, block number",
+      "name": "postcode, prefecture, city, ward, block",
       "country": "JP",
-      "input": "〒100-0001 東京都千代田区千代田1-1",
+      "input": "〒060-0808 北海道札幌市北区北8条西5丁目",
       "components": [
         {
           "label": "postcode",
-          "text": "100-0001",
-          "start": 3,
+          "text": "〒060-0808",
+          "start": 0,
           "end": 11
         },
         {
           "label": "region",
-          "text": "東京都",
+          "text": "北海道",
           "start": 12,
           "end": 21
         },
         {
           "label": "city",
-          "text": "千代田区",
+          "text": "札幌市",
           "start": 21,
-          "end": 33
+          "end": 30
+        },
+        {
+          "label": "district",
+          "text": "北区",
+          "start": 30,
+          "end": 36
         },
         {
           "label": "suburb",
-          "text": "千代田",
+          "text": "北8条西5丁目",
+          "start": 36,
+          "end": 53
+        }
+      ]
+    },
+    {
+      "name": "town and lot number",
+      "country": "JP",
+      "input": "静岡県浜松市中区元城町103-2",
+      "components": [
+        {
+          "label": "region",
+          "text": "静岡県",
+          "start": 0,
+          "end": 9
+        },
+        {
+          "label": "city",
+          "text": "浜松市",
+          "start": 9,
+          "end": 18
+        },
+        {
+          "label": "district",
+          "text": "中区",
+          "start": 18,
+          "end": 24
+        },
+        {
+          "label": "suburb",
+          "text": "元城町",
+          "start": 24,
+          "end": 33
+        },
+        {
+          "label": "house_number",
+          "text": "103-2",
           "start": 33,
-          "end": 42
+          "end": 38
+        }
+      ]
+    },
+    {
+      "name": "chome and block",
+      "country": "JP",
+      "input": "〒530-0001 大阪府大阪市北区梅田3丁目1-1",
+      "components": [
+        {
+          "label": "postcode",
+          "text": "〒530-0001",
+          "start": 0,
+          "end": 11
+        },
+        {
+          "label": "region",
+          "text": "大阪府",
+          "start": 12,
+          "end": 21
+        },
+        {
+          "label": "city",
+          "text": "大阪市",
+          "start": 21,
+          "end": 30
+        },
+        {
+          "label": "district",
+          "text": "北区",
+          "start": 30,
+          "end": 36
+        },
+        {
+          "label": "suburb",
+          "text": "梅田3丁目",
+          "start": 36,
+          "end": 49
         },
         {
           "label": "house_number",
           "text": "1-1",
+          "start": 49,
+          "end": 52
+        }
+      ]
+    },
+    {
+      "name": "kyoto street-side name",
+      "expected_failure": "Kyoto's street-side town names (`祇園町北側`) are rare in the source; the model is unsure of the town and the lot number and returns neither.",
+      "country": "JP",
+      "input": "京都府京都市東山区祇園町北側625",
+      "components": [
+        {
+          "label": "region",
+          "text": "京都府",
+          "start": 0,
+          "end": 9
+        },
+        {
+          "label": "city",
+          "text": "京都市",
+          "start": 9,
+          "end": 18
+        },
+        {
+          "label": "district",
+          "text": "東山区",
+          "start": 18,
+          "end": 27
+        },
+        {
+          "label": "suburb",
+          "text": "祇園町北側",
+          "start": 27,
+          "end": 42
+        },
+        {
+          "label": "house_number",
+          "text": "625",
           "start": 42,
           "end": 45
+        }
+      ]
+    },
+    {
+      "name": "three lines",
+      "country": "JP",
+      "input": "〒460-0008\n愛知県名古屋市中区栄3丁目\n5-12",
+      "components": [
+        {
+          "label": "postcode",
+          "text": "〒460-0008",
+          "start": 0,
+          "end": 11
+        },
+        {
+          "label": "region",
+          "text": "愛知県",
+          "start": 12,
+          "end": 21
+        },
+        {
+          "label": "city",
+          "text": "名古屋市",
+          "start": 21,
+          "end": 33
+        },
+        {
+          "label": "district",
+          "text": "中区",
+          "start": 33,
+          "end": 39
+        },
+        {
+          "label": "suburb",
+          "text": "栄3丁目",
+          "start": 39,
+          "end": 49
+        },
+        {
+          "label": "house_number",
+          "text": "5-12",
+          "start": 50,
+          "end": 54
+        }
+      ]
+    },
+    {
+      "name": "romanized",
+      "expected_failure": "the source labels romanized town names (`Marunouchi`) as roads in most rows, and only `-cho` and `chome` forms are relabelled as towns.",
+      "country": "JP",
+      "input": "1-1 Marunouchi, Chiyoda-ku, Tokyo 100-0005, Japan",
+      "components": [
+        {
+          "label": "house_number",
+          "text": "1-1",
+          "start": 0,
+          "end": 3
+        },
+        {
+          "label": "suburb",
+          "text": "Marunouchi",
+          "start": 4,
+          "end": 14
+        },
+        {
+          "label": "city",
+          "text": "Chiyoda-ku",
+          "start": 16,
+          "end": 26
+        },
+        {
+          "label": "region",
+          "text": "Tokyo",
+          "start": 28,
+          "end": 33
+        },
+        {
+          "label": "postcode",
+          "text": "100-0005",
+          "start": 34,
+          "end": 42
+        },
+        {
+          "label": "country",
+          "text": "Japan",
+          "start": 44,
+          "end": 49
+        }
+      ]
+    },
+    {
+      "name": "fukuoka",
+      "country": "JP",
+      "input": "福岡県福岡市中央区天神1丁目8-1",
+      "components": [
+        {
+          "label": "region",
+          "text": "福岡県",
+          "start": 0,
+          "end": 9
+        },
+        {
+          "label": "city",
+          "text": "福岡市",
+          "start": 9,
+          "end": 18
+        },
+        {
+          "label": "district",
+          "text": "中央区",
+          "start": 18,
+          "end": 27
+        },
+        {
+          "label": "suburb",
+          "text": "天神1丁目",
+          "start": 27,
+          "end": 40
+        },
+        {
+          "label": "house_number",
+          "text": "8-1",
+          "start": 40,
+          "end": 43
+        }
+      ]
+    },
+    {
+      "name": "country first with ideographic comma",
+      "country": "JP",
+      "input": "日本、神奈川県横浜市西区みなとみらい2丁目2-1",
+      "components": [
+        {
+          "label": "country",
+          "text": "日本",
+          "start": 0,
+          "end": 6
+        },
+        {
+          "label": "region",
+          "text": "神奈川県",
+          "start": 9,
+          "end": 21
+        },
+        {
+          "label": "city",
+          "text": "横浜市",
+          "start": 21,
+          "end": 30
+        },
+        {
+          "label": "district",
+          "text": "西区",
+          "start": 30,
+          "end": 36
+        },
+        {
+          "label": "suburb",
+          "text": "みなとみらい2丁目",
+          "start": 36,
+          "end": 61
+        },
+        {
+          "label": "house_number",
+          "text": "2-1",
+          "start": 61,
+          "end": 64
         }
       ]
     }

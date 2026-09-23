@@ -1,40 +1,9 @@
 {
   "cases": [
     {
-      "name": "road name with particle and number after",
+      "name": "street number postcode city",
       "country": "DE",
-      "input": "Unter den Linden 77, 10117 Berlin",
-      "components": [
-        {
-          "label": "road",
-          "text": "Unter den Linden",
-          "start": 0,
-          "end": 16
-        },
-        {
-          "label": "house_number",
-          "text": "77",
-          "start": 17,
-          "end": 19
-        },
-        {
-          "label": "postcode",
-          "text": "10117",
-          "start": 21,
-          "end": 26
-        },
-        {
-          "label": "city",
-          "text": "Berlin",
-          "start": 27,
-          "end": 33
-        }
-      ]
-    },
-    {
-      "name": "compound street suffix, letter in house number, country line",
-      "country": "DE",
-      "input": "Musterstraße 12a\n80331 München\nDeutschland",
+      "input": "Musterstraße 12, 10115 Berlin",
       "components": [
         {
           "label": "road",
@@ -44,27 +13,262 @@
         },
         {
           "label": "house_number",
-          "text": "12a",
+          "text": "12",
           "start": 14,
-          "end": 17
+          "end": 16
         },
         {
           "label": "postcode",
-          "text": "80331",
+          "text": "10115",
           "start": 18,
           "end": 23
         },
         {
           "label": "city",
-          "text": "München",
+          "text": "Berlin",
           "start": 24,
-          "end": 32
+          "end": 30
+        }
+      ]
+    },
+    {
+      "name": "abbreviated road keeps its period",
+      "country": "DE",
+      "input": "Hauptstr. 5a\n80331 München\nDeutschland",
+      "components": [
+        {
+          "label": "road",
+          "text": "Hauptstr.",
+          "start": 0,
+          "end": 9
+        },
+        {
+          "label": "house_number",
+          "text": "5a",
+          "start": 10,
+          "end": 12
+        },
+        {
+          "label": "postcode",
+          "text": "80331",
+          "start": 13,
+          "end": 18
+        },
+        {
+          "label": "city",
+          "text": "München",
+          "start": 19,
+          "end": 27
         },
         {
           "label": "country",
           "text": "Deutschland",
-          "start": 33,
-          "end": 44
+          "start": 28,
+          "end": 39
+        }
+      ]
+    },
+    {
+      "name": "level",
+      "country": "DE",
+      "input": "Karl-Marx-Allee 100, 2. OG, 10243 Berlin",
+      "components": [
+        {
+          "label": "road",
+          "text": "Karl-Marx-Allee",
+          "start": 0,
+          "end": 15
+        },
+        {
+          "label": "house_number",
+          "text": "100",
+          "start": 16,
+          "end": 19
+        },
+        {
+          "label": "level",
+          "text": "2. OG",
+          "start": 21,
+          "end": 26
+        },
+        {
+          "label": "postcode",
+          "text": "10243",
+          "start": 28,
+          "end": 33
+        },
+        {
+          "label": "city",
+          "text": "Berlin",
+          "start": 34,
+          "end": 40
+        }
+      ]
+    },
+    {
+      "name": "unit first",
+      "country": "DE",
+      "input": "Wohnung 4, Lindenweg 7, 50667 Köln",
+      "components": [
+        {
+          "label": "unit",
+          "text": "Wohnung 4",
+          "start": 0,
+          "end": 9
+        },
+        {
+          "label": "road",
+          "text": "Lindenweg",
+          "start": 11,
+          "end": 20
+        },
+        {
+          "label": "house_number",
+          "text": "7",
+          "start": 21,
+          "end": 22
+        },
+        {
+          "label": "postcode",
+          "text": "50667",
+          "start": 24,
+          "end": 29
+        },
+        {
+          "label": "city",
+          "text": "Köln",
+          "start": 30,
+          "end": 35
+        }
+      ]
+    },
+    {
+      "name": "postfach",
+      "country": "DE",
+      "input": "Postfach 10 02 34, 60002 Frankfurt am Main",
+      "components": [
+        {
+          "label": "po_box",
+          "text": "Postfach 10 02 34",
+          "start": 0,
+          "end": 17
+        },
+        {
+          "label": "postcode",
+          "text": "60002",
+          "start": 19,
+          "end": 24
+        },
+        {
+          "label": "city",
+          "text": "Frankfurt am Main",
+          "start": 25,
+          "end": 42
+        }
+      ]
+    },
+    {
+      "name": "english country name",
+      "country": "DE",
+      "input": "Am Markt 1, 28195 Bremen, Germany",
+      "components": [
+        {
+          "label": "road",
+          "text": "Am Markt",
+          "start": 0,
+          "end": 8
+        },
+        {
+          "label": "house_number",
+          "text": "1",
+          "start": 9,
+          "end": 10
+        },
+        {
+          "label": "postcode",
+          "text": "28195",
+          "start": 12,
+          "end": 17
+        },
+        {
+          "label": "city",
+          "text": "Bremen",
+          "start": 18,
+          "end": 24
+        },
+        {
+          "label": "country",
+          "text": "Germany",
+          "start": 26,
+          "end": 33
+        }
+      ]
+    },
+    {
+      "name": "region",
+      "country": "DE",
+      "input": "Schillerstraße 3, 04109 Leipzig, Sachsen",
+      "components": [
+        {
+          "label": "road",
+          "text": "Schillerstraße",
+          "start": 0,
+          "end": 15
+        },
+        {
+          "label": "house_number",
+          "text": "3",
+          "start": 16,
+          "end": 17
+        },
+        {
+          "label": "postcode",
+          "text": "04109",
+          "start": 19,
+          "end": 24
+        },
+        {
+          "label": "city",
+          "text": "Leipzig",
+          "start": 25,
+          "end": 32
+        },
+        {
+          "label": "region",
+          "text": "Sachsen",
+          "start": 34,
+          "end": 41
+        }
+      ]
+    },
+    {
+      "name": "middle dot separator",
+      "country": "DE",
+      "input": "Berliner Platz 2 · 40213 Düsseldorf",
+      "components": [
+        {
+          "label": "road",
+          "text": "Berliner Platz",
+          "start": 0,
+          "end": 14
+        },
+        {
+          "label": "house_number",
+          "text": "2",
+          "start": 15,
+          "end": 16
+        },
+        {
+          "label": "postcode",
+          "text": "40213",
+          "start": 20,
+          "end": 25
+        },
+        {
+          "label": "city",
+          "text": "Düsseldorf",
+          "start": 26,
+          "end": 37
         }
       ]
     }

@@ -1,24 +1,17 @@
 //! Confidence bands. What the library is allowed to return is decided here and
 //! nowhere else: high passes, medium passes flagged, low is dropped unless the
-//! caller asks for uncertain results.
+//! caller asks for uncertain results. `parse_address` is the exception: its caller
+//! already knows the text is an address, so the entity is always returned and the
+//! bands apply to its components.
 
-use crate::Entity;
+use crate::{AddressLabel, Component, Entity};
 
 pub(crate) const HIGH: f32 = 0.85;
 pub(crate) const MEDIUM: f32 = 0.50;
 
-// used from Milestone 4
-#[allow(dead_code)]
-pub(crate) const STAGE_TOKENIZE: &str = "tokenize";
-// used from Milestone 4
-#[allow(dead_code)]
-pub(crate) const STAGE_RULES: &str = "rules";
 pub(crate) const STAGE_DETECT: &str = "detect";
 pub(crate) const STAGE_PARSE: &str = "parse";
 pub(crate) const STAGE_GROUP: &str = "group";
-// used from Milestone 4
-#[allow(dead_code)]
-pub(crate) const STAGE_CHUNK: &str = "chunk";
 
 /// `c` rounded to four decimals as an `f64`, so serialized output shows 0.99 rather than the
 /// widened 0.9900000095367432. Rounding arithmetically instead of formatting and reparsing the
@@ -46,6 +39,102 @@ pub(crate) fn apply(entities: Vec<Entity>, include_uncertain: bool) -> Vec<Entit
         .collect()
 }
 
+/// Components with any separator punctuation at their edges cut off, so a model that labels
+/// the comma in `日本、神奈川県` as part of the region still returns `神奈川県`. A component
+/// that is only punctuation is dropped.
+pub(crate) fn trim_separators(text: &str, components: Vec<Component>) -> Vec<Component> {
+    let separator = |c: char| c.is_whitespace() || ",;、，；。".contains(c);
+    components
+        .into_iter()
+        .filter_map(|mut c| {
+            let span = text.get(c.start..c.end)?;
+            let head = span.len() - span.trim_start_matches(separator).len();
+            let tail = span.len() - span.trim_end_matches(separator).len();
+            if head + tail >= span.len() {
+                return None;
+            }
+            c.start += head;
+            c.end -= tail;
+            Some(c)
+        })
+        .collect()
+}
+
+/// Suburbs that touch, with nothing between them, merged into one: a Japanese town and its
+/// block (`栄` then `3丁目`) are one suburb, and the model can split them mid-word. Other
+/// labels stay apart, since a subprefecture and a ward (`石狩振興局豊平`) are written the same
+/// way. The merged confidence is the lower of the two.
+pub(crate) fn merge_touching_suburbs(components: Vec<Component>) -> Vec<Component> {
+    let mut out: Vec<Component> = Vec::with_capacity(components.len());
+    for c in components {
+        match out.last_mut() {
+            Some(prev)
+                if prev.label == AddressLabel::Suburb
+                    && c.label == AddressLabel::Suburb
+                    && prev.end == c.start =>
+            {
+                prev.end = c.end;
+                prev.confidence = prev.confidence.min(c.confidence);
+            }
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+/// Labels a well-formed address carries at most once.
+const SINGLE_LABELS: [AddressLabel; 4] = [
+    AddressLabel::HouseNumber,
+    AddressLabel::Postcode,
+    AddressLabel::Country,
+    AddressLabel::City,
+];
+
+/// The `Unknown` rules for parsed components, in order: a component below `MEDIUM` becomes
+/// `Unknown`, and of repeated single-occurrence labels only the most confident keeps its label.
+/// Low-confidence `Unknown` components are then dropped unless `include_uncertain`. The span is
+/// kept whenever the label is not, so a caller can still show the text without an asserted
+/// label.
+pub(crate) fn address_components(
+    mut components: Vec<Component>,
+    include_uncertain: bool,
+) -> Vec<Component> {
+    for c in &mut components {
+        if c.confidence < MEDIUM {
+            c.label = AddressLabel::Unknown;
+        }
+    }
+    for label in SINGLE_LABELS {
+        let best = components
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| c.label == label)
+            .max_by(|a, b| a.1.confidence.total_cmp(&b.1.confidence))
+            .map(|(i, _)| i);
+        for (i, c) in components.iter_mut().enumerate() {
+            if c.label == label && Some(i) != best {
+                c.label = AddressLabel::Unknown;
+            }
+        }
+    }
+    // Every label that survived the first rule has confidence of at least MEDIUM, so this
+    // only drops low-confidence `Unknown` components.
+    components
+        .into_iter()
+        .filter(|c| include_uncertain || c.confidence >= MEDIUM)
+        .collect()
+}
+
+/// An address is as confident as its weakest labelled component; with none, it is 0.
+pub(crate) fn address_confidence(components: &[Component]) -> f32 {
+    components
+        .iter()
+        .filter(|c| c.label != AddressLabel::Unknown)
+        .map(|c| c.confidence)
+        .reduce(f32::min)
+        .unwrap_or(0.0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -63,6 +152,41 @@ mod tests {
             normalized: None,
             region: None,
         }
+    }
+
+    #[test]
+    fn touching_suburbs_merge() {
+        let out = merge_touching_suburbs(vec![
+            component(AddressLabel::Suburb, 0, 3, 0.9),
+            component(AddressLabel::Suburb, 3, 10, 0.7),
+            component(AddressLabel::District, 10, 13, 0.9),
+            component(AddressLabel::District, 13, 16, 0.9),
+        ]);
+        assert_eq!(
+            out.iter()
+                .map(|c| (c.label, c.start, c.end, c.confidence))
+                .collect::<Vec<_>>(),
+            vec![
+                (AddressLabel::Suburb, 0, 10, 0.7),
+                (AddressLabel::District, 10, 13, 0.9),
+                (AddressLabel::District, 13, 16, 0.9),
+            ]
+        );
+    }
+
+    #[test]
+    fn separators_are_trimmed_from_component_edges() {
+        let text = "日本、神奈川県, 、";
+        let out = trim_separators(
+            text,
+            vec![
+                component(AddressLabel::Country, 0, 6, 0.9),
+                component(AddressLabel::Region, 6, 22, 0.9),
+                component(AddressLabel::Unknown, 22, text.len(), 0.9),
+            ],
+        );
+        let texts: Vec<&str> = out.iter().map(|c| &text[c.start..c.end]).collect();
+        assert_eq!(texts, ["日本", "神奈川県"]);
     }
 
     #[test]
@@ -85,5 +209,37 @@ mod tests {
         assert_eq!(out.len(), 1);
         assert!(out[0].review_recommended);
         assert!(!apply(vec![entity(0.85)], false)[0].review_recommended);
+    }
+
+    fn component(label: AddressLabel, start: usize, end: usize, confidence: f32) -> Component {
+        Component {
+            label,
+            start,
+            end,
+            confidence,
+        }
+    }
+
+    #[test]
+    fn unknown_rules() {
+        let parsed = vec![
+            component(AddressLabel::HouseNumber, 0, 2, 0.4),
+            component(AddressLabel::Road, 3, 5, 0.9),
+            component(AddressLabel::City, 6, 12, 0.7),
+            component(AddressLabel::City, 13, 18, 0.95),
+        ];
+        let labels = |cs: &[Component]| cs.iter().map(|c| (c.label, c.start)).collect::<Vec<_>>();
+        let strict = address_components(parsed.clone(), false);
+        assert_eq!(
+            labels(&strict),
+            vec![
+                (AddressLabel::Road, 3),
+                (AddressLabel::Unknown, 6),
+                (AddressLabel::City, 13),
+            ]
+        );
+        let all = address_components(parsed, true);
+        assert_eq!(all.len(), 4);
+        assert_eq!(all[0].label, AddressLabel::Unknown);
     }
 }

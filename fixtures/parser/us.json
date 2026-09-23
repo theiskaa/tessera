@@ -1,7 +1,7 @@
 {
   "cases": [
     {
-      "name": "avenue with directional and state",
+      "name": "street, city, state and zip",
       "country": "US",
       "input": "1600 Pennsylvania Avenue NW, Washington, DC 20500",
       "components": [
@@ -38,45 +38,273 @@
       ]
     },
     {
-      "name": "suite first",
+      "name": "two lines",
       "country": "US",
-      "input": "Suite 300, 500 Main St, Springfield, IL 62701",
+      "input": "350 Fifth Avenue\nNew York, NY 10118",
       "components": [
         {
-          "label": "unit",
-          "text": "Suite 300",
+          "label": "house_number",
+          "text": "350",
           "start": 0,
-          "end": 9
+          "end": 3
         },
         {
+          "label": "road",
+          "text": "Fifth Avenue",
+          "start": 4,
+          "end": 16
+        },
+        {
+          "label": "city",
+          "text": "New York",
+          "start": 17,
+          "end": 25
+        },
+        {
+          "label": "region",
+          "text": "NY",
+          "start": 27,
+          "end": 29
+        },
+        {
+          "label": "postcode",
+          "text": "10118",
+          "start": 30,
+          "end": 35
+        }
+      ]
+    },
+    {
+      "name": "apartment after the street",
+      "country": "US",
+      "input": "123 Main St Apt 4B, Springfield, IL 62701",
+      "components": [
+        {
           "label": "house_number",
-          "text": "500",
-          "start": 11,
-          "end": 14
+          "text": "123",
+          "start": 0,
+          "end": 3
         },
         {
           "label": "road",
           "text": "Main St",
-          "start": 15,
-          "end": 22
+          "start": 4,
+          "end": 11
+        },
+        {
+          "label": "unit",
+          "text": "Apt 4B",
+          "start": 12,
+          "end": 18
         },
         {
           "label": "city",
           "text": "Springfield",
-          "start": 24,
-          "end": 35
+          "start": 20,
+          "end": 31
         },
         {
           "label": "region",
           "text": "IL",
-          "start": 37,
-          "end": 39
+          "start": 33,
+          "end": 35
         },
         {
           "label": "postcode",
           "text": "62701",
-          "start": 40,
-          "end": 45
+          "start": 36,
+          "end": 41
+        }
+      ]
+    },
+    {
+      "name": "po box",
+      "country": "US",
+      "input": "PO Box 1234, Austin, TX 78767",
+      "components": [
+        {
+          "label": "po_box",
+          "text": "PO Box 1234",
+          "start": 0,
+          "end": 11
+        },
+        {
+          "label": "city",
+          "text": "Austin",
+          "start": 13,
+          "end": 19
+        },
+        {
+          "label": "region",
+          "text": "TX",
+          "start": 21,
+          "end": 23
+        },
+        {
+          "label": "postcode",
+          "text": "78767",
+          "start": 24,
+          "end": 29
+        }
+      ]
+    },
+    {
+      "name": "with country",
+      "country": "US",
+      "input": "742 Evergreen Terrace, Springfield, OR 97477, USA",
+      "components": [
+        {
+          "label": "house_number",
+          "text": "742",
+          "start": 0,
+          "end": 3
+        },
+        {
+          "label": "road",
+          "text": "Evergreen Terrace",
+          "start": 4,
+          "end": 21
+        },
+        {
+          "label": "city",
+          "text": "Springfield",
+          "start": 23,
+          "end": 34
+        },
+        {
+          "label": "region",
+          "text": "OR",
+          "start": 36,
+          "end": 38
+        },
+        {
+          "label": "postcode",
+          "text": "97477",
+          "start": 39,
+          "end": 44
+        },
+        {
+          "label": "country",
+          "text": "USA",
+          "start": 46,
+          "end": 49
+        }
+      ]
+    },
+    {
+      "name": "state written out",
+      "country": "US",
+      "input": "1 Infinite Loop, Cupertino, California 95014",
+      "components": [
+        {
+          "label": "house_number",
+          "text": "1",
+          "start": 0,
+          "end": 1
+        },
+        {
+          "label": "road",
+          "text": "Infinite Loop",
+          "start": 2,
+          "end": 15
+        },
+        {
+          "label": "city",
+          "text": "Cupertino",
+          "start": 17,
+          "end": 26
+        },
+        {
+          "label": "region",
+          "text": "California",
+          "start": 28,
+          "end": 38
+        },
+        {
+          "label": "postcode",
+          "text": "95014",
+          "start": 39,
+          "end": 44
+        }
+      ]
+    },
+    {
+      "name": "suite and zip plus four",
+      "country": "US",
+      "input": "2100 N Lamar Blvd, Suite 210, Dallas, TX 75202-1234",
+      "components": [
+        {
+          "label": "house_number",
+          "text": "2100",
+          "start": 0,
+          "end": 4
+        },
+        {
+          "label": "road",
+          "text": "N Lamar Blvd",
+          "start": 5,
+          "end": 17
+        },
+        {
+          "label": "unit",
+          "text": "Suite 210",
+          "start": 19,
+          "end": 28
+        },
+        {
+          "label": "city",
+          "text": "Dallas",
+          "start": 30,
+          "end": 36
+        },
+        {
+          "label": "region",
+          "text": "TX",
+          "start": 38,
+          "end": 40
+        },
+        {
+          "label": "postcode",
+          "text": "75202-1234",
+          "start": 41,
+          "end": 51
+        }
+      ]
+    },
+    {
+      "name": "street abbreviation",
+      "country": "US",
+      "input": "400 Broad St, Seattle, WA 98109",
+      "components": [
+        {
+          "label": "house_number",
+          "text": "400",
+          "start": 0,
+          "end": 3
+        },
+        {
+          "label": "road",
+          "text": "Broad St",
+          "start": 4,
+          "end": 12
+        },
+        {
+          "label": "city",
+          "text": "Seattle",
+          "start": 14,
+          "end": 21
+        },
+        {
+          "label": "region",
+          "text": "WA",
+          "start": 23,
+          "end": 25
+        },
+        {
+          "label": "postcode",
+          "text": "98109",
+          "start": 26,
+          "end": 31
         }
       ]
     }
