@@ -29,9 +29,10 @@ const WORKER_URL: &str = "./worker_loader.js";
 
 const SOURCE_URL: &str = "https://github.com/theiskaa/tessera";
 
-/// The JavaScript API as `tessera/js/index.d.ts` declares it, imported from the built package
-/// served beside the page. An instance that loads the parser rejects `detect`, so the snippet
-/// uses two. The field comments name the main fields, not all of them.
+/// The JavaScript API as `tessera/js/index.d.ts` declares it. The import path is only an example
+/// of a relative import: this page runs the Rust crate in its own worker and does not serve the
+/// package. An instance that loads the parser rejects `detect`, so the snippet uses two. The field
+/// comments name the main fields, not all of them.
 const SNIPPET: &str = "import { createTessera } from './tessera/index.js'
 
 const rules = await createTessera({ kinds: ['email', 'phone'] })
@@ -132,7 +133,7 @@ fn Header() -> impl IntoView {
                 <span class="meta">
                     {format!("v{}", env!("CARGO_PKG_VERSION"))}
                     <span class="wide-only">
-                        {format!(" · {} · on-device", format::bytes(stats::BUNDLE_GZIP))}
+                        {format!(" · {} gzip · on-device", format::bytes(stats::BUNDLE_GZIP))}
                     </span>
                 </span>
             </div>

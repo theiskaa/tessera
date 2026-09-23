@@ -5,7 +5,12 @@ mod common;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen_test::wasm_bindgen_test as test;
 
-use tessera::internal::{Script, TokenClass, tokenize, utf16_offsets};
+use tessera::internal::{Script, TokenClass, tokenize};
+
+/// The UTF-16 offset of the char boundary at `byte` in `text`.
+fn utf16(text: &str, byte: usize) -> u32 {
+    text[..byte].encode_utf16().count() as u32
+}
 
 fn class_name(c: TokenClass) -> &'static str {
     match c {
@@ -43,7 +48,6 @@ fn fixtures_match() {
         for case in &fixture.cases {
             let text = &case.input;
             let tokens = tokenize(text);
-            let u16 = utf16_offsets(text);
             let joined: String = tokens.iter().map(|t| &text[t.start..t.end]).collect();
             assert_eq!(
                 &joined, text,
@@ -82,7 +86,7 @@ fn fixtures_match() {
                 #[cfg(target_arch = "wasm32")]
                 {
                     let js = js_sys::JsString::from(text.as_str());
-                    let sliced: String = js.slice(u16[t.start], u16[t.end]).into();
+                    let sliced: String = js.slice(utf16(text, t.start), utf16(text, t.end)).into();
                     assert_eq!(sliced, t.text, "{file}/{}: js slice", case.name);
                 }
                 assert_eq!(
@@ -93,7 +97,7 @@ fn fixtures_match() {
                 );
                 if let (Some(a), Some(b)) = (t.utf16_start, t.utf16_end) {
                     assert_eq!(
-                        (u16[t.start], u16[t.end]),
+                        (utf16(text, t.start), utf16(text, t.end)),
                         (a, b),
                         "{file}/{}: utf16 for {:?}",
                         case.name,
@@ -106,4 +110,10 @@ fn fixtures_match() {
             }
         }
     }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn the_fixture_list_names_every_tokenizer_file() {
+    common::assert_lists_every_fixture("tokenizer", &common::tokenizer_fixtures());
 }

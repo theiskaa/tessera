@@ -75,7 +75,7 @@ fn Figure(
     view! {
         <section class="figure" aria-label=label>
             <div>
-                <div class="figure-title">{title}</div>
+                <h2 class="figure-title">{title}</h2>
                 <div class="figure-sub">{subtitle}</div>
             </div>
             {children()}

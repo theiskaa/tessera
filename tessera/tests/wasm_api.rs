@@ -369,6 +369,112 @@ async fn a_sparse_hint_array_fails_without_a_copy() {
     assert_type_error(&err);
 }
 
+/// Arrays whose reads throw: an element getter, a `Proxy` whose `get` trap throws, and a revoked
+/// `Proxy`, which `Array.isArray` itself throws on.
+fn hostile_arrays() -> Vec<JsValue> {
+    let make = Function::new_no_args(
+        "const getter = ['GB'];
+         Object.defineProperty(getter, 0, { get() { throw new Error('getter'); } });
+         const trap = new Proxy(['GB'], { get() { throw new Error('trap'); } });
+         const { proxy, revoke } = Proxy.revocable([], {});
+         revoke();
+         return [getter, trap, proxy];",
+    );
+    let made: Array = make.call0(&JsValue::NULL).unwrap().dyn_into().unwrap();
+    made.iter().collect()
+}
+
+/// A `Proxy` over a `Uint8Array` whose `getPrototypeOf` trap, which `instanceof` runs, throws.
+fn hostile_bytes() -> JsValue {
+    Function::new_no_args(
+        "return new Proxy(new Uint8Array(4), { getPrototypeOf() { throw new Error('trap'); } });",
+    )
+    .call0(&JsValue::NULL)
+    .unwrap()
+}
+
+/// `name(...args)` on the JS object, through the generated glue as a page would call it.
+fn call_js(obj: &JsValue, name: &str, args: &[JsValue]) -> Result<JsValue, JsValue> {
+    let method: Function = prop(obj, name).dyn_into().unwrap();
+    method.apply(obj, &args.iter().collect::<Array>())
+}
+
+#[test]
+async fn throwing_option_reads_reject_and_leave_the_instance_usable() {
+    let tessera: JsValue = rules_tessera().into();
+    for hints in hostile_arrays() {
+        let opts = Object::new();
+        Reflect::set(&opts, &text("countryHint"), &hints).unwrap();
+        let promise = call_js(&tessera, "detect", &[text("a@b.example"), opts.into()])
+            .expect("detect returns a promise instead of throwing");
+        assert_type_error(&rejected(promise.dyn_into().unwrap()).await);
+    }
+    let getter =
+        Function::new_no_args("return { get includeUncertain() { throw new Error('getter'); } };")
+            .call0(&JsValue::NULL)
+            .unwrap();
+    let promise = call_js(&tessera, "detect", &[text("a@b.example"), getter]).unwrap();
+    assert_type_error(&rejected(promise.dyn_into().unwrap()).await);
+
+    let found = call_js(&tessera, "detect", &[text("a@b.example")]).unwrap();
+    let found: Array = resolved(found.dyn_into().unwrap())
+        .await
+        .dyn_into()
+        .unwrap();
+    assert_eq!(found.length(), 1);
+    call_js(&tessera, "dispose", &[]).expect("the instance is not left borrowed");
+    let later = call_js(&tessera, "detect", &[text("a@b.example")]).unwrap();
+    assert_tessera_error(&rejected(later.dyn_into().unwrap()).await, "DISPOSED");
+}
+
+#[test]
+async fn throwing_create_options_are_type_errors() {
+    for kinds in hostile_arrays() {
+        let opts = Object::new();
+        Reflect::set(&opts, &text("kinds"), &kinds).unwrap();
+        assert_type_error(&create_instance(opts.clone().into()).await.err().unwrap());
+        assert_type_error(
+            &JsTessera::load(&Uint8Array::new_with_length(0), Some(opts.into()))
+                .err()
+                .unwrap(),
+        );
+    }
+    let opts = options(r#"{"kinds":["address"]}"#);
+    Reflect::set(&opts, &text("modelBytes"), &hostile_bytes()).unwrap();
+    assert_type_error(&create_instance(opts).await.err().unwrap());
+    assert_type_error(&JsTessera::load(&hostile_bytes(), None).err().unwrap());
+}
+
+#[test]
+async fn a_lone_surrogate_survives_in_result_texts() {
+    let input: JsString = js_sys::JSON::parse(r#""10 Downing\ud800 Street, London SW1A 2AA""#)
+        .unwrap()
+        .dyn_into()
+        .unwrap();
+    let entity = resolved(address_tessera().parse_address(&input, None)).await;
+    let slice = |obj: &JsValue| {
+        JsValue::from(input.slice(number(obj, "start") as u32, number(obj, "end") as u32))
+    };
+    assert_eq!(prop(&entity, "text"), slice(&entity));
+    assert!(
+        prop(&entity, "text")
+            .as_string()
+            .unwrap()
+            .contains('\u{fffd}'),
+        "the entity should span the surrogate"
+    );
+    assert_ne!(
+        JsValue::from(input.slice(0, input.length())),
+        JsValue::from_str(&String::from(&input)),
+        "the input really holds a lone surrogate"
+    );
+    let components: Array = prop(&entity, "components").dyn_into().unwrap();
+    assert!(components.length() > 0);
+    for c in components.iter() {
+        assert_eq!(prop(&c, "text"), slice(&c));
+    }
+}
+
 #[test]
 async fn a_non_string_text_rejects() {
     let rules = rules_tessera();
@@ -886,6 +992,48 @@ async fn dispose_terminates_the_worker() {
         "disposing twice terminates once"
     );
     assert_eq!(seen.after_drop, 2.0);
+}
+
+/// What `a_freed_instance_answers_waiting_calls` observes, gathered before any assertion.
+struct FreeObservations {
+    after_free: f64,
+    waiting: Result<JsValue, JsValue>,
+    after_reply: f64,
+}
+
+async fn observe_free(spy: &WorkerSpy) -> Result<FreeObservations, JsValue> {
+    let (opts, _worker) = in_worker(&address_options(), true);
+    let worker = create_instance(with_bundle(opts)).await?;
+    let waiting = worker.parse_address(&text("10 Downing Street, London"), None);
+    // What `free()` or the glue's `FinalizationRegistry` does to an instance.
+    drop(worker);
+    let after_free = spy.terminated();
+    let waiting = settled(waiting).await;
+    Ok(FreeObservations {
+        after_free,
+        waiting,
+        after_reply: spy.terminated(),
+    })
+}
+
+#[test]
+async fn a_freed_instance_answers_waiting_calls() {
+    let spy = WorkerSpy::install();
+    let observed = observe_free(&spy).await;
+    spy.restore();
+    let seen = observed.unwrap();
+    assert_eq!(
+        seen.after_free, 0.0,
+        "the worker outlives a call still waiting"
+    );
+    let parsed = seen.waiting.expect("a waiting call is answered after free");
+    let want =
+        resolved(address_tessera().parse_address(&text("10 Downing Street, London"), None)).await;
+    assert_eq!(json(&parsed), json(&want));
+    assert_eq!(
+        seen.after_reply, 1.0,
+        "the worker stops after the last reply"
+    );
 }
 
 /// What `worker_events_reject_waiting_calls` observes, gathered before any assertion.

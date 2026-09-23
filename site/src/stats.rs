@@ -1,6 +1,7 @@
 //! Numbers the page reports: the evaluation of the shipped parser, its training sample,
-//! the golden gate, and the measured download sizes. Generated from the evaluation run
-//! files, the data manifests, and the bundle; regenerate rather than edit.
+//! the golden gate, and the measured download sizes. Copied from the evaluation run files and
+//! reports; update together. The tests hold the training-sample and golden numbers to the
+//! committed manifest and golden files.
 
 /// Exact-parse rates on one country's test rows.
 pub(crate) struct Country {
@@ -147,14 +148,111 @@ pub(crate) const AUGMENT_COPIES: u32 = 2;
 /// `gzip -9` bytes of `models/tessera-v1.safetensors`.
 pub(crate) const BUNDLE_GZIP: u64 = 1498542;
 /// `gzip -9` bytes of the library's baseline wasm, rules and parser.
-pub(crate) const WASM_GZIP: u64 = 95093;
+pub(crate) const WASM_GZIP: u64 = 95806;
 /// `gzip -9` bytes of the same library built with simd128.
-pub(crate) const WASM_SIMD_GZIP: u64 = 94905;
-/// `gzip -9` bytes the generated phone tables add to the wasm.
-pub(crate) const PHONE_TABLES_GZIP: u64 = 13640;
+pub(crate) const WASM_SIMD_GZIP: u64 = 95573;
+/// `gzip -9` bytes the generated phone tables add to the wasm: the baseline with them, less the
+/// baseline without them (79,701), as `just wasm-size` prints both.
+pub(crate) const PHONE_TABLES_GZIP: u64 = 16105;
 /// `gzip -9` bytes libphonenumber's metadata cost before the tables replaced it.
 pub(crate) const PHONE_METADATA_GZIP: u64 = 508357;
 /// Regions the generated phone tables cover.
 pub(crate) const PHONE_REGIONS: u32 = 11;
 /// The libphonenumber release the tables are generated from.
 pub(crate) const PHONE_SOURCE: &str = "libphonenumber v9.0.33";
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use serde_json::Value;
+
+    fn manifest() -> Value {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../data/manifests/parser-sample.json"
+        );
+        let json = std::fs::read_to_string(path).unwrap();
+        serde_json::from_str(&json).unwrap()
+    }
+
+    fn funnel(name: &str) -> u64 {
+        FUNNEL.iter().find(|f| f.name == name).unwrap().rows
+    }
+
+    /// The sum of `counts.<country>.<split>` over the countries, for each split given.
+    fn split_rows(manifest: &Value, splits: &[&str]) -> u64 {
+        let counts = manifest["counts"].as_object().unwrap();
+        counts
+            .values()
+            .flat_map(|c| splits.iter().map(move |s| c[*s].as_u64().unwrap()))
+            .sum()
+    }
+
+    #[test]
+    fn the_funnel_matches_the_sample_manifest() {
+        let manifest = manifest();
+        let dropped = manifest["dropped_rows"].as_object().unwrap();
+        let rows = |key: &str| dropped[key].as_u64().unwrap();
+        assert_eq!(LINES_READ, manifest["lines_read"].as_u64().unwrap());
+        assert_eq!(
+            u64::from(AUGMENT_COPIES),
+            manifest["augment_copies"].as_u64().unwrap()
+        );
+        let named = [
+            ("over the country quota", "over_quota"),
+            ("search query, not an address", "excluded_query"),
+            ("GB or US road type cut off", "truncated_road"),
+            ("no address component", "no_component"),
+            ("place name only, over 15%", "locality_over_cap"),
+            ("postcode of another country", "foreign_postcode"),
+            ("DE PO box with a street", "po_box_with_road"),
+            ("JP kana reading", "kana_reading"),
+        ];
+        for (name, key) in named {
+            assert_eq!(funnel(name), rows(key), "{name}");
+        }
+        // Unencodable copies are generated rows, not source lines, so they are not in the funnel.
+        let others: Vec<u64> = dropped
+            .iter()
+            .filter(|(key, _)| *key != "unencodable_copies" && named.iter().all(|(_, k)| k != key))
+            .map(|(_, n)| n.as_u64().unwrap())
+            .filter(|&n| n > 0)
+            .collect();
+        assert_eq!(funnel("6 other reasons"), others.iter().sum::<u64>());
+        assert_eq!(others.len(), 6);
+        assert_eq!(funnel("kept: train"), split_rows(&manifest, &["train"]));
+        assert_eq!(
+            funnel("kept: valid + test"),
+            split_rows(&manifest, &["valid", "test"])
+        );
+        assert_eq!(
+            funnel("augmented copies (generated)"),
+            split_rows(&manifest, &["augmented"])
+        );
+        // "other countries" is not a manifest count; it is what the source rows leave of the
+        // lines read, which the figure's note says they add up to.
+        let source: u64 = FUNNEL
+            .iter()
+            .filter(|f| f.kind != Row::Generated)
+            .map(|f| f.rows)
+            .sum();
+        assert_eq!(source, LINES_READ);
+    }
+
+    #[test]
+    fn the_golden_count_matches_the_golden_files() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../models/golden/parser");
+        let files = std::fs::read_dir(dir)
+            .unwrap()
+            .filter(|e| {
+                e.as_ref()
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .ends_with(".json")
+            })
+            .count();
+        assert_eq!(GOLDEN_CASES as usize, files);
+    }
+}

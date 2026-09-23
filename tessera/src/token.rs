@@ -500,11 +500,13 @@ fn extend_or_start(
     }
 }
 
-/// UTF-16 code unit offset for every byte offset `0..=text.len()`.
+/// UTF-16 code unit offset for every byte offset `0..=text.len()`, the oracle `utf16_at` is
+/// tested against.
 ///
 /// Byte offsets inside a multi-byte character map to the start of that
 /// character; only char boundaries are meaningful span ends.
-pub fn utf16_offsets(text: &str) -> Vec<u32> {
+#[cfg(test)]
+fn utf16_offsets(text: &str) -> Vec<u32> {
     let mut out = Vec::with_capacity(text.len() + 1);
     let mut units: u32 = 0;
     for c in text.chars() {

@@ -70,7 +70,9 @@ export interface CreateOptions {
   kinds?: Kind[];
   /**
    * Run inference in a Web Worker on a browser main thread; ignored elsewhere. Where the page may
-   * not start a worker, as for a package loaded cross-origin from a CDN, calls run inline.
+   * not start a worker, because the `Worker` constructor throws as it does for a package loaded
+   * cross-origin from a CDN, calls run inline. A worker that starts but whose script or module
+   * fails to load rejects with `UNSUPPORTED_RUNTIME` instead.
    */
   worker?: boolean;
 }
@@ -82,6 +84,10 @@ export interface QueryOptions {
   includeUncertain?: boolean;
 }
 
+/**
+ * A loaded extractor. An instance nothing references any more is freed by the garbage collector;
+ * a worker-backed one first answers the calls already made, then stops its worker.
+ */
 export interface Tessera {
   /** The kinds this instance serves, in taxonomy order; empty once disposed. */
   readonly kinds: Kind[];
@@ -89,8 +95,17 @@ export interface Tessera {
   detect(text: string, options?: QueryOptions): Promise<Entity[]>;
   /** Split `text`, known to be one address, into components. */
   parseAddress(text: string, options?: QueryOptions): Promise<Entity>;
-  /** Release the model and any worker; later calls reject with `DISPOSED`. */
+  /**
+   * Release the model and any worker. Calls still waiting on the worker and every later call
+   * reject with `DISPOSED`; disposing twice is harmless.
+   */
   dispose(): void;
+  /**
+   * Free the instance's memory. A worker-backed instance answers the calls already made before
+   * its worker stops. Afterwards the object is unusable: every member throws synchronously
+   * instead of rejecting with `DISPOSED`, so prefer `dispose()`.
+   */
+  free(): void;
 }
 
 export function createTessera(options?: CreateOptions): Promise<Tessera>;

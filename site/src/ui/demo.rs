@@ -20,7 +20,7 @@ use super::output::OutputPane;
 use super::parse::ParseState;
 use super::stream::{self, Step};
 use crate::inference::Inference;
-use crate::protocol::{Found, FoundKind, Rejected, Request, Response};
+use crate::protocol::{Found, FoundKind, Request, Response};
 use crate::samples::SAMPLES;
 
 /// Longest document the demo analyzes, in bytes.
@@ -50,15 +50,6 @@ pub(crate) enum Failure {
     Worker(String),
 }
 
-/// A note under the panes.
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) enum Note {
-    /// The parser refused one of the marked address lines.
-    Refused(String),
-    /// The document is over [`MAX_TEXT`].
-    TooLong,
-}
-
 /// Everything the demo shows, as signals the page and the worker callback share.
 #[derive(Clone, Copy)]
 pub(crate) struct DemoState {
@@ -70,7 +61,8 @@ pub(crate) struct DemoState {
     /// The newest answer to a request still wanted.
     pub(crate) answer: RwSignal<Option<Result<Shown, String>>>,
     pub(crate) failure: RwSignal<Option<Failure>>,
-    pub(crate) note: RwSignal<Option<Note>>,
+    /// Whether the document is over [`MAX_TEXT`] and so was not sent.
+    pub(crate) too_long: RwSignal<bool>,
     /// Bumped to restart the scan; its parity picks one of two identical keyframe sets.
     pub(crate) run: RwSignal<u32>,
     /// Seconds of the current scan.
@@ -109,7 +101,7 @@ impl DemoState {
             editing: RwSignal::new(false),
             answer: RwSignal::new(None),
             failure: RwSignal::new(None),
-            note: RwSignal::new(None),
+            too_long: RwSignal::new(false),
             run: RwSignal::new(0),
             scan: RwSignal::new(stream::SCAN),
             scanning: RwSignal::new(false),
@@ -153,18 +145,9 @@ impl DemoState {
                 if id != latest {
                     return;
                 }
-                let shown = result.map(|analysis| {
-                    if let Some(refused) = analysis.rejected.first() {
-                        self.drop_marks(&text, &analysis.rejected);
-                        self.note.set(Some(Note::Refused(format!(
-                            "could not parse bytes {}..{} as an address: {}",
-                            refused.start, refused.end, refused.error
-                        ))));
-                    }
-                    Shown {
-                        text,
-                        found: Arc::new(analysis.found),
-                    }
+                let shown = result.map(|found| Shown {
+                    text,
+                    found: Arc::new(found),
                 });
                 self.answer.set(Some(shown));
                 self.replay_with(self.next_scan.get_value());
@@ -188,7 +171,7 @@ impl DemoState {
         self.selected.set(None);
         self.sample.set(index);
         self.editing.set(false);
-        self.note.set(None);
+        self.too_long.set(false);
         self.text.set(Arc::from(sample.text));
         self.hint.set(sample.country_hint.to_string());
         self.marks.set_value(
@@ -274,13 +257,12 @@ impl DemoState {
         let (id, _) = self.latest.get_value();
         let id = id.wrapping_add(1);
         self.latest.set_value((id, text.clone()));
-        if text.len() > MAX_TEXT {
-            self.note.set(Some(Note::TooLong));
-            return;
+        let too_long = text.len() > MAX_TEXT;
+        if self.too_long.get_untracked() != too_long {
+            self.too_long.set(too_long);
         }
-        // A note is about the text it was written for.
-        if self.note.get_untracked().is_some() {
-            self.note.set(None);
+        if too_long {
+            return;
         }
         let placed = self.marks.with_value(|m| marks::locate(&text, m));
         let addresses = placed.iter().map(|(_, span)| *span).collect();
@@ -292,17 +274,6 @@ impl DemoState {
             text: text.to_string(),
             country_hint: vec![self.hint.get_untracked()],
             addresses,
-        });
-    }
-
-    /// Drops the marks whose spans the parser refused, so later edits do not resend them.
-    fn drop_marks(self, text: &str, refused: &[Rejected]) {
-        self.marks.update_value(|marks| {
-            *marks = marks::locate(text, marks)
-                .into_iter()
-                .filter(|(_, span)| !refused.iter().any(|r| (r.start, r.end) == *span))
-                .map(|(mark, _)| mark)
-                .collect();
         });
     }
 
@@ -486,20 +457,20 @@ pub(crate) fn Demo(state: DemoState) -> impl IntoView {
                 <DocumentPane state=state />
                 <OutputPane state=state />
             </div>
-            {move || match state.note.get() {
-                Some(Note::Refused(message)) => {
-                    view! { <p class="note-line error" aria-live="polite">{message}</p> }.into_any()
-                }
-                Some(Note::TooLong) => view! {
-                    <p class="note-line error" aria-live="polite">
-                        {format!(
-                            "The text is over {} KB and is not analyzed; shorten it to see results.",
-                            MAX_TEXT / 1024,
-                        )}
-                    </p>
-                }
-                .into_any(),
-                None => ().into_any(),
+            {move || {
+                state
+                    .too_long
+                    .get()
+                    .then(|| {
+                        view! {
+                            <p class="note-line error" aria-live="polite">
+                                {format!(
+                                    "The text is over {} KB and is not analyzed; shorten it to see results.",
+                                    MAX_TEXT / 1024,
+                                )}
+                            </p>
+                        }
+                    })
             }}
             <div class="legend-line">
                 <span class="legend">

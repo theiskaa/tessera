@@ -24,6 +24,28 @@ pub fn bundle_checksum() -> &'static str {
     .trim()
 }
 
+/// Asserts that `listed` names every JSON file in `fixtures/<dir>/`. A browser cannot list a
+/// directory, so the fixture lists below spell out their files, and this catches one added on disk
+/// but not to its list.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn assert_lists_every_fixture(dir: &str, listed: &[(&str, impl Sized)]) {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../fixtures")
+        .join(dir);
+    let mut on_disk: Vec<String> = std::fs::read_dir(&path)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .filter(|name| name.ends_with(".json"))
+        .collect();
+    on_disk.sort();
+    let mut listed: Vec<String> = listed
+        .iter()
+        .map(|(name, _)| format!("{name}.json"))
+        .collect();
+    listed.sort();
+    assert_eq!(listed, on_disk, "fixtures/{dir}");
+}
+
 /// Parses an embedded JSON document, naming it in the panic when it is malformed.
 pub fn parse<T: serde::de::DeserializeOwned>(name: &str, json: &str) -> T {
     serde_json::from_str(json).unwrap_or_else(|e| panic!("{name}: {e}"))

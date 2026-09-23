@@ -21,11 +21,13 @@ wasm-baseline:
     env {{wasm_env}} wasm-pack build --release --target web --out-dir pkg tessera --features wasm
     {{wasm_opt}} -o tessera/pkg/tessera_bg.wasm tessera/pkg/tessera_bg.wasm
 
-# The simd128 wasm. Its glue is identical to the baseline's and is discarded.
+# The simd128 wasm. Its glue must be identical to the baseline's, which both variants load
+# through, so the build fails if it differs; it is then discarded.
 wasm-simd:
     env {{wasm_env}} {{simd_env}} wasm-pack build --release --target web --out-dir pkg-simd tessera --features wasm
     mkdir -p tessera/pkg
     {{wasm_opt}} --enable-simd -o tessera/pkg/tessera_simd_bg.wasm tessera/pkg-simd/tessera_bg.wasm
+    cmp tessera/pkg-simd/tessera.js tessera/pkg/tessera.js
     rm -rf tessera/pkg-simd
 
 # Makes index.js the entry and leaves tessera/pkg holding exactly the shipped files.

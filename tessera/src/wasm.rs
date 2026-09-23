@@ -8,7 +8,9 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use js_sys::{Array, ArrayBuffer, Function, Object, Promise, Reflect, TypeError, Uint8Array};
+use js_sys::{
+    Array, ArrayBuffer, Function, JsString, Object, Promise, Reflect, TypeError, Uint8Array,
+};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{MessageEvent, Response, Worker, WorkerOptions, WorkerType};
@@ -18,9 +20,9 @@ use crate::{Config, Entity, Error, Kind, KindSet, Query, Tessera, token};
 
 /// The JavaScript `Tessera` class: a loaded extractor reporting UTF-16 offsets.
 ///
-/// Keep a reference to an instance while its calls are in flight. The generated glue frees an
-/// unreachable instance through a `FinalizationRegistry`, which for a worker-backed instance
-/// terminates the worker and rejects those calls with `DISPOSED`.
+/// The generated glue frees an unreachable instance through a `FinalizationRegistry`. A
+/// worker-backed instance freed that way, or by `free()`, lets its worker answer the calls already
+/// waiting and terminates it after the last reply; only `dispose()` cuts those calls off.
 #[wasm_bindgen(js_name = Tessera)]
 pub struct JsTessera {
     backend: Option<Backend>,
@@ -75,9 +77,9 @@ impl JsTessera {
         #[wasm_bindgen(unchecked_param_type = "string")] text: &JsValue,
         options: Option<JsValue>,
     ) -> Promise {
-        self.call("parseAddress", text, options, |t, text, opts| {
+        self.call("parseAddress", text, options, |t, text, source, opts| {
             let entity = opts.run(|q| t.parse_address(text, q))?;
-            Ok(entity_objects(text, std::slice::from_ref(&entity)).get(0))
+            Ok(entity_objects(text, source, std::slice::from_ref(&entity)).get(0))
         })
     }
 
@@ -90,17 +92,19 @@ impl JsTessera {
         #[wasm_bindgen(unchecked_param_type = "string")] text: &JsValue,
         options: Option<JsValue>,
     ) -> Promise {
-        self.call("detect", text, options, |t, text, opts| {
-            Ok(entity_objects(text, &opts.run(|q| t.detect(text, q))?).into())
+        self.call("detect", text, options, |t, text, source, opts| {
+            Ok(entity_objects(text, source, &opts.run(|q| t.detect(text, q))?).into())
         })
     }
 
     /// Release the model, and terminate the worker of a worker-backed instance. Calls already in
     /// flight and every later call reject with code `DISPOSED`; disposing twice is harmless. After
-    /// `free()`, which also terminates the worker, every call throws synchronously, as with any
-    /// wasm-bindgen class.
+    /// `free()` every call throws synchronously instead, as with any wasm-bindgen class, because
+    /// the generated glue rejects a freed object before this code runs.
     pub fn dispose(&mut self) {
-        self.backend = None;
+        if let Some(Backend::Remote(remote)) = self.backend.take() {
+            remote.cut_off();
+        }
     }
 
     /// Validates the arguments here, then runs `local` in this thread or posts `op` to the worker.
@@ -109,7 +113,7 @@ impl JsTessera {
         op: &str,
         text: &JsValue,
         options: Option<JsValue>,
-        local: impl FnOnce(&Tessera, &str, &CallOptions) -> Result<JsValue, JsValue>,
+        local: impl FnOnce(&Tessera, &str, &JsString, &CallOptions) -> Result<JsValue, JsValue>,
     ) -> Promise {
         let outcome = self
             .backend
@@ -122,8 +126,11 @@ impl JsTessera {
                 let options = CallOptions::read(options)?;
                 Ok(match backend {
                     Backend::Local(t) => {
-                        let text = text.as_string().unwrap_or_default();
-                        Promise::resolve(&local(t, &text, &options)?)
+                        // Lone surrogates become U+FFFD here, one UTF-16 unit each as before, so
+                        // offsets still index `source`, which result texts are sliced from.
+                        let source: &JsString = text.unchecked_ref();
+                        let decoded = String::from(source);
+                        Promise::resolve(&local(t, &decoded, source, &options)?)
                     }
                     // The string goes to the worker as it is, never copied into this thread's
                     // wasm memory, which would otherwise grow to the largest document seen.
@@ -262,35 +269,60 @@ const CALL_FAILED: (&str, Option<&str>) = ("INFERENCE", Some("worker"));
 /// A few calls wait at a time, so a list costs less code than a hash map for the same speed.
 type Pending = Rc<RefCell<Vec<Waiting>>>;
 
+/// The link of a remote freed while calls wait, kept here until the last of them is settled.
+type Draining = Rc<RefCell<Option<Rc<Link>>>>;
+
+/// A worker and the listeners attached to it; dropping the last reference terminates the worker.
+struct Link {
+    worker: Worker,
+    _onmessage: Closure<dyn FnMut(MessageEvent)>,
+    messageerror_listener: Closure<dyn FnMut(JsValue)>,
+    _onerror: Closure<dyn FnMut(JsValue)>,
+}
+
+impl Drop for Link {
+    fn drop(&mut self) {
+        self.worker.terminate();
+        self.worker.set_onmessage(None);
+        self.worker.set_onerror(None);
+        let _ = self.worker.remove_event_listener_with_callback(
+            "messageerror",
+            self.messageerror_listener.as_ref().unchecked_ref(),
+        );
+    }
+}
+
 /// A module worker holding its own instance. Each call is one message with an id, answered by
 /// `{ id, ok: true, result }` or `{ id, ok: false, error: { code, message, stage } }`.
 struct Remote {
-    worker: Worker,
+    link: Rc<Link>,
     pending: Pending,
+    draining: Draining,
     /// Set by the worker's `error` event, after which the worker answers nothing.
     stopped: Rc<RefCell<Option<String>>>,
     next_id: Cell<u32>,
     kinds: KindSet,
-    _onmessage: Closure<dyn FnMut(MessageEvent)>,
-    messageerror_listener: Closure<dyn FnMut(JsValue)>,
-    _onerror: Closure<dyn FnMut(JsValue)>,
 }
 
 impl Remote {
     /// Takes over a started `worker` and waits for it to load `bundle`.
     async fn start(worker: Worker, wasm_url: &str, bundle: Bundle<'_>) -> Result<Remote, JsValue> {
         let pending: Pending = Rc::default();
+        let draining: Draining = Rc::default();
         let stopped: Rc<RefCell<Option<String>>> = Rc::default();
         let onmessage = {
             let pending = Rc::clone(&pending);
+            let draining = Rc::clone(&draining);
             Closure::<dyn FnMut(MessageEvent)>::new(move |event: MessageEvent| {
                 settle_reply(&pending, &event.data());
+                release_when_settled(&pending, &draining);
             })
         };
         // A reply that cannot be deserialized carries no id, so every waiting call is rejected
         // rather than one of them left waiting forever.
         let onmessageerror = {
             let pending = Rc::clone(&pending);
+            let draining = Rc::clone(&draining);
             Closure::<dyn FnMut(JsValue)>::new(move |_: JsValue| {
                 let err = tessera_error(
                     "INFERENCE",
@@ -298,12 +330,14 @@ impl Remote {
                     Some("worker"),
                 );
                 reject_all(&pending, &err);
+                release_when_settled(&pending, &draining);
             })
         };
         // A module that fails to import, or a worker that dies, reports here and never replies,
         // so the waiting calls are rejected and later calls fail at once instead of hanging.
         let onerror = {
             let pending = Rc::clone(&pending);
+            let draining = Rc::clone(&draining);
             let stopped = Rc::clone(&stopped);
             Closure::<dyn FnMut(JsValue)>::new(move |event: JsValue| {
                 let message = field(&event, "message")
@@ -315,6 +349,7 @@ impl Remote {
                     &tessera_error("UNSUPPORTED_RUNTIME", &message, None),
                 );
                 *stopped.borrow_mut() = Some(message);
+                release_when_settled(&pending, &draining);
             })
         };
         worker.set_onmessage(Some(onmessage.as_ref().unchecked_ref()));
@@ -325,14 +360,17 @@ impl Remote {
             onmessageerror.as_ref().unchecked_ref(),
         );
         let remote = Remote {
-            worker,
+            link: Rc::new(Link {
+                worker,
+                _onmessage: onmessage,
+                messageerror_listener: onmessageerror,
+                _onerror: onerror,
+            }),
             pending,
+            draining,
             stopped,
             next_id: Cell::new(0),
             kinds: bundle.kinds,
-            _onmessage: onmessage,
-            messageerror_listener: onmessageerror,
-            _onerror: onerror,
         };
         let load = Object::new();
         set(&load, "kinds", kind_labels(bundle.kinds));
@@ -379,11 +417,10 @@ impl Remote {
                 uncoded,
             });
         });
+        let worker = &self.link.worker;
         let posted = match transfer {
-            Some(buffer) => self
-                .worker
-                .post_message_with_transfer(message, &Array::of1(&buffer)),
-            None => self.worker.post_message(message),
+            Some(buffer) => worker.post_message_with_transfer(message, &Array::of1(&buffer)),
+            None => worker.post_message(message),
         };
         if let Err(e) = posted
             && let Some(waiting) = take(&self.pending, id)
@@ -393,18 +430,28 @@ impl Remote {
         }
         promise
     }
+
+    /// Rejects every waiting call with `DISPOSED`, then terminates the worker.
+    fn cut_off(self) {
+        reject_all(&self.pending, &disposed());
+    }
 }
 
 impl Drop for Remote {
+    /// Terminates the worker, unless calls still wait: then its link is handed to `draining` and
+    /// the worker lives until the last of them is settled.
     fn drop(&mut self) {
-        self.worker.terminate();
-        self.worker.set_onmessage(None);
-        self.worker.set_onerror(None);
-        let _ = self.worker.remove_event_listener_with_callback(
-            "messageerror",
-            self.messageerror_listener.as_ref().unchecked_ref(),
-        );
-        reject_all(&self.pending, &disposed());
+        if !self.pending.borrow().is_empty() {
+            *self.draining.borrow_mut() = Some(Rc::clone(&self.link));
+        }
+    }
+}
+
+/// Drops a freed remote's link, terminating its worker, once no call waits on it.
+fn release_when_settled(pending: &Pending, draining: &Draining) {
+    if pending.borrow().is_empty() {
+        let link = draining.borrow_mut().take();
+        drop(link);
     }
 }
 
@@ -489,11 +536,11 @@ async fn fetch_bundle(url: &str) -> Result<Uint8Array, JsValue> {
     Ok(Uint8Array::new(&buffer))
 }
 
-/// The message of a thrown or rejected value, which need not be an `Error`.
+/// The message of a thrown or rejected value, which need not be an `Error`. Read through
+/// `field`, which catches, since the value may come from a caller's getter.
 fn describe(value: &JsValue) -> String {
-    value
-        .dyn_ref::<js_sys::Error>()
-        .map(|e| String::from(e.message()))
+    field(value, "message")
+        .as_string()
         .or_else(|| value.as_string())
         .unwrap_or_else(|| "unknown error".into())
 }
@@ -543,8 +590,9 @@ fn kind_labels(set: KindSet) -> Array {
         .collect()
 }
 
-/// The entities as JS objects, with every offset converted in one pass over `text`.
-fn entity_objects(text: &str, entities: &[Entity]) -> Array {
+/// The entities as JS objects, with every offset converted in one pass over `text`, the decoded
+/// `source`, and each `text` field sliced from `source` so it keeps any lone surrogate.
+fn entity_objects(text: &str, source: &JsString, entities: &[Entity]) -> Array {
     // A byte-to-unit table for the whole text would cost four bytes per input byte, and wasm
     // memory never shrinks; only the offsets the results carry are converted.
     let bytes = entities.iter().flat_map(|e| {
@@ -557,16 +605,17 @@ fn entity_objects(text: &str, entities: &[Entity]) -> Array {
     let mut next = move || units.next().unwrap_or_default();
     entities
         .iter()
-        .map(|e| entity_object(text, e, &mut next))
+        .map(|e| entity_object(source, e, &mut next))
         .collect()
 }
 
-fn entity_object(text: &str, e: &Entity, next: &mut impl FnMut() -> u32) -> JsValue {
+fn entity_object(source: &JsString, e: &Entity, next: &mut impl FnMut() -> u32) -> JsValue {
     let obj = Object::new();
+    let (start, end) = (next(), next());
     set(&obj, "kind", e.kind.as_str());
-    set(&obj, "text", slice(text, e.start, e.end));
-    set(&obj, "start", next());
-    set(&obj, "end", next());
+    set(&obj, "text", source.slice(start, end));
+    set(&obj, "start", start);
+    set(&obj, "end", end);
     set(&obj, "confidence", display_confidence(e.confidence));
     set(&obj, "source", e.source.as_str());
     set(&obj, "reviewRecommended", e.review_recommended);
@@ -575,10 +624,11 @@ fn entity_object(text: &str, e: &Entity, next: &mut impl FnMut() -> u32) -> JsVa
         .iter()
         .map(|c| {
             let co = Object::new();
+            let (start, end) = (next(), next());
             set(&co, "label", c.label.as_str());
-            set(&co, "text", slice(text, c.start, c.end));
-            set(&co, "start", next());
-            set(&co, "end", next());
+            set(&co, "text", source.slice(start, end));
+            set(&co, "start", start);
+            set(&co, "end", end);
             set(&co, "confidence", display_confidence(c.confidence));
             JsValue::from(co)
         })
@@ -594,10 +644,6 @@ fn entity_object(text: &str, e: &Entity, next: &mut impl FnMut() -> u32) -> JsVa
         set(&obj, "region", region.as_str());
     }
     obj.into()
-}
-
-fn slice(text: &str, start: usize, end: usize) -> &str {
-    text.get(start..end).unwrap_or_default()
 }
 
 /// `value[key]`, or `undefined` when `value` is not an object or the read throws.
@@ -652,12 +698,26 @@ fn option(options: &JsValue, key: &str) -> Result<Option<JsValue>, JsValue> {
     if !options.is_object() {
         return Err(TypeError::new("options must be an object").into());
     }
-    let value = Reflect::get(options, &JsValue::from_str(key))?;
+    let value = Reflect::get(options, &JsValue::from_str(key)).map_err(|e| unreadable(key, &e))?;
     Ok((!value.is_undefined() && !value.is_null()).then_some(value))
 }
 
 fn type_error(key: &str, expected: &str) -> JsValue {
     TypeError::new(&format!("option `{key}` must be {expected}")).into()
+}
+
+/// The `TypeError` for an option whose getter or `Proxy` trap threw `thrown`.
+fn unreadable(key: &str, thrown: &JsValue) -> JsValue {
+    let message = format!("option `{key}` could not be read: {}", describe(thrown));
+    TypeError::new(&message).into()
+}
+
+#[wasm_bindgen]
+extern "C" {
+    /// `Array.isArray`, caught: it throws for a revoked `Proxy`, and a JS exception that unwinds
+    /// through wasm would leave the instance it was called on borrowed for good.
+    #[wasm_bindgen(catch, js_namespace = Array, js_name = isArray)]
+    fn is_array(value: &JsValue) -> Result<bool, JsValue>;
 }
 
 fn string_option(options: &JsValue, key: &str) -> Result<Option<String>, JsValue> {
@@ -677,12 +737,23 @@ fn string_array_option(options: &JsValue, key: &str) -> Result<Option<Vec<String
         return Ok(None);
     };
     let not_strings = || type_error(key, "an array of strings");
+    if !is_array(&value).map_err(|e| unreadable(key, &e))? {
+        return Err(not_strings());
+    }
+    // Every read goes through `Reflect`, which catches what a getter or a `Proxy` trap throws.
+    let length = Reflect::get(&value, &JsValue::from_str("length"))
+        .map_err(|e| unreadable(key, &e))?
+        .as_f64()
+        .ok_or_else(not_strings)?;
     // Read in place and stop at the first bad item: a sparse `new Array(1e9)` fails at once
     // instead of being copied.
-    let array = value.dyn_into::<Array>().map_err(|_| not_strings())?;
-    array
-        .iter()
-        .map(|item| item.as_string().ok_or_else(not_strings))
+    (0..length as u32)
+        .map(|i| {
+            Reflect::get_u32(&value, i)
+                .map_err(|e| unreadable(key, &e))?
+                .as_string()
+                .ok_or_else(not_strings)
+        })
         .collect::<Result<Vec<_>, _>>()
         .map(Some)
 }
@@ -702,7 +773,8 @@ fn kinds_option(options: &JsValue) -> Result<KindSet, JsValue> {
 }
 
 /// A view of the bytes in the `Uint8Array` or `ArrayBuffer` a caller is likely to hold, without
-/// copying them; `None` for anything else.
+/// copying them; `None` for anything else. The generated `instanceof` checks catch what a `Proxy`
+/// trap throws and answer `false`.
 fn byte_view(bytes: &JsValue) -> Option<Uint8Array> {
     if let Some(array) = bytes.dyn_ref::<Uint8Array>() {
         return Some(array.clone());

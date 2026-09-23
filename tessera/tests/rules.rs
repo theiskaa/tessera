@@ -220,3 +220,9 @@ fn overlap_email_wins() {
     assert_eq!(out.len(), 1);
     assert_eq!(out[0].kind, Kind::Email);
 }
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn the_fixture_list_names_every_rules_file() {
+    common::assert_lists_every_fixture("rules", &common::rules_fixtures());
+}

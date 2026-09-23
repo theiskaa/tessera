@@ -4,7 +4,7 @@
 use gloo_worker::{HandlerId, Worker, WorkerScope};
 use tessera::{Config, Kind, Query, Tessera};
 
-use crate::protocol::{Analysis, Found, Rejected, Request, Response};
+use crate::protocol::{Found, Request, Response};
 
 /// Resolved against the worker script, which Trunk puts beside the bundle.
 const BUNDLE_URL: &str = "tessera-v1.safetensors";
@@ -103,7 +103,7 @@ impl Models {
         text: &str,
         country_hint: &[String],
         addresses: &[(usize, usize)],
-    ) -> Result<Analysis, String> {
+    ) -> Result<Vec<Found>, String> {
         let hints: Vec<&str> = country_hint.iter().map(String::as_str).collect();
         let query = Query {
             country_hint: &hints,
@@ -116,22 +116,19 @@ impl Models {
             .iter()
             .filter_map(|e| Found::from_entity(e, 0))
             .collect();
-        let mut rejected = Vec::new();
-        for &(start, end) in addresses {
-            let parsed = match text.get(start..end) {
-                Some(span) => self
-                    .parser
-                    .parse_address(span, &Query::default())
-                    .map_err(|e| format!("{e:?}: {e}")),
-                None => Err("the span does not fall on character boundaries".to_string()),
-            };
-            match parsed {
-                Ok(entity) => found.extend(Found::from_entity(&entity, start)),
-                Err(error) => rejected.push(Rejected { start, end, error }),
-            }
+        // The page sends only spans it located on the text itself, so each one slices it.
+        for (start, span) in addresses
+            .iter()
+            .filter_map(|&(start, end)| Some((start, text.get(start..end)?)))
+        {
+            let entity = self
+                .parser
+                .parse_address(span, &Query::default())
+                .map_err(|e| format!("{e:?}: {e}"))?;
+            found.extend(Found::from_entity(&entity, start));
         }
         found.sort_by_key(|f| (f.start, f.end));
-        Ok(Analysis { found, rejected })
+        Ok(found)
     }
 }
 

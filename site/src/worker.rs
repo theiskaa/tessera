@@ -1,5 +1,5 @@
-//! Worker binary entry. Trunk builds it with a loader shim, `worker_loader.js`, which the page
-//! spawns.
+//! Worker binary entry. The page spawns `worker_loader.js`, a hand-written loader that Trunk
+//! copies beside this binary's glue and wasm, and the loader instantiates it.
 
 use gloo_worker::Registrable;
 use site::inference::Inference;

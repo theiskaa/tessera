@@ -35,8 +35,8 @@ pub enum Response {
     Analyzed {
         /// The request's `id`.
         id: u64,
-        /// What the library returned, or its error from `detect`.
-        result: Result<Analysis, String>,
+        /// Emails, phones, and parsed addresses, in document order, or the library's error.
+        result: Result<Vec<Found>, String>,
     },
     /// The answer to `Request::ParseAddress` with the same `id`.
     Parsed {
@@ -45,26 +45,6 @@ pub enum Response {
         /// The parsed address, or the parser's error as its variant name and message.
         result: Result<Found, String>,
     },
-}
-
-/// The library's output for one document.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Analysis {
-    /// Emails, phones, and parsed addresses, in document order.
-    pub found: Vec<Found>,
-    /// Address spans `parse_address` refused, with its error.
-    pub rejected: Vec<Rejected>,
-}
-
-/// An address span the parser refused.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Rejected {
-    /// Byte offset into the document where the span begins.
-    pub start: usize,
-    /// Byte offset where it ends, exclusive.
-    pub end: usize,
-    /// The library's error, as its variant name and message.
-    pub error: String,
 }
 
 /// The kinds the page shows.

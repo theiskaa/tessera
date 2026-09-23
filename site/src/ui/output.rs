@@ -3,13 +3,13 @@
 
 use leptos::prelude::*;
 
-use super::demo::{DemoState, Failure, HINTS, Note, Shown};
+use super::demo::{DemoState, Failure, HINTS, Shown};
 use super::highlight;
 use super::json::{self, kind_name};
 use crate::protocol::{Found, FoundKind};
 
-/// What the list shows after the range: the phone in E.164 with its region, or where the entity
-/// came from with its confidence.
+/// What the list shows after the range: the phone in E.164 with its region, or the library's
+/// `source` for the entity with its confidence.
 fn extra(found: &Found) -> String {
     match found.kind {
         FoundKind::Phone => [found.normalized.as_deref(), found.region.as_deref()]
@@ -17,8 +17,8 @@ fn extra(found: &Found) -> String {
             .flatten()
             .collect::<Vec<_>>()
             .join(" "),
-        FoundKind::Email => format!("rules {:.2}", found.confidence),
-        FoundKind::Address => format!("parser {:.3}", found.confidence),
+        FoundKind::Email => format!("{} {:.2}", found.source, found.confidence),
+        FoundKind::Address => format!("{} {:.3}", found.source, found.confidence),
     }
 }
 
@@ -39,7 +39,7 @@ pub(crate) fn OutputPane(state: DemoState) -> impl IntoView {
     let shown = Memo::new(move |_| {
         let shown = state.answer.get().and_then(Result::ok)?;
         let current = *shown.text == *state.text.get();
-        let typing = state.editing.get() && state.note.get() != Some(Note::TooLong);
+        let typing = state.editing.get() && !state.too_long.get();
         (current || typing).then_some(shown)
     });
 
@@ -65,6 +65,9 @@ pub(crate) fn OutputPane(state: DemoState) -> impl IntoView {
             </span>
         }
         .into_any(),
+        (None, None, _) if state.too_long.get() => {
+            view! { <span class="failed">"not analyzed"</span> }.into_any()
+        }
         (None, None, None) => view! { <span class="loading">"loading model"</span> }.into_any(),
         (None, None, Some(Ok(_))) => view! { <span class="loading">"analyzing"</span> }.into_any(),
         (None, None, Some(Err(_))) => {

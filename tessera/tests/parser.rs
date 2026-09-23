@@ -147,3 +147,9 @@ fn uncertain_components_follow_the_bands() {
         .unwrap();
     assert!(!clean.review_recommended && clean.confidence >= 0.85);
 }
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn the_fixture_list_names_every_parser_file() {
+    common::assert_lists_every_fixture("parser", &common::parser_fixtures());
+}

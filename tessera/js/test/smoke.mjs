@@ -16,6 +16,12 @@ function assertSlices(input, entity, name) {
   }
 }
 
+// A module that fails to instantiate rejects, and the next call loads it afresh.
+const { instantiate } = WebAssembly;
+WebAssembly.instantiate = () => Promise.reject(new Error("blocked by the smoke test"));
+await assert.rejects(createTessera({ kinds: ["email"] }), { name: "TesseraError", code: "UNSUPPORTED_RUNTIME" });
+WebAssembly.instantiate = instantiate;
+
 // Outside a browser main thread `worker: true` is ignored and the instance runs inline.
 const tessera = await createTessera({ modelBytes, integrity, kinds: ["address"], worker: true });
 assert.deepEqual(tessera.kinds, ["address"]);

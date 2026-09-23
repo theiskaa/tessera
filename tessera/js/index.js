@@ -18,8 +18,11 @@ export async function createTessera(options = {}) {
   if (typeof WebAssembly !== "object") {
     throw unsupported("WebAssembly is not available in this runtime");
   }
-  const variant = WebAssembly.validate(SIMD_PROBE) ? "./tessera_simd_bg.wasm" : "./tessera_bg.wasm";
-  const wasmUrl = new URL(variant, import.meta.url);
+  // Both URLs are written out in full: bundlers emit an asset only for a literal
+  // `new URL("…", import.meta.url)`, and would drop a module named by an expression.
+  const wasmUrl = WebAssembly.validate(SIMD_PROBE)
+    ? new URL("./tessera_simd_bg.wasm", import.meta.url)
+    : new URL("./tessera_bg.wasm", import.meta.url);
   // Node cannot fetch a file: URL, so the module is read from disk there.
   const wasmSource = () =>
     wasmUrl.protocol === "file:"

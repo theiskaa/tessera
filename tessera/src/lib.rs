@@ -27,7 +27,7 @@ pub mod internal {
     pub use crate::rules::email::scan as scan_email;
     pub use crate::rules::phone::scan as scan_phone;
     pub use crate::rules::scan as scan_rules;
-    pub use crate::token::{Script, Token, TokenClass, tokenize, utf16_offsets};
+    pub use crate::token::{Script, Token, TokenClass, tokenize};
 
     /// The intermediates of one `parse_address` call, for the golden-vector gate.
     #[derive(Debug, Clone)]

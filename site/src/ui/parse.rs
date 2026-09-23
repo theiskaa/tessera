@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use leptos::prelude::*;
 
-use super::demo::DemoState;
+use super::demo::{DemoState, Failure};
 use super::highlight;
 use super::json;
 use crate::protocol::{Found, Request};
@@ -115,25 +115,30 @@ fn highlighted(parsed: &Parsed, found: &Found) -> impl IntoView + use<> {
     runs.collect_view()
 }
 
+/// The answer in one line: the error, or the address's confidence.
+fn summary(parsed: &Parsed) -> String {
+    match &parsed.result {
+        Err(error) if error.starts_with("InputTooLarge") => {
+            format!("too long for one address: at most 256 tokens and 8 KiB ({error})")
+        }
+        Err(error) => format!("could not parse it: {error}"),
+        Ok(found) if found.components.is_empty() => "no parts found".to_string(),
+        Ok(found) if found.review_recommended => format!(
+            "confidence {:.3} · low confidence: check the parts",
+            found.confidence
+        ),
+        Ok(found) => format!("confidence {:.3}", found.confidence),
+    }
+}
+
 fn result(parsed: Parsed, json_view: bool) -> AnyView {
     let found = match &parsed.result {
-        Err(error) if error.starts_with("InputTooLarge") => {
-            return view! {
-                <p class="error">
-                    "too long for one address: at most 256 tokens and 8 KiB (" {error.clone()} ")"
-                </p>
-            }
-            .into_any();
-        }
-        Err(error) => {
-            return view! { <p class="error">{format!("could not parse it: {error}")}</p> }
-                .into_any();
+        Err(_) => return view! { <p class="error">{summary(&parsed)}</p> }.into_any(),
+        Ok(found) if found.components.is_empty() => {
+            return view! { <p class="waiting">{summary(&parsed)}</p> }.into_any();
         }
         Ok(found) => found.clone(),
     };
-    if found.components.is_empty() {
-        return view! { <p class="waiting">"no parts found"</p> }.into_any();
-    }
     if json_view {
         let body = format!(
             "{}{}{}{}",
@@ -145,8 +150,6 @@ fn result(parsed: Parsed, json_view: bool) -> AnyView {
         return view! { <pre class="json">{highlight::render(highlight::json(&body))}</pre> }
             .into_any();
     }
-    let summary = format!("confidence {:.3}", found.confidence);
-    let review = found.review_recommended;
     let rows = found
         .components
         .iter()
@@ -175,10 +178,7 @@ fn result(parsed: Parsed, json_view: bool) -> AnyView {
             </thead>
             <tbody>{rows}</tbody>
         </table>
-        <p class="parse-summary">
-            {summary}
-            {review.then_some(" · low confidence: check the parts")}
-        </p>
+        <p class="parse-summary">{summary(&parsed)}</p>
     }
     .into_any()
 }
@@ -191,12 +191,22 @@ pub(crate) fn ParseBox(state: DemoState) -> impl IntoView {
     // The first parse goes out once the worker exists; the worker queues it until the bundle
     // has loaded.
     Effect::new(move |_| parse.send(state));
+    // Once the model or the worker has failed no answer will come, so that is shown instead of
+    // waiting, in the words the demo's output pane uses.
     let body = move || {
         let empty = parse.input.with(|t| t.trim().is_empty());
-        match parse.parsed.get() {
+        match (state.failure.get(), parse.parsed.get()) {
+            (Some(Failure::Model(message)), _) => {
+                let message = format!("could not load the model: {message}");
+                view! { <p class="error">{message}</p> }.into_any()
+            }
+            (Some(Failure::Worker(message)), _) => {
+                let message = format!("the inference worker failed: {message}");
+                view! { <p class="error">{message}</p> }.into_any()
+            }
             _ if empty => view! { <p class="waiting">"type or paste one address"</p> }.into_any(),
-            None => view! { <p class="waiting">"parsing"</p> }.into_any(),
-            Some(parsed) => result(parsed, json_view.get()),
+            (None, None) => view! { <p class="waiting">"parsing"</p> }.into_any(),
+            (None, Some(parsed)) => result(parsed, json_view.get()),
         }
     };
 
@@ -213,6 +223,9 @@ pub(crate) fn ParseBox(state: DemoState) -> impl IntoView {
                                     type="button"
                                     class="toggle"
                                     class:on=move || parse.input.with(|t| t == address)
+                                    aria-pressed=move || {
+                                        parse.input.with(|t| t == address).to_string()
+                                    }
                                     aria-label=format!("example address, {code}")
                                     on:click=move |_| {
                                         parse.input.set(address.to_string());
@@ -261,7 +274,12 @@ pub(crate) fn ParseBox(state: DemoState) -> impl IntoView {
                     prop:value=move || parse.input.get()
                     on:input=move |ev| parse.type_in(state, event_target_value(&ev))
                 ></textarea>
-                <div class="parse-result" aria-live="polite">{body}</div>
+                <div class="parse-result">{body}</div>
+                // The result is rebuilt on every answer, and a live region created along with its
+                // text is not reliably announced, so only the summary is announced, from here.
+                <p class="visually-hidden" aria-live="polite">
+                    {move || parse.parsed.with(|p| p.as_ref().map(summary))}
+                </p>
             </div>
         </section>
     }
