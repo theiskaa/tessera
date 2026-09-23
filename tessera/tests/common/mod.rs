@@ -1,10 +1,33 @@
-//! Fixture loading shared by the integration tests. Tokenizer, rule, and parser fixtures are
-//! embedded with `include_str!` so they need no filesystem; the bundle and its golden vectors
-//! are read from `models/`, so those tests run natively until Milestone 3 embeds them for wasm.
+//! Fixture loading shared by the integration tests. Fixtures, golden vectors, and the bundle
+//! are embedded at compile time, so the same test binaries run natively and in a browser,
+//! where there is no filesystem.
 
 #![allow(dead_code)]
 
 use serde::Deserialize;
+
+#[cfg(target_arch = "wasm32")]
+wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
+
+/// The release bundle, embedded.
+pub const BUNDLE: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../models/tessera-v1.safetensors"
+));
+
+/// The bundle's integrity string, `sha256-<hex>`.
+pub fn bundle_checksum() -> &'static str {
+    include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../models/tessera-v1.sha256"
+    ))
+    .trim()
+}
+
+/// Parses an embedded JSON document, naming it in the panic when it is malformed.
+pub fn parse<T: serde::de::DeserializeOwned>(name: &str, json: &str) -> T {
+    serde_json::from_str(json).unwrap_or_else(|e| panic!("{name}: {e}"))
+}
 
 #[derive(Deserialize)]
 pub struct TokenizerFixture {
@@ -47,12 +70,7 @@ pub fn tokenizer_fixtures() -> Vec<(&'static str, TokenizerFixture)> {
         ),
     ]
     .into_iter()
-    .map(|(name, src)| {
-        (
-            name,
-            serde_json::from_str(src).unwrap_or_else(|e| panic!("fixture {name}: {e}")),
-        )
-    })
+    .map(|(name, src)| (name, parse(name, src)))
     .collect()
 }
 
@@ -114,38 +132,16 @@ pub fn rules_fixtures() -> Vec<(&'static str, RulesFixture)> {
         ),
     ]
     .into_iter()
-    .map(|(name, src)| {
-        (
-            name,
-            serde_json::from_str(src).unwrap_or_else(|e| panic!("fixture {name}: {e}")),
-        )
-    })
+    .map(|(name, src)| (name, parse(name, src)))
     .collect()
 }
 
-fn models_dir() -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../models")
-}
-
-pub fn bundle_bytes() -> Vec<u8> {
-    std::fs::read(models_dir().join("tessera-v1.safetensors"))
-        .expect("models/tessera-v1.safetensors")
-}
-
-pub fn bundle_checksum() -> String {
-    std::fs::read_to_string(models_dir().join("tessera-v1.sha256"))
-        .expect("models/tessera-v1.sha256")
-        .trim()
-        .to_string()
-}
-
 pub fn load_tessera() -> tessera::Tessera {
-    let checksum = bundle_checksum();
     tessera::Tessera::load(
-        &bundle_bytes(),
+        BUNDLE,
         tessera::Config {
             kinds: tessera::Kind::Address | tessera::Kind::Email | tessera::Kind::Phone,
-            expected_checksum: Some(&checksum),
+            expected_checksum: Some(bundle_checksum()),
         },
     )
     .expect("bundle loads")
@@ -172,22 +168,6 @@ pub struct GoldenFeatures {
     pub script: u8,
     pub shape: u8,
     pub flags: u32,
-}
-
-/// Every `.json` file under `models/golden/<net>/`, sorted by name.
-pub fn golden_files(net: &str) -> Vec<std::path::PathBuf> {
-    let mut files: Vec<_> = std::fs::read_dir(models_dir().join("golden").join(net))
-        .expect("golden directory")
-        .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| p.extension().is_some_and(|x| x == "json"))
-        .collect();
-    files.sort();
-    files
-}
-
-pub fn load_json<T: serde::de::DeserializeOwned>(path: &std::path::Path) -> T {
-    let text = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-    serde_json::from_str(&text).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
 }
 
 #[derive(Deserialize)]
@@ -225,8 +205,7 @@ pub fn parser_fixtures() -> Vec<(&'static str, ParserFixture)> {
     ]
     .into_iter()
     .map(|(name, src)| {
-        let fixture: ParserFixture =
-            serde_json::from_str(src).unwrap_or_else(|e| panic!("fixture {name}: {e}"));
+        let fixture: ParserFixture = parse(name, src);
         for case in &fixture.cases {
             let tokens = tessera::internal::tokenize(&case.input);
             let starts: Vec<usize> = tokens.iter().map(|t| t.start).collect();

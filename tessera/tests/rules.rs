@@ -3,14 +3,11 @@
 mod common;
 
 #[cfg(target_arch = "wasm32")]
-use wasm_bindgen_test::{wasm_bindgen_test, wasm_bindgen_test_configure};
-#[cfg(target_arch = "wasm32")]
-wasm_bindgen_test_configure!(run_in_browser);
+use wasm_bindgen_test::wasm_bindgen_test as test;
 
 use tessera::internal::scan_email;
 
-#[cfg_attr(not(target_arch = "wasm32"), test)]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[test]
 fn email_fixtures() {
     for (file, fixture) in common::rules_fixtures()
         .into_iter()
@@ -45,8 +42,7 @@ fn email_fixtures() {
 }
 
 #[cfg(feature = "phone-metadata")]
-#[cfg_attr(not(target_arch = "wasm32"), test)]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[test]
 fn phone_fixtures() {
     for (file, fixture) in common::rules_fixtures()
         .into_iter()
@@ -78,8 +74,7 @@ fn phone_fixtures() {
 use tessera::{Config, Error, Kind, Query, Tessera};
 
 #[cfg(feature = "phone-metadata")]
-#[cfg_attr(not(target_arch = "wasm32"), test)]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[test]
 fn detect_rules_only() {
     let t = Tessera::load(
         &[],
@@ -128,8 +123,7 @@ fn detect_rules_only() {
 /// Whole documents full of numbers that are not phones: order, ticket and invoice numbers,
 /// dates, prices, tracking codes, IBANs, and register numbers. Only the contacts may come out.
 #[cfg(feature = "phone-metadata")]
-#[cfg_attr(not(target_arch = "wasm32"), test)]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[test]
 fn document_fixtures() {
     for (file, fixture) in common::rules_fixtures()
         .into_iter()
@@ -171,8 +165,7 @@ fn document_fixtures() {
     }
 }
 
-#[cfg_attr(not(target_arch = "wasm32"), test)]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[test]
 fn model_kinds_are_typed_errors() {
     assert_eq!(
         Tessera::load(
@@ -204,8 +197,7 @@ fn model_kinds_are_typed_errors() {
     assert_eq!(t.detect("", &Query::default()).unwrap(), Vec::new());
 }
 
-#[cfg_attr(not(target_arch = "wasm32"), test)]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[test]
 fn overlap_email_wins() {
     let t = Tessera::load(
         &[],

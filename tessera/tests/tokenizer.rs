@@ -1,11 +1,9 @@
-//! Fixture-driven tokenizer tests. Run natively; 1.7 adds the wasm runner.
+//! Fixture-driven tokenizer tests, natively and in the browser.
 
 mod common;
 
 #[cfg(target_arch = "wasm32")]
-use wasm_bindgen_test::{wasm_bindgen_test, wasm_bindgen_test_configure};
-#[cfg(target_arch = "wasm32")]
-wasm_bindgen_test_configure!(run_in_browser);
+use wasm_bindgen_test::wasm_bindgen_test as test;
 
 use tessera::internal::{Script, TokenClass, tokenize, utf16_offsets};
 
@@ -39,8 +37,7 @@ fn script_name(s: Script) -> &'static str {
     }
 }
 
-#[cfg_attr(not(target_arch = "wasm32"), test)]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+#[test]
 fn fixtures_match() {
     for (file, fixture) in common::tokenizer_fixtures() {
         for case in &fixture.cases {

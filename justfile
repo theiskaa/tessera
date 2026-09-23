@@ -14,6 +14,7 @@ wasm-size: wasm
     @echo "without phone tables: $(gzip -9 -c tessera/pkg-nophone/tessera_bg.wasm | wc -c | tr -d ' ') bytes gzip"
     rm -rf tessera/pkg-nophone
 
-# Fixture tests in headless Chrome.
-wasm-test:
-    wasm-pack test --headless --chrome tessera --features wasm
+# Every integration test in headless browsers, e.g. `just wasm-test firefox` or
+# `just wasm-test chrome firefox safari`.
+wasm-test +browsers="chrome firefox":
+    wasm-pack test --headless {{prepend("--", browsers)}} tessera --features wasm

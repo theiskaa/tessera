@@ -2206,7 +2206,9 @@ mod tests {
                 .min()
                 .unwrap_or_default();
             // Debug builds are an order of magnitude slower; the bound is for release.
-            let bound = if cfg!(debug_assertions) { 1_000 } else { 50 };
+            // Linear scanning takes tens of milliseconds here; the bound only has to catch a
+            // quadratic path, which takes seconds, without failing on a loaded machine.
+            let bound = if cfg!(debug_assertions) { 2_000 } else { 250 };
             assert!(elapsed.as_millis() < bound, "{unit:?} took {elapsed:?}");
         }
     }

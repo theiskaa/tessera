@@ -1,5 +1,6 @@
-//! End-to-end test of the `tessera` binary. Requires the `cli` feature.
-#![cfg(feature = "cli")]
+//! End-to-end test of the `tessera` binary. Requires the `cli` feature and a native target,
+//! since it spawns the binary as a process.
+#![cfg(all(feature = "cli", not(target_arch = "wasm32")))]
 
 use std::io::Write;
 use std::process::{Command, Stdio};

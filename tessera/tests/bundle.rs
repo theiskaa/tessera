@@ -3,6 +3,9 @@
 
 mod common;
 
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen_test::wasm_bindgen_test as test;
+
 use tessera::{Config, Error, Kind, Tessera};
 
 fn load(bytes: &[u8], checksum: Option<&str>) -> Result<Tessera, Error> {
@@ -17,8 +20,7 @@ fn load(bytes: &[u8], checksum: Option<&str>) -> Result<Tessera, Error> {
 
 #[test]
 fn committed_bundle_loads() {
-    let checksum = common::bundle_checksum();
-    let t = load(&common::bundle_bytes(), Some(&checksum)).unwrap();
+    let t = load(common::BUNDLE, Some(common::bundle_checksum())).unwrap();
     assert!(t.model_version().is_some_and(|v| v.starts_with("0.1.")));
 }
 
@@ -26,14 +28,14 @@ fn committed_bundle_loads() {
 fn wrong_checksum() {
     let bad = format!("sha256-{}", "0".repeat(64));
     assert_eq!(
-        load(&common::bundle_bytes(), Some(&bad)).unwrap_err(),
+        load(common::BUNDLE, Some(&bad)).unwrap_err(),
         Error::ChecksumMismatch
     );
 }
 
 #[test]
 fn truncated() {
-    let bytes = common::bundle_bytes();
+    let bytes = common::BUNDLE;
     for n in [0, 7, 100, bytes.len() - 1] {
         assert_eq!(
             load(&bytes[..n], None).unwrap_err(),
@@ -45,7 +47,7 @@ fn truncated() {
 
 #[test]
 fn header_length_overflow() {
-    let mut bytes = common::bundle_bytes();
+    let mut bytes = common::BUNDLE.to_vec();
     bytes[..8].copy_from_slice(&u64::MAX.to_le_bytes());
     assert_eq!(load(&bytes, None).unwrap_err(), Error::BundleInvalid);
 }
@@ -53,7 +55,7 @@ fn header_length_overflow() {
 /// The bundle with its header rewritten. Data offsets count from the end of the header, so
 /// the header may change length.
 fn with_header(edit: impl Fn(&str) -> String) -> Vec<u8> {
-    let bytes = common::bundle_bytes();
+    let bytes = common::BUNDLE;
     let n = u64::from_le_bytes(bytes[..8].try_into().unwrap()) as usize;
     let header = edit(std::str::from_utf8(&bytes[8..8 + n]).unwrap());
     let mut out = (header.len() as u64).to_le_bytes().to_vec();
@@ -182,7 +184,7 @@ fn each_way_a_header_can_be_wrong() {
 /// Whenever a damaged bundle still loads, parsing must return rather than panic.
 #[test]
 fn a_bundle_that_loads_never_panics_on_parse() {
-    let bytes = common::bundle_bytes();
+    let bytes = common::BUNDLE;
     let n = u64::from_le_bytes(bytes[..8].try_into().unwrap()) as usize;
     let header = std::str::from_utf8(&bytes[8..8 + n]).unwrap().to_string();
     let fc_start = header.find("feature_config").unwrap();
@@ -228,7 +230,7 @@ fn a_bundle_that_loads_never_panics_on_parse() {
 /// bundle still loads, and parsing must return valid spans rather than panic.
 #[test]
 fn hostile_float_weights_do_not_panic() {
-    let bytes = common::bundle_bytes();
+    let bytes = common::BUNDLE;
     let n = u64::from_le_bytes(bytes[..8].try_into().unwrap()) as usize;
     let header: serde_json::Value = serde_json::from_slice(&bytes[8..8 + n]).unwrap();
     let ranges: Vec<(usize, usize)> = header
@@ -247,7 +249,7 @@ fn hostile_float_weights_do_not_panic() {
     assert!(ranges.len() > 10);
     let text = "Flat 4, 221B Baker Street, London NW1 6XE";
     for value in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, f32::MAX] {
-        let mut hostile = bytes.clone();
+        let mut hostile = bytes.to_vec();
         for &(begin, end) in &ranges {
             for chunk in hostile[8 + n + begin..8 + n + end].chunks_exact_mut(4) {
                 chunk.copy_from_slice(&value.to_le_bytes());
@@ -265,7 +267,7 @@ fn hostile_float_weights_do_not_panic() {
 fn kinds_without_their_network_are_invalid() {
     for kinds in [Kind::Person.into(), Kind::Org | Kind::Address, Kind::all()] {
         let got = Tessera::load(
-            &common::bundle_bytes(),
+            common::BUNDLE,
             Config {
                 kinds,
                 expected_checksum: None,
@@ -278,7 +280,7 @@ fn kinds_without_their_network_are_invalid() {
 #[test]
 fn an_instance_without_address_does_not_parse() {
     let t = Tessera::load(
-        &common::bundle_bytes(),
+        common::BUNDLE,
         Config {
             kinds: Kind::Email | Kind::Phone,
             expected_checksum: None,
