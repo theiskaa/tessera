@@ -210,13 +210,54 @@ async fn empty_address_has_empty_components() {
     assert_eq!(number(&got, "end"), 0.0);
 }
 
-#[test]
-async fn detect_matches_native_with_utf16_offsets() {
-    let hint = ["GB"];
+/// Asserts that `js.detect` returns what `native.detect` does, with UTF-16 offsets that slice
+/// the JS string to each entity's text.
+async fn assert_detect_matches(
+    native: &tessera::Tessera,
+    js: &JsTessera,
+    input: &str,
+    hint: Option<&str>,
+    label: &str,
+) {
+    let hints: Vec<&str> = hint.into_iter().collect();
     let query = Query {
-        country_hint: &hint,
+        country_hint: &hints,
         ..Query::default()
     };
+    let want = native.detect(input, &query).unwrap();
+    let opts = options(&format!(r#"{{"countryHint":{hints:?}}}"#));
+    let got: Array = resolved(js.detect(&text(input), Some(opts)))
+        .await
+        .dyn_into()
+        .unwrap();
+    assert_eq!(got.length() as usize, want.len(), "{label}");
+    let js_text = JsString::from(input);
+    for (e, w) in got.iter().zip(&want) {
+        let (start, end) = (number(&e, "start"), number(&e, "end"));
+        assert_eq!(string(&e, "kind"), w.kind.as_str(), "{label}");
+        assert_eq!(string(&e, "text"), w.text(input), "{label}");
+        assert_eq!(start, utf16_len(&input[..w.start]), "{label}");
+        assert_eq!(end, utf16_len(&input[..w.end]), "{label}");
+        let sliced: String = js_text.slice(start as u32, end as u32).into();
+        assert_eq!(sliced, w.text(input), "{label}");
+        assert_eq!(string(&e, "source"), w.source.as_str(), "{label}");
+        assert_eq!(
+            number(&e, "confidence"),
+            display_confidence(w.confidence),
+            "{label}"
+        );
+        assert_eq!(prop(&e, "normalized").as_string(), w.normalized, "{label}");
+        assert_eq!(prop(&e, "region").as_string(), w.region, "{label}");
+        assert_eq!(
+            has(&e, "components"),
+            w.kind == tessera::Kind::Address,
+            "{label}: components only on addresses"
+        );
+    }
+}
+
+#[test]
+async fn detect_matches_native_with_utf16_offsets() {
     let native = tessera::Tessera::load(
         &[],
         tessera::Config {
@@ -231,33 +272,36 @@ async fn detect_matches_native_with_utf16_offsets() {
         "📞 020 7946 0958 or 📧 nino@kavkaz-freight.example",
         "Cafe\u{301} 👩‍👩‍👧 +44 20 7946 0958",
     ] {
-        let want = native.detect(input, &query).unwrap();
+        let found = native
+            .detect(
+                input,
+                &Query {
+                    country_hint: &["GB"],
+                    ..Query::default()
+                },
+            )
+            .unwrap();
         assert!(
-            want.iter().any(|e| e.kind == tessera::Kind::Phone),
+            found.iter().any(|e| e.kind == tessera::Kind::Phone),
             "{input}: no phone"
         );
-        let got: Array =
-            resolved(js.detect(&text(input), Some(options(r#"{"countryHint":["GB"]}"#))))
-                .await
-                .dyn_into()
-                .unwrap();
-        assert_eq!(got.length() as usize, want.len(), "{input}");
-        let js_text = JsString::from(input);
-        for (e, w) in got.iter().zip(&want) {
-            let (start, end) = (number(&e, "start"), number(&e, "end"));
-            assert_eq!(string(&e, "kind"), w.kind.as_str(), "{input}");
-            assert_eq!(string(&e, "text"), w.text(input), "{input}");
-            assert_eq!(start, utf16_len(&input[..w.start]), "{input}");
-            assert_eq!(end, utf16_len(&input[..w.end]), "{input}");
-            let sliced: String = js_text.slice(start as u32, end as u32).into();
-            assert_eq!(sliced, w.text(input), "{input}");
-            assert_eq!(string(&e, "source"), "rules", "{input}");
-            assert_eq!(prop(&e, "normalized").as_string(), w.normalized, "{input}");
-            assert_eq!(prop(&e, "region").as_string(), w.region, "{input}");
-            assert!(
-                !has(&e, "components"),
-                "{input}: components only on addresses"
-            );
+        assert_detect_matches(&native, &js, input, Some("GB"), input).await;
+    }
+}
+
+#[test]
+async fn detector_fixtures_match_native_with_utf16_offsets() {
+    let native = common::load_all();
+    let js = load(
+        common::BUNDLE,
+        &format!(r#"{{"integrity":"{}"}}"#, common::bundle_checksum()),
+    )
+    .unwrap();
+    for (file, fixture) in common::detector_fixtures() {
+        for case in &fixture.cases {
+            let label = format!("{file}/{}", case.name);
+            let hint = case.country.as_deref();
+            assert_detect_matches(&native, &js, &case.input, hint, &label).await;
         }
     }
 }
@@ -498,11 +542,15 @@ fn wrong_checksum_has_a_code() {
 fn missing_network_is_bundle_invalid() {
     let err = load(&[], r#"{"kinds":["address"]}"#).err().unwrap();
     assert_tessera_error(&err, "BUNDLE_INVALID");
-    // Every kind is the default, and the shipped bundle has no detector for person and org.
-    let err = JsTessera::load(&Uint8Array::from(common::BUNDLE).into(), None)
-        .err()
-        .unwrap();
-    assert_tessera_error(&err, "BUNDLE_INVALID");
+}
+
+#[test]
+fn every_kind_is_the_default_and_the_shipped_bundle_serves_it() {
+    let tessera = JsTessera::load(&Uint8Array::from(common::BUNDLE).into(), None).unwrap();
+    assert_eq!(
+        kind_labels(&tessera),
+        ["person", "org", "address", "email", "phone"]
+    );
 }
 
 #[test]
@@ -514,7 +562,8 @@ async fn oversized_address_rejects() {
 
 #[test]
 async fn unserved_operation_rejects_with_a_stage() {
-    let err = rejected(address_tessera().detect(&text("a@b.example"), None)).await;
+    let parser_only = load(&parser_only_bundle(), r#"{"kinds":["address"]}"#).unwrap();
+    let err = rejected(parser_only.detect(&text("a@b.example"), None)).await;
     assert_tessera_error(&err, "INFERENCE");
     assert_eq!(string(&err, "stage"), "detect");
     let err = rejected(rules_tessera().parse_address(&text("1 Main St"), None)).await;
@@ -922,13 +971,38 @@ async fn errors_cross_the_worker_boundary_with_their_code() {
     let worker = create_instance(with_bundle(opts)).await.unwrap();
     let err = rejected(worker.parse_address(&text(&"x ".repeat(300)), None)).await;
     assert_tessera_error(&err, "INPUT_TOO_LARGE");
-    let err = rejected(worker.detect(&text("a@b.example"), None)).await;
-    assert_tessera_error(&err, "INFERENCE");
-    assert_eq!(string(&err, "stage"), "detect");
     // Arguments are checked before posting, so a caller bug stays a TypeError.
     assert_type_error(&rejected(worker.parse_address(&JsValue::from(7), None)).await);
     let bad = options(r#"{"includeUncertain":"yes"}"#);
     assert_type_error(&rejected(worker.parse_address(&text("1 Main St"), Some(bad))).await);
+
+    let (opts, _parser_only) = in_worker(r#"{"kinds":["address"]}"#, true);
+    Reflect::set(
+        &opts,
+        &text("modelBytes"),
+        &Uint8Array::from(parser_only_bundle().as_slice()),
+    )
+    .unwrap();
+    let worker = create_instance(opts).await.unwrap();
+    let err = rejected(worker.detect(&text("a@b.example"), None)).await;
+    assert_tessera_error(&err, "INFERENCE");
+    assert_eq!(string(&err, "stage"), "detect");
+}
+
+/// The shipped bundle with its manifest listing only the parser, as a Milestone 2 bundle did:
+/// an address instance loads from it and serves `parseAddress` but not `detect`.
+fn parser_only_bundle() -> Vec<u8> {
+    let bytes = common::BUNDLE;
+    let n = u64::from_le_bytes(bytes[..8].try_into().unwrap()) as usize;
+    let header = std::str::from_utf8(&bytes[8..8 + n]).unwrap().replacen(
+        r#""nets":"parser,detector""#,
+        r#""nets":"parser""#,
+        1,
+    );
+    let mut out = (header.len() as u64).to_le_bytes().to_vec();
+    out.extend_from_slice(header.as_bytes());
+    out.extend_from_slice(&bytes[8 + n..]);
+    out
 }
 
 #[test]
