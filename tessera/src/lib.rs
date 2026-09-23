@@ -6,6 +6,14 @@
 //! exclusive. The `wasm` feature converts them to UTF-16 code units at the
 //! binding boundary.
 
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "`Tessera::detect` runs its windows from phase 4.6"
+    )
+)]
+mod chunk;
 mod features;
 mod model;
 mod policy;
