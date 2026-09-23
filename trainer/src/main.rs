@@ -9,16 +9,17 @@ mod dataset;
 mod eval;
 mod export;
 mod fixtures;
+mod generate;
 mod model_eval;
 mod names;
 mod net;
 mod quantize;
 mod report;
+mod templates;
 mod train;
 
 use std::path::PathBuf;
 
-use anyhow::bail;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
@@ -53,6 +54,12 @@ enum Command {
     Generate {
         #[arg(long)]
         config: PathBuf,
+        /// Print this many bracketed documents instead of writing the corpus.
+        #[arg(long)]
+        sample: Option<usize>,
+        /// With `--sample`: only this family, such as `signature`.
+        #[arg(long)]
+        family: Option<String>,
     },
     /// Train the address parser and write a run directory.
     Train {
@@ -143,7 +150,11 @@ fn main() -> anyhow::Result<()> {
             refresh,
             date,
         } => names::run(&config, refresh, &date),
-        Command::Generate { .. } => bail!("arrives in milestone 4"),
+        Command::Generate {
+            config,
+            sample,
+            family,
+        } => generate::run(&config, sample, family.as_deref()),
         Command::Train {
             config,
             name,

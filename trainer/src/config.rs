@@ -19,6 +19,8 @@ pub struct Config {
     pub augment: AugmentConfig,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub names: Option<NamesConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generate: Option<GenerateConfig>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
@@ -98,6 +100,28 @@ pub struct NamesConfig {
     pub sample_seed: u64,
     /// Inclusive range of birth years queried per country and language.
     pub birth_years: (u32, u32),
+}
+
+/// Synthetic detector documents for `trainer generate`. The seed, countries, and output
+/// directory are the config's top-level `seed`, `[data] countries`, and `[data] processed`;
+/// names come from `[names] out`.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct GenerateConfig {
+    /// Training documents, from the six training families' seen templates.
+    pub train: usize,
+    /// Validation documents, from the same templates as training.
+    pub valid: usize,
+    /// Test documents from seen templates with unseen entities.
+    pub test_seen: usize,
+    /// Test documents from the held-out templates of the six training families.
+    pub test_heldout_templates: usize,
+    /// Test documents from the two held-out families.
+    pub test_heldout_families: usize,
+    /// Directory of the parser shards the addresses come from.
+    pub addresses: String,
+    /// Longest document kept, in non-whitespace tokens, so training never needs chunking.
+    pub max_tokens: usize,
 }
 
 /// Augmented copies per training row.
@@ -182,7 +206,9 @@ mod tests {
         assert_eq!(d.task, Task::Detector);
         assert_eq!(d.net.dilations, vec![1, 2, 4, 8, 16, 1]);
         assert_eq!(d.names.unwrap().birth_years, (1930, 2005));
+        assert_eq!(d.generate.unwrap().max_tokens, 900);
         assert!(p.names.is_none());
+        assert!(p.generate.is_none());
     }
 
     #[test]

@@ -38,3 +38,12 @@ interim = "data/interim"
 out = "data/processed/names"
 sample_seed = 42
 birth_years = [1930, 2005]
+
+[generate]
+train = 170000
+valid = 10000
+test_seen = 10000
+test_heldout_templates = 5000
+test_heldout_families = 5000
+addresses = "data/processed/parser"
+max_tokens = 900
