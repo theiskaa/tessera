@@ -3,17 +3,41 @@
 # native release builds of the trainer keep their speed-oriented profile.
 wasm_env := "CARGO_PROFILE_RELEASE_OPT_LEVEL=z CARGO_PROFILE_RELEASE_LTO=true CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1 CARGO_PROFILE_RELEASE_PANIC=abort CARGO_PROFILE_RELEASE_STRIP=true"
 
-# Release npm package in tessera/pkg: the size-optimized wasm run through wasm-opt, the
-# generated glue, and the hand-written entry, worker, and types.
-wasm:
+# `strip` drops the target-features section, so wasm-opt assumes MVP unless told what the wasm32
+# target enables by default since Rust 1.82. Only the SIMD build adds `--enable-simd`: an enabled
+# feature is one binaryen's optimizer may itself emit, which would break the baseline on old engines.
+wasm_opt := "wasm-opt -Oz --strip-debug --strip-producers --enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext --enable-mutable-globals --enable-reference-types --enable-multivalue"
+
+# The SIMD build has its own target directory so switching RUSTFLAGS keeps both caches warm.
+simd_env := "RUSTFLAGS='-C target-feature=+simd128' CARGO_TARGET_DIR='" + justfile_directory() / "target/wasm-simd'"
+
+# Release npm package in tessera/pkg: the baseline and SIMD wasm, the generated glue, and the
+# hand-written entry, worker, and types.
+wasm: wasm-baseline wasm-simd wasm-package
+
+# The baseline wasm for engines without SIMD, with the glue both variants share.
+wasm-baseline:
     env {{wasm_env}} wasm-pack build --release --target web --out-dir pkg tessera --features wasm
+    {{wasm_opt}} -o tessera/pkg/tessera_bg.wasm tessera/pkg/tessera_bg.wasm
+
+# The simd128 wasm. Its glue is identical to the baseline's and is discarded.
+wasm-simd:
+    env {{wasm_env}} {{simd_env}} wasm-pack build --release --target web --out-dir pkg-simd tessera --features wasm
+    mkdir -p tessera/pkg
+    {{wasm_opt}} --enable-simd -o tessera/pkg/tessera_simd_bg.wasm tessera/pkg-simd/tessera_bg.wasm
+    rm -rf tessera/pkg-simd
+
+# Makes index.js the entry and leaves tessera/pkg holding exactly the shipped files.
+wasm-package:
     node tessera/js/build/package.mjs
 
-# Gzip size of the release wasm with the phone tables, and without them.
+# Gzip size of both release variants with the phone tables, and of the baseline without them.
 wasm-size: wasm
-    @echo "with phone tables:    $(gzip -9 -c tessera/pkg/tessera_bg.wasm | wc -c | tr -d ' ') bytes gzip"
+    @echo "baseline, with phone tables:    $(gzip -9 -c tessera/pkg/tessera_bg.wasm | wc -c | tr -d ' ') bytes gzip"
+    @echo "simd128, with phone tables:     $(gzip -9 -c tessera/pkg/tessera_simd_bg.wasm | wc -c | tr -d ' ') bytes gzip"
     env {{wasm_env}} wasm-pack build --release --target web --out-dir pkg-nophone tessera --no-default-features --features wasm
-    @echo "without phone tables: $(gzip -9 -c tessera/pkg-nophone/tessera_bg.wasm | wc -c | tr -d ' ') bytes gzip"
+    {{wasm_opt}} -o tessera/pkg-nophone/tessera_bg.wasm tessera/pkg-nophone/tessera_bg.wasm
+    @echo "baseline, without phone tables: $(gzip -9 -c tessera/pkg-nophone/tessera_bg.wasm | wc -c | tr -d ' ') bytes gzip"
     rm -rf tessera/pkg-nophone
 
 # Every integration test in headless browsers, e.g. `just wasm-test firefox` or

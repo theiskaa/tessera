@@ -48,15 +48,5 @@ wasm-bindgen-test = "0.3"
 js-sys = "0.3"
 
 [package.metadata.wasm-pack.profile.release]
-# The wasm32 target enables these features by default since Rust 1.82; wasm-opt must be told.
-wasm-opt = [
-    "-Oz",
-    "--strip-debug",
-    "--strip-producers",
-    "--enable-bulk-memory",
-    "--enable-nontrapping-float-to-int",
-    "--enable-sign-ext",
-    "--enable-mutable-globals",
-    "--enable-reference-types",
-    "--enable-multivalue",
-]
+# The justfile runs wasm-opt itself, with feature flags that differ between the two variants.
+wasm-opt = false
