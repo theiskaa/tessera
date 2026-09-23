@@ -445,13 +445,37 @@ async fn disposed_instance_rejects() {
     assert_tessera_error(&err, "DISPOSED");
 }
 
+/// A `blob:` URL, revoked when dropped; keep it alive until whatever loads it has finished.
+struct BlobUrl(String);
+
+impl BlobUrl {
+    fn new(part: &JsValue, kind: &str) -> BlobUrl {
+        let make = Function::new_with_args(
+            "part, type",
+            "return URL.createObjectURL(new Blob([part], { type }))",
+        );
+        let url = make.call2(&JsValue::NULL, part, &text(kind)).unwrap();
+        BlobUrl(url.as_string().unwrap())
+    }
+}
+
+impl std::ops::Deref for BlobUrl {
+    type Target = str;
+    fn deref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl Drop for BlobUrl {
+    fn drop(&mut self) {
+        let revoke = Function::new_with_args("url", "URL.revokeObjectURL(url)");
+        revoke.call1(&JsValue::NULL, &text(&self.0)).unwrap();
+    }
+}
+
 /// A `blob:` URL serving `bytes`, so a fetch succeeds without the test server knowing the file.
-fn blob_url(bytes: &[u8]) -> String {
-    let make = Function::new_with_args("bytes", "return URL.createObjectURL(new Blob([bytes]))");
-    make.call1(&JsValue::NULL, &Uint8Array::from(bytes))
-        .unwrap()
-        .as_string()
-        .unwrap()
+fn blob_url(bytes: &[u8]) -> BlobUrl {
+    BlobUrl::new(&Uint8Array::from(bytes).into(), "application/octet-stream")
 }
 
 fn with_url(url: &str, integrity: &str) -> JsValue {
@@ -591,6 +615,7 @@ async fn bad_create_options_are_type_errors() {
         r#"{"kinds":["email"],"modelBytes":[1,2]}"#,
         r#"{"kinds":[]}"#,
         r#"{"kinds":["address"],"modelBytes":null,"integrity":7}"#,
+        r#"{"kinds":["email"],"worker":"yes"}"#,
     ] {
         assert_type_error(&create_instance(options(json)).await.err().unwrap());
     }
@@ -630,4 +655,312 @@ async fn awaited_fetch_failures_are_model_fetch_failed() {
             ),
         }
     }
+}
+
+/// The shipped `worker.js` as a `blob:` module run against this test binary, and the URL of the
+/// binary's wasm. The runner builds tests with `--target web` and serves the glue as
+/// `/wasm-bindgen-test.js`, which exports the same `Tessera` class as the package's `tessera.js`,
+/// so only the import is rewritten; a `blob:` module cannot resolve a relative import.
+struct TestWorker {
+    script: BlobUrl,
+    wasm_url: String,
+}
+
+impl TestWorker {
+    fn new() -> TestWorker {
+        let origin = prop(&prop(&js_sys::global(), "location"), "origin")
+            .as_string()
+            .unwrap();
+        let source = include_str!("../js/worker.js");
+        let rewritten = source.replace(
+            r#""./tessera.js""#,
+            &format!(r#""{origin}/wasm-bindgen-test.js""#),
+        );
+        assert_ne!(
+            rewritten, source,
+            "worker.js no longer imports ./tessera.js"
+        );
+        TestWorker {
+            script: BlobUrl::new(&text(&rewritten), "text/javascript"),
+            wasm_url: format!("{origin}/wasm-bindgen-test_bg.wasm"),
+        }
+    }
+}
+
+/// `options` with the worker switched on, or explicitly off, and the URLs it needs. The returned
+/// `TestWorker` must outlive `create_instance`.
+fn in_worker(json: &str, worker: bool) -> (JsValue, TestWorker) {
+    worker_on(options(json), worker)
+}
+
+fn worker_on(opts: JsValue, worker: bool) -> (JsValue, TestWorker) {
+    let urls = TestWorker::new();
+    Reflect::set(&opts, &text("worker"), &JsValue::from_bool(worker)).unwrap();
+    Reflect::set(&opts, &text("workerUrl"), &text(&urls.script)).unwrap();
+    Reflect::set(&opts, &text("wasmUrl"), &text(&urls.wasm_url)).unwrap();
+    (opts, urls)
+}
+
+fn with_bundle(opts: JsValue) -> JsValue {
+    Reflect::set(
+        &opts,
+        &text("modelBytes"),
+        &Uint8Array::from(common::BUNDLE),
+    )
+    .unwrap();
+    opts
+}
+
+fn json(value: &JsValue) -> String {
+    js_sys::JSON::stringify(value).unwrap().into()
+}
+
+/// Patches `Worker.prototype` to count terminations and remember the last worker posted to; the
+/// glue calls both through the prototype. Tests run one at a time, so only the installing test
+/// sees the patch. A panic in wasm does not unwind, so tests restore it before asserting.
+struct WorkerSpy(JsValue);
+
+impl WorkerSpy {
+    fn install() -> WorkerSpy {
+        let install = Function::new_no_args(
+            "const proto = Worker.prototype;
+             const { terminate, postMessage } = proto;
+             const seen = { terminated: 0, last: null };
+             proto.terminate = function () { seen.terminated++; return terminate.call(this); };
+             proto.postMessage = function (...args) { seen.last = this; return postMessage.apply(this, args); };
+             return { seen, restore() { Object.assign(proto, { terminate, postMessage }); } };",
+        );
+        WorkerSpy(install.call0(&JsValue::NULL).unwrap())
+    }
+
+    fn terminated(&self) -> f64 {
+        number(&prop(&self.0, "seen"), "terminated")
+    }
+
+    fn last(&self) -> JsValue {
+        prop(&prop(&self.0, "seen"), "last")
+    }
+
+    fn restore(&self) {
+        let restore: Function = prop(&self.0, "restore").dyn_into().unwrap();
+        restore.call0(&self.0).unwrap();
+    }
+}
+
+async fn settled(promise: Promise) -> Result<JsValue, JsValue> {
+    JsFuture::from(promise).await
+}
+
+#[test]
+async fn worker_and_inline_parse_identically() {
+    let (opts, _inline_worker) = in_worker(&address_options(), false);
+    let inline = create_instance(with_bundle(opts)).await.unwrap();
+    // Fetched bytes are moved into the worker and a caller's bytes are copied; cover both.
+    let bundle = blob_url(common::BUNDLE);
+    let (fetched, _fetched_worker) = worker_on(with_url(&bundle, common::bundle_checksum()), true);
+    let (given, _given_worker) = in_worker(&address_options(), true);
+    let given = with_bundle(given);
+    let caller_bytes: Uint8Array = prop(&given, "modelBytes").dyn_into().unwrap();
+    let workers = [
+        create_instance(fetched).await.unwrap(),
+        create_instance(given).await.unwrap(),
+    ];
+    assert_eq!(
+        caller_bytes.byte_length() as usize,
+        common::BUNDLE.len(),
+        "a caller's modelBytes must not be detached"
+    );
+    let mut inputs: Vec<String> = common::parser_fixtures()
+        .into_iter()
+        .flat_map(|(_, f)| f.cases.into_iter().map(|c| c.input))
+        .collect();
+    inputs.extend(WIDE_ADDRESSES.iter().map(|s| s.to_string()));
+    for worker in &workers {
+        assert_eq!(kind_labels(worker), ["address"]);
+        for input in &inputs {
+            for opts in [r#"{}"#, r#"{"includeUncertain":true}"#] {
+                let want = resolved(inline.parse_address(&text(input), Some(options(opts)))).await;
+                let got = resolved(worker.parse_address(&text(input), Some(options(opts)))).await;
+                assert_eq!(json(&got), json(&want), "{input} {opts}");
+            }
+        }
+    }
+}
+
+#[test]
+async fn worker_and_inline_detect_identically() {
+    let kinds = r#"{"kinds":["email","phone"]}"#;
+    let (opts, _inline_worker) = in_worker(kinds, false);
+    let inline = create_instance(opts).await.unwrap();
+    let (opts, _worker) = in_worker(kinds, true);
+    let worker = create_instance(opts).await.unwrap();
+    assert_eq!(kind_labels(&worker), ["email", "phone"]);
+    for (_, fixture) in common::rules_fixtures() {
+        for case in &fixture.cases {
+            let hint: Vec<String> = case.country_hint.iter().map(|h| format!("{h:?}")).collect();
+            let opts = format!(r#"{{"countryHint":[{}]}}"#, hint.join(","));
+            let want = resolved(inline.detect(&text(&case.input), Some(options(&opts)))).await;
+            let got = resolved(worker.detect(&text(&case.input), Some(options(&opts)))).await;
+            assert_eq!(json(&got), json(&want), "{}", case.name);
+        }
+    }
+}
+
+#[test]
+async fn errors_cross_the_worker_boundary_with_their_code() {
+    let (opts, _bad) = in_worker(r#"{"kinds":["address"],"integrity":"sha256-0000"}"#, true);
+    let err = create_instance(with_bundle(opts)).await.err().unwrap();
+    assert_tessera_error(&err, "CHECKSUM_MISMATCH");
+
+    let (opts, _good) = in_worker(&address_options(), true);
+    let worker = create_instance(with_bundle(opts)).await.unwrap();
+    let err = rejected(worker.parse_address(&text(&"x ".repeat(300)), None)).await;
+    assert_tessera_error(&err, "INPUT_TOO_LARGE");
+    let err = rejected(worker.detect(&text("a@b.example"), None)).await;
+    assert_tessera_error(&err, "INFERENCE");
+    assert_eq!(string(&err, "stage"), "detect");
+    // Arguments are checked before posting, so a caller bug stays a TypeError.
+    assert_type_error(&rejected(worker.parse_address(&JsValue::from(7), None)).await);
+    let bad = options(r#"{"includeUncertain":"yes"}"#);
+    assert_type_error(&rejected(worker.parse_address(&text("1 Main St"), Some(bad))).await);
+}
+
+#[test]
+async fn a_worker_whose_module_fails_to_load_is_unsupported_runtime() {
+    let (opts, _worker) = in_worker(&address_options(), true);
+    Reflect::set(&opts, &text("wasmUrl"), &text("/no-such-module.wasm")).unwrap();
+    let err = create_instance(with_bundle(opts)).await.err().unwrap();
+    assert_tessera_error(&err, "UNSUPPORTED_RUNTIME");
+}
+
+/// What `dispose_terminates_the_worker` observes, gathered before any assertion.
+struct DisposeObservations {
+    before: f64,
+    after_dispose: f64,
+    in_flight: Result<JsValue, JsValue>,
+    later: Result<JsValue, JsValue>,
+    kinds_after: u32,
+    after_second_dispose: f64,
+    after_drop: f64,
+}
+
+async fn observe_dispose(spy: &WorkerSpy) -> Result<DisposeObservations, JsValue> {
+    let (opts, _address) = in_worker(&address_options(), true);
+    let mut worker = create_instance(with_bundle(opts)).await?;
+    let before = spy.terminated();
+    let in_flight = worker.parse_address(&text("10 Downing Street, London"), None);
+    worker.dispose();
+    let after_dispose = spy.terminated();
+    let in_flight = settled(in_flight).await;
+    let later = settled(worker.detect(&text("a@b.example"), None)).await;
+    let kinds_after = worker.kinds().length();
+    worker.dispose();
+    let after_second_dispose = spy.terminated();
+    // Dropping the instance, which JavaScript's `free()` does, terminates the worker as well.
+    let (opts, _rules) = in_worker(r#"{"kinds":["email"]}"#, true);
+    drop(create_instance(opts).await?);
+    Ok(DisposeObservations {
+        before,
+        after_dispose,
+        in_flight,
+        later,
+        kinds_after,
+        after_second_dispose,
+        after_drop: spy.terminated(),
+    })
+}
+
+#[test]
+async fn dispose_terminates_the_worker() {
+    let spy = WorkerSpy::install();
+    let observed = observe_dispose(&spy).await;
+    spy.restore();
+    let seen = observed.unwrap();
+    assert_eq!(seen.before, 0.0);
+    assert_eq!(seen.after_dispose, 1.0);
+    assert_tessera_error(&seen.in_flight.unwrap_err(), "DISPOSED");
+    assert_tessera_error(&seen.later.unwrap_err(), "DISPOSED");
+    assert_eq!(seen.kinds_after, 0);
+    assert_eq!(
+        seen.after_second_dispose, 1.0,
+        "disposing twice terminates once"
+    );
+    assert_eq!(seen.after_drop, 2.0);
+}
+
+/// What `worker_events_reject_waiting_calls` observes, gathered before any assertion.
+struct EventObservations {
+    unreadable: Result<JsValue, JsValue>,
+    after_unreadable: Result<JsValue, JsValue>,
+    stopped: Result<JsValue, JsValue>,
+    after_stopped: Result<JsValue, JsValue>,
+}
+
+async fn observe_events(spy: &WorkerSpy) -> Result<EventObservations, JsValue> {
+    let (opts, _worker) = in_worker(r#"{"kinds":["email"]}"#, true);
+    let tessera = create_instance(opts).await?;
+    let worker = spy.last();
+    // Dispatched synchronously after the post, so each event lands before the real reply.
+    let dispatch = Function::new_with_args(
+        "worker, type",
+        "worker.dispatchEvent(type === 'error'
+           ? new ErrorEvent('error', { message: 'the worker crashed' })
+           : new MessageEvent(type))",
+    );
+    let waiting = tessera.detect(&text("a@b.example"), None);
+    dispatch.call2(&JsValue::NULL, &worker, &text("messageerror"))?;
+    let unreadable = settled(waiting).await;
+    let after_unreadable = settled(tessera.detect(&text("a@b.example"), None)).await;
+    let waiting = tessera.detect(&text("a@b.example"), None);
+    dispatch.call2(&JsValue::NULL, &worker, &text("error"))?;
+    let stopped = settled(waiting).await;
+    let after_stopped = settled(tessera.detect(&text("a@b.example"), None)).await;
+    Ok(EventObservations {
+        unreadable,
+        after_unreadable,
+        stopped,
+        after_stopped,
+    })
+}
+
+#[test]
+async fn worker_events_reject_waiting_calls() {
+    let spy = WorkerSpy::install();
+    let observed = observe_events(&spy).await;
+    spy.restore();
+    let seen = observed.unwrap();
+    let unreadable = seen.unreadable.unwrap_err();
+    assert_tessera_error(&unreadable, "INFERENCE");
+    assert_eq!(string(&unreadable, "stage"), "worker");
+    let found: Array = seen.after_unreadable.unwrap().dyn_into().unwrap();
+    assert_eq!(
+        found.length(),
+        1,
+        "an unreadable reply does not stop the worker"
+    );
+    for err in [seen.stopped.unwrap_err(), seen.after_stopped.unwrap_err()] {
+        assert_tessera_error(&err, "UNSUPPORTED_RUNTIME");
+        assert_eq!(string(&err, "message"), "the worker crashed");
+    }
+}
+
+#[test]
+async fn worker_needs_the_entry_urls() {
+    for missing in ["workerUrl", "wasmUrl"] {
+        let (opts, _worker) = in_worker(&address_options(), true);
+        let opts = with_bundle(opts);
+        Reflect::delete_property(opts.unchecked_ref::<Object>(), &text(missing)).unwrap();
+        let err = create_instance(opts).await.err().unwrap();
+        assert_tessera_error(&err, "UNSUPPORTED_RUNTIME");
+        assert!(string(&err, "message").starts_with(missing));
+    }
+}
+
+#[test]
+async fn a_worker_that_cannot_start_rejects() {
+    let (opts, _worker) = in_worker(&address_options(), true);
+    let opts = with_bundle(opts);
+    Reflect::set(&opts, &text("workerUrl"), &text("/no-such-worker.js")).unwrap();
+    let err = create_instance(opts).await.err().unwrap();
+    assert_tessera_error(&err, "UNSUPPORTED_RUNTIME");
 }

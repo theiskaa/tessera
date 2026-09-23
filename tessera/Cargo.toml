@@ -23,7 +23,14 @@ thiserror.workspace = true
 wasm-bindgen = { workspace = true, optional = true }
 js-sys = { version = "0.3", optional = true }
 wasm-bindgen-futures = { version = "0.4", optional = true }
-web-sys = { version = "0.3", features = ["Response"], optional = true }
+web-sys = { version = "0.3", features = [
+    "EventTarget",
+    "MessageEvent",
+    "Response",
+    "Worker",
+    "WorkerOptions",
+    "WorkerType",
+], optional = true }
 serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 
@@ -44,6 +51,8 @@ js-sys = "0.3"
 # The wasm32 target enables these features by default since Rust 1.82; wasm-opt must be told.
 wasm-opt = [
     "-Oz",
+    "--strip-debug",
+    "--strip-producers",
     "--enable-bulk-memory",
     "--enable-nontrapping-float-to-int",
     "--enable-sign-ext",

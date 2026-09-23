@@ -3,9 +3,11 @@
 # native release builds of the trainer keep their speed-oriented profile.
 wasm_env := "CARGO_PROFILE_RELEASE_OPT_LEVEL=z CARGO_PROFILE_RELEASE_LTO=true CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1 CARGO_PROFILE_RELEASE_PANIC=abort CARGO_PROFILE_RELEASE_STRIP=true"
 
-# Release wasm package in tessera/pkg, size-optimized and run through wasm-opt.
+# Release npm package in tessera/pkg: the size-optimized wasm run through wasm-opt, the
+# generated glue, and the hand-written entry, worker, and types.
 wasm:
     env {{wasm_env}} wasm-pack build --release --target web --out-dir pkg tessera --features wasm
+    node tessera/js/build/package.mjs
 
 # Gzip size of the release wasm with the phone tables, and without them.
 wasm-size: wasm
@@ -15,6 +17,8 @@ wasm-size: wasm
     rm -rf tessera/pkg-nophone
 
 # Every integration test in headless browsers, e.g. `just wasm-test firefox` or
-# `just wasm-test chrome firefox safari`.
+# `just wasm-test chrome firefox safari`. The runner's default budget of 20 seconds covers a whole
+# test binary including the browser's start, and the worker tests compile the debug test module
+# once per worker, which leaves Firefox close to that edge.
 wasm-test +browsers="chrome firefox":
-    wasm-pack test --headless {{prepend("--", browsers)}} tessera --features wasm
+    WASM_BINDGEN_TEST_TIMEOUT=120 wasm-pack test --headless {{prepend("--", browsers)}} tessera --features wasm
