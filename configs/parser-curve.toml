@@ -1,15 +1,16 @@
-name = "parser-small"
+name = "parser-small-100000"
 task = "parser"
 seed = 42
 
 [data]
 source = "libpostal-osm-addresses"
 countries = ["GB", "GE", "DE", "US", "JP"]
-train_per_country = 30000
+train_per_country = 100000
 valid_per_country = 3000
 test_per_country = 3000
 manifests = "data/manifests"
-processed = "data/processed/parser"
+processed = "data/processed/parser-curve"
+sample_manifest = "data/processed/parser-curve/sample.json"
 
 [features]
 ngram_sizes = [2, 3, 4]

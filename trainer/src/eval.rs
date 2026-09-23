@@ -108,9 +108,31 @@ struct ExternalEntity {
     end: usize,
 }
 
+/// `trainer eval`: scores a run, the deterministic baselines, or external predictions.
 pub fn run(args: EvalArgs) -> anyhow::Result<()> {
-    if args.run.is_some() && !args.baseline {
-        bail!("scoring a trained run arrives in milestone 2");
+    if let Some(run) = &args.run
+        && !args.baseline
+    {
+        let split = match args.split.as_str() {
+            "train" => crate::data::Split::Train,
+            "valid" => crate::data::Split::Valid,
+            "test" => crate::data::Split::Test,
+            other => bail!("unknown split `{other}`"),
+        };
+        return match args.backend {
+            crate::train::BackendKind::Wgpu => crate::model_eval::run::<burn::backend::Wgpu>(
+                run,
+                split,
+                args.errors,
+                &Default::default(),
+            ),
+            crate::train::BackendKind::Ndarray => crate::model_eval::run::<burn::backend::NdArray>(
+                run,
+                split,
+                args.errors,
+                &Default::default(),
+            ),
+        };
     }
     if !args.baseline && args.external.is_empty() {
         bail!("pass --baseline, --external, or both");
@@ -122,6 +144,8 @@ pub fn run(args: EvalArgs) -> anyhow::Result<()> {
         fixtures::load_dir(&args.fixtures.join("detector"))?;
     let grouper_fixtures: Vec<(String, GrouperFixture)> =
         fixtures::load_dir(&args.fixtures.join("grouper"))?;
+
+    fixtures::check_offsets(&parser_fixtures, &detector_fixtures, &grouper_fixtures)?;
 
     let mut systems: Vec<Value> = Vec::new();
     let mut tables: Vec<(String, Value)> = Vec::new();
@@ -194,6 +218,7 @@ fn score_baseline(
 
     let mut parser = Group::default();
     let mut exact = 0usize;
+    let mut inexact: Vec<String> = Vec::new();
     let mut parser_cases = 0usize;
     for (_, fixture) in parser_fixtures {
         for case in &fixture.cases {
@@ -210,6 +235,8 @@ fn score_baseline(
                 .collect();
             if got == gold {
                 exact += 1;
+            } else {
+                inexact.push(case.name.clone());
             }
             for g in &gold {
                 parser.add(&g.0, &case.country, |c| c.gold += 1);
@@ -288,6 +315,7 @@ fn score_baseline(
             "overall": parser.overall.json(),
             "exact_parse": round4(if parser_cases == 0 { 0.0 } else { exact as f64 / parser_cases as f64 }),
             "cases": parser_cases,
+            "not_exact": inexact,
             "by_label": map_json(&parser.by_key),
             "by_country": map_json(&parser.by_country),
         },

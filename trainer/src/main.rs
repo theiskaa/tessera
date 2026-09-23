@@ -2,9 +2,18 @@
 //! Depends on `tessera` for the tokenizer and features. Never ships.
 
 mod baselines;
+mod check;
 mod config;
+mod data;
+mod dataset;
 mod eval;
+mod export;
 mod fixtures;
+mod model_eval;
+mod net;
+mod quantize;
+mod report;
+mod train;
 
 use std::path::PathBuf;
 
@@ -24,6 +33,9 @@ enum Command {
     Prepare {
         #[arg(long)]
         config: PathBuf,
+        /// Date recorded in the sample manifest, for example `$(date +%F)`.
+        #[arg(long, default_value = "unknown")]
+        date: String,
     },
     /// Sample person and organization names from Wikidata and GLEIF.
     Names {
@@ -35,10 +47,21 @@ enum Command {
         #[arg(long)]
         config: PathBuf,
     },
-    /// Train a detector or parser and write a run directory.
+    /// Train the address parser and write a run directory.
     Train {
         #[arg(long)]
         config: PathBuf,
+        /// Run name, overriding the config's; the run is written to `runs/<name>/`.
+        #[arg(long)]
+        name: Option<String>,
+        /// Keep the first N original rows per country, for learning curves.
+        #[arg(long)]
+        train_per_country: Option<usize>,
+        /// Maximum epochs, overriding the config's.
+        #[arg(long)]
+        epochs: Option<usize>,
+        #[arg(long, value_enum, default_value = "wgpu")]
+        backend: train::BackendKind,
     },
     /// Score a run, the deterministic baselines, or external predictions.
     Eval(EvalArgs),
@@ -46,6 +69,24 @@ enum Command {
     Quantize {
         #[arg(long)]
         run: PathBuf,
+        #[arg(long, value_enum, default_value = "ndarray")]
+        backend: train::BackendKind,
+    },
+    /// Render the milestone report tables from run and eval JSON files.
+    Report {
+        /// Learning-curve run directories, in order.
+        #[arg(long, num_args = 1..)]
+        curve: Vec<PathBuf>,
+        /// The main run; its `eval/test.json`, `eval/test-shipped.json`, `quantize.json`, and
+        /// `config.toml` are read.
+        #[arg(long)]
+        run: PathBuf,
+        #[arg(long, default_value = "data/manifests/parser-sample.json")]
+        manifest: PathBuf,
+        #[arg(long, default_value = "models/tessera-v1.safetensors")]
+        bundle: PathBuf,
+        #[arg(long, default_value = "internal/reports/m2-parser.md")]
+        out: PathBuf,
     },
     /// Write the safetensors bundle and golden vectors.
     Export {
@@ -53,13 +94,16 @@ enum Command {
         run: PathBuf,
         #[arg(long)]
         out: PathBuf,
+        /// Date recorded in the bundle manifest, for example `$(date +%F)`.
+        #[arg(long, default_value = "unknown")]
+        date: String,
     },
 }
 
 #[derive(clap::Args)]
 struct EvalArgs {
     /// Run directory of a trained model.
-    #[arg(long)]
+    #[arg(long, conflicts_with = "baseline")]
     run: Option<PathBuf>,
     /// Score the deterministic baselines instead of a run.
     #[arg(long)]
@@ -76,20 +120,53 @@ struct EvalArgs {
     /// Output directory for reports.
     #[arg(long, default_value = "runs/baseline")]
     out: PathBuf,
+    /// With `--run`: write this many worst examples to `internal/reports/m2-parser-errors.md`.
+    #[arg(long)]
+    errors: Option<usize>,
+    /// With `--run`: the backend to run the model on.
+    #[arg(long, value_enum, default_value = "wgpu")]
+    backend: train::BackendKind,
 }
 
 fn main() -> anyhow::Result<()> {
     match Cli::parse().command {
-        Command::Prepare { config } => {
-            let cfg = config::load(&config)?;
-            bail!("`prepare` for `{}` arrives in milestone 2", cfg.name)
-        }
+        Command::Prepare { config, date } => data::prepare(&config, &date),
         Command::Names { .. } | Command::Generate { .. } => bail!("arrives in milestone 4"),
-        Command::Train { config } => {
-            let cfg = config::load(&config)?;
-            bail!("`train` for `{}` arrives in milestone 2", cfg.name)
-        }
+        Command::Train {
+            config,
+            name,
+            train_per_country,
+            epochs,
+            backend,
+        } => train::run(train::TrainArgs {
+            config: &config,
+            name: name.as_deref(),
+            train_per_country,
+            epochs,
+            backend,
+        }),
         Command::Eval(args) => eval::run(args),
-        Command::Quantize { .. } | Command::Export { .. } => bail!("arrives in milestone 2"),
+        Command::Quantize { run, backend } => match backend {
+            train::BackendKind::Wgpu => {
+                quantize::run::<burn::backend::Wgpu>(&run, &Default::default())
+            }
+            train::BackendKind::Ndarray => {
+                quantize::run::<burn::backend::NdArray>(&run, &Default::default())
+            }
+        },
+        Command::Export { run, out, date } => export::run(&run, &out, &date),
+        Command::Report {
+            curve,
+            run,
+            manifest,
+            bundle,
+            out,
+        } => report::run(report::ReportArgs {
+            curve: &curve,
+            run: &run,
+            manifest: &manifest,
+            bundle: &bundle,
+            out: &out,
+        }),
     }
 }

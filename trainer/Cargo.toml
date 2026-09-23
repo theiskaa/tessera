@@ -12,7 +12,15 @@ path = "src/main.rs"
 [dependencies]
 tessera.workspace = true
 anyhow.workspace = true
+thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 clap = { version = "4", features = ["derive"] }
 toml = "1"
+flate2 = "1"
+rand = "0.9"
+rand_chacha = "0.9"
+polars = { version = "0.55", default-features = false, features = ["parquet", "dtype-u8"] }
+burn = { version = "0.21", features = ["autodiff", "dataset", "ndarray", "wgpu"] }
+safetensors = "0.8"
+sha2 = "0.10"

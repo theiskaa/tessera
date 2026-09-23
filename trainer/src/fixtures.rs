@@ -114,6 +114,60 @@ pub fn load_dir<T: DeserializeOwned>(dir: &Path) -> anyhow::Result<Vec<(String, 
         .collect()
 }
 
+/// Fails when any expected span's offsets do not slice to its own `text`, so a typo in a
+/// fixture is reported as such instead of as a baseline or model error.
+pub fn check_offsets(
+    parser: &[(String, ParserFixture)],
+    detector: &[(String, DetectorFixture)],
+    grouper: &[(String, GrouperFixture)],
+) -> anyhow::Result<usize> {
+    let mut checked = 0;
+    let slices = |input: &str, start: usize, end: usize| input.get(start..end).map(str::to_string);
+    for (file, fixture) in parser {
+        for case in &fixture.cases {
+            for c in &case.components {
+                checked += 1;
+                if slices(&case.input, c.start, c.end).as_deref() != Some(c.text.as_str()) {
+                    anyhow::bail!(
+                        "parser/{file}: `{}` component {:?} does not slice to its text",
+                        case.name,
+                        c.text
+                    );
+                }
+            }
+        }
+    }
+    for (file, fixture) in detector {
+        for case in &fixture.cases {
+            for e in &case.expected {
+                checked += 1;
+                if slices(&case.input, e.start, e.end).as_deref() != Some(e.text.as_str()) {
+                    anyhow::bail!(
+                        "detector/{file}: `{}` span {:?} does not slice to its text",
+                        case.name,
+                        e.text
+                    );
+                }
+            }
+        }
+    }
+    for (file, fixture) in grouper {
+        for case in &fixture.cases {
+            for e in &case.entities {
+                checked += 1;
+                if slices(&case.input, e.start, e.end).as_deref() != Some(e.text.as_str()) {
+                    anyhow::bail!(
+                        "grouper/{file}: `{}` entity {:?} does not slice to its text",
+                        case.name,
+                        e.text
+                    );
+                }
+            }
+        }
+    }
+    Ok(checked)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -126,34 +180,10 @@ mod tests {
     #[test]
     fn fixture_offsets_slice_their_text() {
         let f = root().join("fixtures");
-        let mut checked = 0;
-        for (_, fixture) in load_dir::<ParserFixture>(&f.join("parser")).unwrap() {
-            for case in &fixture.cases {
-                for c in &case.components {
-                    assert_eq!(&case.input[c.start..c.end], c.text, "{}", case.name);
-                    checked += 1;
-                }
-            }
-        }
-        for (_, fixture) in load_dir::<DetectorFixture>(&f.join("detector")).unwrap() {
-            for case in &fixture.cases {
-                for e in &case.expected {
-                    assert_eq!(&case.input[e.start..e.end], e.text, "{}", case.name);
-                    checked += 1;
-                }
-            }
-        }
-        for (_, fixture) in load_dir::<GrouperFixture>(&f.join("grouper")).unwrap() {
-            for case in &fixture.cases {
-                for e in &case.entities {
-                    assert_eq!(&case.input[e.start..e.end], e.text, "{}", case.name);
-                    checked += 1;
-                }
-            }
-        }
-        assert!(
-            checked > 40,
-            "expected the full fixture set, checked {checked}"
-        );
+        let parser = load_dir::<ParserFixture>(&f.join("parser")).unwrap();
+        let detector = load_dir::<DetectorFixture>(&f.join("detector")).unwrap();
+        let grouper = load_dir::<GrouperFixture>(&f.join("grouper")).unwrap();
+        let checked = check_offsets(&parser, &detector, &grouper).unwrap();
+        assert!(checked > 40, "only {checked} spans checked");
     }
 }

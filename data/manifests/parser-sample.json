@@ -1,0 +1,89 @@
+{
+  "source": "libpostal-osm-addresses",
+  "url": "https://archive.org/download/libpostal-parser-training-data-20170304/formatted_addresses_tagged.random.tsv.gz",
+  "sha256": "3851ba7c9c6a0a2f5b27e419343faa9f01a571f7f44303bd123c6e4f45a83a69",
+  "license": "ODbL-1.0",
+  "attribution": "© OpenStreetMap contributors",
+  "downloaded": "2026-09-22",
+  "prepared": "2026-09-23",
+  "filters": {
+    "countries": [
+      "GB",
+      "GE",
+      "DE",
+      "US",
+      "JP"
+    ],
+    "label_map": "data/manifests/label-map.json",
+    "rules": "GE postcodes four digits, DE postcodes five digits, US ZIP or ZIP+4, JP 〒nnn-nnnn; no DE Postfach with a street; JP island, regional-grouping, placeholder and PO box pieces dropped, Japanese-script rows reordered large to small, kana readings rejected; GB statistical regions dropped, postcode before country; NYC boroughs as cities; truncated GB and US road types rejected; GE rows marked AB rejected; rows whose spans cut a token or are invalid rejected; place-only rows capped at 15% of each quota; no rows without an address component; no search queries"
+  },
+  "counts": {
+    "GB": {
+      "train": 30000,
+      "valid": 3000,
+      "test": 3000,
+      "augmented": 44970
+    },
+    "GE": {
+      "train": 30000,
+      "valid": 3000,
+      "test": 3000,
+      "augmented": 33663
+    },
+    "DE": {
+      "train": 30000,
+      "valid": 3000,
+      "test": 3000,
+      "augmented": 41943
+    },
+    "US": {
+      "train": 30000,
+      "valid": 3000,
+      "test": 3000,
+      "augmented": 37970
+    },
+    "JP": {
+      "train": 29828,
+      "valid": 2927,
+      "test": 2918,
+      "augmented": 45131
+    }
+  },
+  "split_seed": 42,
+  "split_rule": "fnv1a64(seed, group_key) % 12: 0-9 train, 10 valid, 11 test",
+  "augment_copies": 2,
+  "outside_tags": {
+    "house": 25354603
+  },
+  "dropped_rows": {
+    "malformed": 34,
+    "excluded_query": 10428838,
+    "no_component": 2145394,
+    "foreign_postcode": 589693,
+    "po_box_with_road": 240602,
+    "kana_reading": 209246,
+    "cuts_token": 6,
+    "truncated_road": 2435761,
+    "foreign_country": 218,
+    "mislabelled": 12314,
+    "invalid_span": 0,
+    "locality_over_cap": 957294,
+    "unencodable_copies": 324,
+    "duplicate": 34930,
+    "same_place": 27682,
+    "over_quota": 97152930
+  },
+  "lines_read": 320115455,
+  "checks": {
+    "passed": true,
+    "counts": {
+      "keys_in_two_splits": 0,
+      "invalid_spans": 0,
+      "unencodable_rows": 0,
+      "orphan_copies": 0,
+      "copies_outside_train": 0,
+      "components_in_two_splits": 0,
+      "postcode_and_number_shared": 539
+    }
+  }
+}
