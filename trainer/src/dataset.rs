@@ -206,7 +206,7 @@ pub struct ParserBatch<B: Backend> {
     pub script: Tensor<B, 2, Int>,
     /// `[B, L]`.
     pub shape: Tensor<B, 2, Int>,
-    /// `[B, L, 22]`.
+    /// `[B, L, FLAG_BITS]`.
     pub flags: Tensor<B, 3>,
     /// `[B, L]`, 0 where padded.
     pub labels: Tensor<B, 2, Int>,

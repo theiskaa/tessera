@@ -12,7 +12,7 @@ processed = "data/processed/detector"
 
 [features]
 ngram_sizes = [2, 3, 4]
-hash_buckets = 65536
+hash_buckets = 32768
 hash_seed = 0
 ngram_dim = 48
 shape_dim = 16
@@ -28,6 +28,11 @@ max_params = 1000000
 epochs = 10
 batch_size = 32
 learning_rate = 0.001
+warmup_steps = 500
+patience = 2
+
+[detector]
+class_weights = [1.0, 3.0, 2.0, 3.0, 2.0, 2.0, 1.5]
 
 [names]
 countries = ["US", "GB", "DE", "GE", "JP"]

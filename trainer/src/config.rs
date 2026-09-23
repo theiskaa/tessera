@@ -21,6 +21,8 @@ pub struct Config {
     pub names: Option<NamesConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub generate: Option<GenerateConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detector: Option<DetectorConfig>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
@@ -78,6 +80,15 @@ pub struct NetConfig {
 
 fn default_max_embedding_bytes() -> usize {
     4_000_000
+}
+
+/// Detector training settings.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct DetectorConfig {
+    /// Loss weight per label, in `O, B-PERSON, I-PERSON, B-ORG, I-ORG, B-ADDRESS, I-ADDRESS`
+    /// order; most positions are `O`, and `B-` labels fix boundaries.
+    pub class_weights: Vec<f32>,
 }
 
 /// Name sampling for `trainer names`.
@@ -171,10 +182,20 @@ impl FeaturesConfig {
 
 impl Config {
     /// The parser network these settings describe; script and shape each get half of `shape_dim`.
-    pub fn parser_net_config(&self) -> crate::net::ParserNetConfig {
-        crate::net::ParserNetConfig::new(
+    pub fn parser_net_config(&self) -> crate::net::TaggerNetConfig {
+        self.net_config(crate::dataset::PARSER_LABELS)
+    }
+
+    /// The detector network these settings describe.
+    pub fn detector_net_config(&self) -> crate::net::TaggerNetConfig {
+        self.net_config(crate::detector::DETECTOR_LABELS)
+    }
+
+    fn net_config(&self, labels: usize) -> crate::net::TaggerNetConfig {
+        crate::net::TaggerNetConfig::new(
             self.features.hash_buckets as usize,
             self.net.dilations.clone(),
+            labels,
         )
         .with_ngram_dim(self.features.ngram_dim)
         .with_script_dim(self.features.shape_dim / 2)

@@ -106,7 +106,7 @@ pub(crate) const EXAMPLE: &str = "Flat 4, 221B Baker Street, London NW1 6XE, UK"
 pub(crate) const PIPELINE: &[Step] = &[
     Step { step: "tokenize", what: "12 tokens after dropping spaces, each with its byte range\nFlat 0..4 · 4 5..6 · , 6..7 · 221B 8..12 · Baker 13..18 · Street 19..25 · , · London · NW1 · 6XE · , · UK" },
     Step { step: "features", what: "Flat → 12 hashed character n-grams (^F Fl la at t$ ^Fl Fla lat at$ ^Fla Flat lat$) into 32,768 buckets\nscript latin · shape title case · flags title_case line_start unit_term" },
-    Step { step: "embed", what: "48 n-gram + 8 script + 8 shape + 22 flags = 86 numbers per token → linear → 96" },
+    Step { step: "embed", what: "48 n-gram + 8 script + 8 shape + 23 flags = 87 numbers per token → linear → 96" },
     Step { step: "context", what: "4 residual convolutions, kernel 3, dilation 1 2 4 8 → each token sees 15 tokens either side" },
     Step { step: "label", what: "23 scores per token: O and B-/I- for 11 labels\nFlat B-unit 1.0000 · 221B B-house_number 0.9999 (B-road 0.0001) · London B-city 1.0000" },
     Step { step: "decode", what: "I-x only after B-x or I-x; runs merge into spans; confidence = mean probability\nunit 0..6 · house_number 8..12 · road 13..25 · city 27..33 · postcode 34..41 · country 43..45" },

@@ -14,10 +14,12 @@ pub(crate) mod weights;
 /// Bundle layout version this library reads.
 pub(crate) const SUPPORTED_FORMAT: &str = "1";
 /// Model version series this library runs: under semver before 1.0 a minor bump is breaking,
-/// so bundles `0.1.*` load and `0.2.0` does not.
-pub(crate) const SUPPORTED_MODEL_SERIES: (u32, u32) = (0, 1);
-/// Width of the flag input: one entry per bit of `TokenFeatures::flags`.
-pub const FLAG_BITS: usize = 22;
+/// so bundles `0.2.*` load and `0.1.*` or `0.3.0` do not.
+pub(crate) const SUPPORTED_MODEL_SERIES: (u32, u32) = (0, 2);
+/// Width of the flag input: one entry per bit of `TokenFeatures::flags`. Bits 0 to 21 are the
+/// constants in `features::flag`; bit 22 is reserved for marking text hidden by Markdown syntax
+/// and is always 0 until Markdown input sets it, so bundles need no retraining then.
+pub const FLAG_BITS: usize = 23;
 /// Rows of the script embedding table.
 pub const SCRIPT_ROWS: usize = 13;
 /// Rows of the shape embedding table.

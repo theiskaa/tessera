@@ -16,7 +16,7 @@ use tessera::AddressLabel;
 
 use crate::data::{LabelledExample, Span, Split, read_shard};
 use crate::dataset::{Encoded, ParserBatcher, encode};
-use crate::net::ParserNet;
+use crate::net::TaggerNet;
 
 /// Match counts for one group of components.
 #[derive(Debug, Default, Clone, Copy)]
@@ -238,7 +238,7 @@ pub fn encode_examples<'a>(
 
 /// Runs the model over encoded items in order and decodes spans with confidences.
 pub fn predict<B: Backend>(
-    model: &ParserNet<B>,
+    model: &TaggerNet<B>,
     items: &[Encoded],
     batch_size: usize,
     device: &B::Device,
@@ -279,7 +279,7 @@ pub struct QuickScores {
 
 /// Component F1 and exact-parse rate on encoded validation rows, for early stopping.
 pub fn quick_score<B: Backend>(
-    model: &ParserNet<B>,
+    model: &TaggerNet<B>,
     kept: &[&LabelledExample],
     items: &[Encoded],
     batch_size: usize,
@@ -370,7 +370,7 @@ pub fn run<B: Backend>(
         eprintln!("{unencoded} rows could not be encoded and are not scored");
     }
 
-    let model: ParserNet<B> = cfg
+    let model: TaggerNet<B> = cfg
         .parser_net_config()
         .init::<B>(device)
         .load_file(

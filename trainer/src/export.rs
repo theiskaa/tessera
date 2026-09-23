@@ -23,13 +23,13 @@ use crate::dataset::{
     SCRIPT_ROWS, SHAPE_ROWS, encode,
 };
 use crate::model_eval::decode_probs;
-use crate::net::ParserNet;
+use crate::net::TaggerNet;
 use crate::quantize::{self, F32Tensor, QTensor};
 
 /// Bundle layout version; the library checks it before anything else.
 pub const FORMAT: &str = "1";
 /// Version recorded in the bundle; the library accepts bundles of its own `0.minor` series.
-pub const MODEL_VERSION: &str = "0.1.0";
+pub const MODEL_VERSION: &str = "0.2.0";
 /// Logit difference the golden gate allows between the trainer and the library.
 pub const GOLDEN_TOLERANCE: f64 = 1e-3;
 const GOLDEN_PER_COUNTRY: usize = 4;
@@ -302,7 +302,7 @@ fn golden_cases(
     Ok(out)
 }
 
-fn logits<B: Backend>(model: &ParserNet<B>, enc: &Encoded, device: &B::Device) -> Vec<Vec<f32>> {
+fn logits<B: Backend>(model: &TaggerNet<B>, enc: &Encoded, device: &B::Device) -> Vec<Vec<f32>> {
     let batch: ParserBatch<B> = ParserBatcher.batch(vec![enc.clone()], device);
     let out = model.forward(
         batch.ngram_ids,
@@ -319,8 +319,8 @@ fn logits<B: Backend>(model: &ParserNet<B>, enc: &Encoded, device: &B::Device) -
 }
 
 fn golden_case(
-    f32_model: &ParserNet<NdArray>,
-    int8_model: &ParserNet<NdArray>,
+    f32_model: &TaggerNet<NdArray>,
+    int8_model: &TaggerNet<NdArray>,
     text: &str,
     enc: &Encoded,
     device: &burn::tensor::Device<NdArray>,

@@ -21,7 +21,7 @@ fn load(bytes: &[u8], checksum: Option<&str>) -> Result<Tessera, Error> {
 #[test]
 fn committed_bundle_loads() {
     let t = load(common::BUNDLE, Some(common::bundle_checksum())).unwrap();
-    assert!(t.model_version().is_some_and(|v| v.starts_with("0.1.")));
+    assert!(t.model_version().is_some_and(|v| v.starts_with("0.2.")));
 }
 
 #[test]
@@ -79,7 +79,7 @@ fn newer_format_is_unsupported() {
 
 #[test]
 fn a_later_model_series_is_unsupported() {
-    let bytes = with_header_edit(r#""model_version":"0.1."#, r#""model_version":"0.2."#);
+    let bytes = with_header_edit(r#""model_version":"0.2."#, r#""model_version":"0.3."#);
     assert_eq!(load(&bytes, None).unwrap_err(), Error::UnsupportedVersion);
 }
 
@@ -96,11 +96,12 @@ fn with_model_version(version: &str) -> Vec<u8> {
 #[test]
 fn the_series_is_read_before_the_rest_of_the_version() {
     let result = |v: &str| load(&with_model_version(v), None).map(|_| ());
-    assert_eq!(result("0.1.7"), Ok(()));
-    assert_eq!(result("0.2.0-rc1"), Err(Error::UnsupportedVersion));
+    assert_eq!(result("0.2.7"), Ok(()));
+    assert_eq!(result("0.3.0-rc1"), Err(Error::UnsupportedVersion));
+    assert_eq!(result("0.1.9"), Err(Error::UnsupportedVersion));
     assert_eq!(result("1.0"), Err(Error::UnsupportedVersion));
-    assert_eq!(result("0.1"), Err(Error::BundleInvalid));
-    assert_eq!(result("0.1.0-rc1"), Err(Error::BundleInvalid));
+    assert_eq!(result("0.2"), Err(Error::BundleInvalid));
+    assert_eq!(result("0.2.0-rc1"), Err(Error::BundleInvalid));
     assert_eq!(result("garbage"), Err(Error::BundleInvalid));
     assert_eq!(result(""), Err(Error::BundleInvalid));
 }
@@ -149,8 +150,8 @@ fn each_way_a_header_can_be_wrong() {
             Error::BundleInvalid,
         ),
         (
-            r#"\"flag_bits\":22"#,
             r#"\"flag_bits\":23"#,
+            r#"\"flag_bits\":24"#,
             Error::UnsupportedVersion,
         ),
         ("B-house_number", "B-house_numbers", Error::BundleInvalid),

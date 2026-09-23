@@ -20,7 +20,7 @@ use burn::tensor::TensorData;
 
 use crate::data::{LabelledExample, Split, read_shard};
 use crate::model_eval::{encode_examples, quick_score};
-use crate::net::{ParserNet, ParserNetConfig};
+use crate::net::{TaggerNet, TaggerNetConfig};
 
 /// A parameter in f32, in its shipping layout.
 #[derive(Debug, Clone, PartialEq)]
@@ -64,7 +64,7 @@ fn to_vec<B: Backend, const D: usize>(t: Tensor<B, D>) -> (Vec<usize>, Vec<f32>)
 
 /// Every parameter of the parser under its shipping name. Linear weights are transposed from
 /// Burn's `[in, out]` to `[out, in]`; conv weights keep `[out, in, kernel]`.
-pub fn extract<B: Backend>(model: &ParserNet<B>) -> Vec<F32Tensor> {
+pub fn extract<B: Backend>(model: &TaggerNet<B>) -> Vec<F32Tensor> {
     let mut out = Vec::new();
     let mut push = |name: String, (shape, data): (Vec<usize>, Vec<f32>)| {
         out.push(F32Tensor { name, shape, data })
@@ -124,10 +124,10 @@ fn tensor<B: Backend, const D: usize>(
 
 /// A model whose parameters are `tensors`, given in the shipping names and layouts.
 pub fn inject<B: Backend>(
-    cfg: &ParserNetConfig,
+    cfg: &TaggerNetConfig,
     tensors: &[F32Tensor],
     device: &B::Device,
-) -> anyhow::Result<ParserNet<B>> {
+) -> anyhow::Result<TaggerNet<B>> {
     let by_name: HashMap<&str, &F32Tensor> = tensors.iter().map(|t| (t.name.as_str(), t)).collect();
     let get = |name: &str| {
         by_name
@@ -308,7 +308,7 @@ pub fn load_best<B: Backend>(
     run_dir: &Path,
     cfg: &crate::config::Config,
     device: &B::Device,
-) -> anyhow::Result<ParserNet<B>> {
+) -> anyhow::Result<TaggerNet<B>> {
     cfg.parser_net_config()
         .init::<B>(device)
         .load_file(
@@ -431,7 +431,7 @@ mod tests {
     #[test]
     fn extract_and_inject_round_trip() {
         let device = Default::default();
-        let cfg = ParserNetConfig::new(64, vec![1, 2, 4, 8]);
+        let cfg = TaggerNetConfig::new(64, vec![1, 2, 4, 8], crate::dataset::PARSER_LABELS);
         let model = cfg.init::<NdArray>(&device);
         let tensors = extract(&model);
         assert_eq!(tensors.len(), 15);
@@ -441,7 +441,7 @@ mod tests {
                 .find(|t| t.name == "parser.proj.weight")
                 .unwrap()
                 .shape,
-            vec![96, 86]
+            vec![96, 87]
         );
         assert_eq!(
             tensors

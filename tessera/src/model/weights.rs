@@ -218,8 +218,8 @@ fn entries(json: &Json, data_len: usize) -> Result<Vec<Entry>, Error> {
 
 /// Format and model version series, read before the rest of the manifest: a newer bundle may
 /// change any other key, and must still be reported as newer rather than as malformed. The
-/// series (`major.minor`) is read first, so `0.2.0-rc1` is unsupported; a version in the
-/// supported series must then be a plain `major.minor.patch`, so `0.1` or `0.1.x` is invalid.
+/// series (`major.minor`) is read first, so `0.3.0-rc1` is unsupported; a version in the
+/// supported series must then be a plain `major.minor.patch`, so `0.2` or `0.2.x` is invalid.
 fn check_version(meta: &Json) -> Result<(), Error> {
     if text(meta, "format")? != super::SUPPORTED_FORMAT {
         return Err(Error::UnsupportedVersion);
@@ -364,7 +364,7 @@ mod tests {
             ("parser.embed.ngram".into(), vec![buckets + 1, 48], 1),
             ("parser.embed.script".into(), vec![13, 8], 1),
             ("parser.embed.shape".into(), vec![64, 8], 1),
-            ("parser.proj.weight".into(), vec![96, 86], 0),
+            ("parser.proj.weight".into(), vec![96, 87], 0),
             ("parser.head.weight".into(), vec![23, 96], 0),
         ];
         let mut f32s: Vec<(String, usize)> = vec![

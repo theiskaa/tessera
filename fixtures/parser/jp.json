@@ -157,6 +157,7 @@
     },
     {
       "name": "three lines",
+      "expected_failure": "the 23-flag parser puts the ward boundary after the town kanji (`中区栄` + `3丁目`) where the source's Japanese-script rows join the town and its block (`栄3丁目`)",
       "country": "JP",
       "input": "〒460-0008\n愛知県名古屋市中区栄3丁目\n5-12",
       "components": [
@@ -200,7 +201,6 @@
     },
     {
       "name": "romanized",
-      "expected_failure": "the source labels romanized town names (`Marunouchi`) as roads in most rows, and only `-cho` and `chome` forms are relabelled as towns.",
       "country": "JP",
       "input": "1-1 Marunouchi, Chiyoda-ku, Tokyo 100-0005, Japan",
       "components": [

@@ -6,6 +6,7 @@ mod check;
 mod config;
 mod data;
 mod dataset;
+mod detector;
 mod eval;
 mod export;
 mod fixtures;
@@ -61,7 +62,7 @@ enum Command {
         #[arg(long)]
         family: Option<String>,
     },
-    /// Train the address parser and write a run directory.
+    /// Train the parser or the detector and write a run directory.
     Train {
         #[arg(long)]
         config: PathBuf,

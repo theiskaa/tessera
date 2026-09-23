@@ -1,9 +1,10 @@
-//! `trainer train`: a manual training loop for the parser with masked, class-weighted
-//! cross-entropy, AdamW, warmup then cosine decay, early stopping on validation component F1,
+//! `trainer train`: one manual training loop for the parser and the detector, with masked,
+//! class-weighted cross-entropy, AdamW, warmup then cosine decay, early stopping on a
+//! validation score (component F1 for the parser, macro exact span F1 for the detector),
 //! checkpoints, and a `metrics.jsonl` log.
 //!
-//! A manual loop rather than Burn's `Learner`: the loop is short, it validates on decoded
-//! spans instead of loss, and the detector in Milestone 4 reuses it unchanged.
+//! A manual loop rather than Burn's `Learner`: the loop is short and it validates on decoded
+//! spans instead of loss.
 
 use std::fs::File;
 use std::io::Write as _;
@@ -23,10 +24,12 @@ use rand::SeedableRng;
 use rand::seq::SliceRandom;
 use rand_chacha::ChaCha8Rng;
 
+use crate::config::Config;
 use crate::data::{LabelledExample, Split, read_shard};
 use crate::dataset::{Encoded, PARSER_LABELS, ParserBatch, ParserBatcher, ParserDataset};
+use crate::detector::{self, DETECTOR_LABELS, KindSpan};
 use crate::model_eval::{encode_examples, quick_score};
-use crate::net;
+use crate::net::{self, TaggerNet};
 
 /// Which Burn backend trains the model.
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
@@ -37,8 +40,9 @@ pub enum BackendKind {
     Ndarray,
 }
 
-/// Masked, class-weighted cross-entropy: `sum(w[y] * -log p[y] * mask) / sum(w[y] * mask)`.
-pub fn parser_loss<B: Backend>(
+/// Masked, class-weighted cross-entropy over any label count:
+/// `sum(w[y] * -log p[y] * mask) / sum(w[y] * mask)`.
+pub fn masked_loss<B: Backend>(
     logits: Tensor<B, 3>,
     labels: Tensor<B, 2, Int>,
     mask: Tensor<B, 2>,
@@ -95,7 +99,7 @@ pub struct TrainArgs<'a> {
     pub backend: BackendKind,
 }
 
-/// `trainer train`: trains the parser from a config on the chosen backend.
+/// `trainer train`: trains the parser or the detector, as the config's `task` says.
 pub fn run(args: TrainArgs<'_>) -> anyhow::Result<()> {
     match args.backend {
         BackendKind::Wgpu => train::<Autodiff<Wgpu>>(&args, &Default::default()),
@@ -105,12 +109,6 @@ pub fn run(args: TrainArgs<'_>) -> anyhow::Result<()> {
 
 fn train<B: AutodiffBackend>(args: &TrainArgs<'_>, device: &B::Device) -> anyhow::Result<()> {
     let mut cfg = crate::config::load(args.config)?;
-    anyhow::ensure!(
-        cfg.task == crate::config::Task::Parser,
-        "{} is a {:?} config; only the parser trains before milestone 4",
-        args.config.display(),
-        cfg.task
-    );
     if let Some(name) = args.name {
         cfg.name = name.to_string();
     }
@@ -123,7 +121,18 @@ fn train<B: AutodiffBackend>(args: &TrainArgs<'_>, device: &B::Device) -> anyhow
     std::fs::write(run_dir.join("config.toml"), toml::to_string(&cfg)?)
         .context("writing the run config")?;
     B::seed(device, cfg.seed);
+    match cfg.task {
+        crate::config::Task::Parser => train_parser::<B>(args, &cfg, &run_dir, device),
+        crate::config::Task::Detector => train_detector::<B>(&cfg, &run_dir, device),
+    }
+}
 
+fn train_parser<B: AutodiffBackend>(
+    args: &TrainArgs<'_>,
+    cfg: &Config,
+    run_dir: &Path,
+    device: &B::Device,
+) -> anyhow::Result<()> {
     let sample: serde_json::Value = serde_json::from_str(
         &std::fs::read_to_string(&cfg.data.sample_manifest)
             .with_context(|| format!("reading {}", cfg.data.sample_manifest))?,
@@ -165,39 +174,162 @@ fn train<B: AutodiffBackend>(args: &TrainArgs<'_>, device: &B::Device) -> anyhow
         train_stats.cuts_token,
         valid_items.len()
     );
-
-    let weights = class_weights(&train_ds.items);
-    serde_json::to_writer_pretty(
-        File::create(run_dir.join("class_weights.json"))?,
-        &weights.to_vec(),
+    let weights = class_weights(&train_ds.items).to_vec();
+    serde_json::to_writer_pretty(File::create(run_dir.join("class_weights.json"))?, &weights)?;
+    let model = cfg.parser_net_config().init::<B>(device);
+    let batch_size = cfg.train.batch_size.max(1);
+    let fit = fit::<B>(
+        cfg,
+        run_dir,
+        model,
+        &train_ds.items,
+        &weights,
+        device,
+        |model| {
+            let valid = quick_score(model, &valid_kept, &valid_items, batch_size, device);
+            (
+                valid.component_f1,
+                serde_json::json!({
+                    "valid_component_f1": valid.component_f1,
+                    "valid_exact": valid.exact,
+                }),
+            )
+        },
     )?;
-    let class_weights =
-        Tensor::<B, 1>::from_data(TensorData::new(weights.to_vec(), [PARSER_LABELS]), device);
+    let summary = serde_json::json!({
+        "best_epoch": fit.best_epoch,
+        "best_valid_component_f1": fit.best_score,
+        "best_valid_exact": fit.best_metrics["valid_exact"],
+        "wall_clock_seconds": fit.seconds,
+        "train_rows": train_stats.encoded,
+        "train_per_country": args.train_per_country,
+        "originals_per_country": train_stats.originals,
+        "epochs": cfg.train.epochs,
+        "steps": fit.steps,
+        "dense_parameters": fit.dense,
+        "embedding_parameters": fit.embedding,
+    });
+    std::fs::write(
+        run_dir.join("summary.json"),
+        serde_json::to_string_pretty(&summary)? + "\n",
+    )?;
+    Ok(())
+}
 
-    let mut model = cfg.parser_net_config().init::<B>(device);
+/// Trains the detector on the synthetic corpus of phase 4.2 with the configured class
+/// weights, validating on exact span F1 macro-averaged over person, org, and address.
+fn train_detector<B: AutodiffBackend>(
+    cfg: &Config,
+    run_dir: &Path,
+    device: &B::Device,
+) -> anyhow::Result<()> {
+    let detector_cfg = cfg
+        .detector
+        .as_ref()
+        .context("a detector config needs a [detector] section")?;
+    anyhow::ensure!(
+        detector_cfg.class_weights.len() == DETECTOR_LABELS,
+        "[detector] class_weights needs {DETECTOR_LABELS} values"
+    );
+    let fc = cfg.features.to_tessera();
+    let dir = PathBuf::from(&cfg.data.processed);
+    let (train_docs, train_counts) = detector::load_split(&dir, Split::Train, &fc)?;
+    let (valid_docs, valid_counts) = detector::load_split(&dir, Split::Valid, &fc)?;
+    eprintln!("train {train_counts:?}, valid {valid_counts:?}");
+    let train_items: Vec<Encoded> = train_docs.into_iter().map(|d| d.enc).collect();
+    let valid_gold: Vec<Vec<KindSpan>> = valid_docs.iter().map(|d| d.gold.clone()).collect();
+    let model = cfg.detector_net_config().init::<B>(device);
+    let batch_size = cfg.train.batch_size.max(1);
+    let fit = fit::<B>(
+        cfg,
+        run_dir,
+        model,
+        &train_items,
+        &detector_cfg.class_weights,
+        device,
+        |model| {
+            let pred = detector::predict(model, &valid_docs, batch_size, device);
+            let scores = detector::score(&valid_gold, &pred);
+            let f1 = |k: &str| scores.per_kind.get(k).map_or(0.0, |s| s.exact.f1);
+            eprintln!(
+                "valid exact F1: person {:.4}, org {:.4}, address {:.4}",
+                f1("person"),
+                f1("org"),
+                f1("address")
+            );
+            (
+                scores.macro_exact_f1,
+                serde_json::json!({ "valid": scores }),
+            )
+        },
+    )?;
+    let summary = serde_json::json!({
+        "best_epoch": fit.best_epoch,
+        "best_valid_macro_exact_f1": fit.best_score,
+        "best_valid": fit.best_metrics["valid"],
+        "wall_clock_seconds": fit.seconds,
+        "train": train_counts,
+        "valid": valid_counts,
+        "epochs": cfg.train.epochs,
+        "steps": fit.steps,
+        "dense_parameters": fit.dense,
+        "embedding_parameters": fit.embedding,
+        "class_weights": detector_cfg.class_weights,
+    });
+    std::fs::write(
+        run_dir.join("summary.json"),
+        serde_json::to_string_pretty(&summary)? + "\n",
+    )?;
+    Ok(())
+}
+
+/// What a finished `fit` reports.
+struct FitSummary {
+    best_epoch: usize,
+    best_score: f64,
+    best_metrics: serde_json::Value,
+    steps: usize,
+    seconds: u64,
+    dense: usize,
+    embedding: usize,
+}
+
+/// The shared training loop: AdamW with warmup then cosine decay, masked class-weighted
+/// cross-entropy, one validation per epoch through `validate` (a score to maximize and the
+/// metrics to log), a checkpoint per epoch, `best` for the highest score, and early stopping
+/// after `patience` epochs without improvement.
+fn fit<B: AutodiffBackend>(
+    cfg: &Config,
+    run_dir: &Path,
+    mut model: TaggerNet<B>,
+    items: &[Encoded],
+    weights: &[f32],
+    device: &B::Device,
+    mut validate: impl FnMut(&TaggerNet<B::InnerBackend>) -> (f64, serde_json::Value),
+) -> anyhow::Result<FitSummary> {
     let (dense, embedding) =
         net::assert_size(&model, cfg.net.max_params, cfg.net.max_embedding_bytes)?;
     eprintln!("parameters: {dense} dense, {embedding} in the n-gram table");
+    let class_weights =
+        Tensor::<B, 1>::from_data(TensorData::new(weights.to_vec(), [weights.len()]), device);
     let mut optim = AdamWConfig::new()
         .with_weight_decay(0.01)
-        .init::<B, net::ParserNet<B>>();
+        .init::<B, TaggerNet<B>>();
     let recorder = NamedMpkFileRecorder::<FullPrecisionSettings>::new();
-
     let batch_size = cfg.train.batch_size.max(1);
-    let steps_per_epoch = train_ds.items.len().div_ceil(batch_size);
-    let total_steps = cfg.train.epochs * steps_per_epoch;
+    let total_steps = cfg.train.epochs * items.len().div_ceil(batch_size);
     let mut metrics = File::create(run_dir.join("metrics.jsonl"))?;
-    let (mut best_f1, mut best_exact, mut best_epoch, mut since_best, mut step) =
-        (f64::MIN, 0f64, 0usize, 0usize, 0usize);
+    let mut best = (f64::MIN, 0usize, serde_json::Value::Null);
+    let (mut since_best, mut step) = (0usize, 0usize);
     let started = std::time::Instant::now();
-    let mut order: Vec<usize> = (0..train_ds.items.len()).collect();
+    let mut order: Vec<usize> = (0..items.len()).collect();
 
     for epoch in 1..=cfg.train.epochs {
         order.shuffle(&mut ChaCha8Rng::seed_from_u64(cfg.seed ^ epoch as u64));
         let (mut epoch_loss, mut batches) = (0f64, 0usize);
         for chunk in order.chunks(batch_size) {
-            let items: Vec<Encoded> = chunk.iter().map(|&i| train_ds.items[i].clone()).collect();
-            let batch: ParserBatch<B> = ParserBatcher.batch(items, device);
+            let batch_items: Vec<Encoded> = chunk.iter().map(|&i| items[i].clone()).collect();
+            let batch: ParserBatch<B> = ParserBatcher.batch(batch_items, device);
             let logits = model.forward(
                 batch.ngram_ids,
                 batch.script,
@@ -205,7 +337,7 @@ fn train<B: AutodiffBackend>(args: &TrainArgs<'_>, device: &B::Device) -> anyhow
                 batch.flags,
                 batch.mask.clone(),
             );
-            let loss = parser_loss(logits, batch.labels, batch.mask, class_weights.clone());
+            let loss = masked_loss(logits, batch.labels, batch.mask, class_weights.clone());
             let value: f64 = loss.clone().into_scalar().elem();
             let grads = GradientsParams::from_grads(loss.backward(), &model);
             let lr = lr_at(
@@ -225,68 +357,51 @@ fn train<B: AutodiffBackend>(args: &TrainArgs<'_>, device: &B::Device) -> anyhow
                 );
             }
         }
-        let valid = quick_score(
-            &model.valid(),
-            &valid_kept,
-            &valid_items,
-            batch_size,
-            device,
-        );
-        writeln!(
-            metrics,
-            r#"{{"epoch":{epoch},"train_loss":{:.6},"valid_component_f1":{:.5},"valid_exact":{:.5},"lr":{:.3e}}}"#,
-            epoch_loss / batches.max(1) as f64,
-            valid.component_f1,
-            valid.exact,
-            lr_at(
+        let (score, logged) = validate(&model.valid());
+        let train_loss = epoch_loss / batches.max(1) as f64;
+        let mut line = serde_json::json!({
+            "epoch": epoch,
+            "train_loss": train_loss,
+            "lr": lr_at(
                 step.saturating_sub(1),
                 total_steps,
                 cfg.train.learning_rate,
                 cfg.train.warmup_steps
-            )
-        )?;
-        eprintln!(
-            "epoch {epoch}: loss {:.4}, valid component F1 {:.4}, exact {:.4}",
-            epoch_loss / batches.max(1) as f64,
-            valid.component_f1,
-            valid.exact
-        );
+            ),
+        });
+        if let (Some(line), serde_json::Value::Object(fields)) = (line.as_object_mut(), &logged) {
+            line.extend(fields.clone());
+        }
+        writeln!(metrics, "{line}")?;
+        eprintln!("epoch {epoch}: loss {train_loss:.4}, validation score {score:.4}");
         model.clone().save_file(
             run_dir.join(format!("checkpoints/epoch-{epoch}")),
             &recorder,
         )?;
-        if valid.component_f1 > best_f1 {
-            best_f1 = valid.component_f1;
-            best_exact = valid.exact;
-            best_epoch = epoch;
+        if score > best.0 {
+            best = (score, epoch, logged);
             since_best = 0;
             model.clone().save_file(run_dir.join("best"), &recorder)?;
         } else {
             since_best += 1;
             if since_best >= cfg.train.patience {
-                eprintln!("early stop at epoch {epoch}; best epoch {best_epoch}, F1 {best_f1:.4}");
+                eprintln!(
+                    "early stop at epoch {epoch}; best epoch {}, score {:.4}",
+                    best.1, best.0
+                );
                 break;
             }
         }
     }
-    let summary = serde_json::json!({
-        "best_epoch": best_epoch,
-        "best_valid_component_f1": best_f1,
-        "best_valid_exact": best_exact,
-        "wall_clock_seconds": started.elapsed().as_secs(),
-        "train_rows": train_stats.encoded,
-        "train_per_country": args.train_per_country,
-        "originals_per_country": train_stats.originals,
-        "epochs": cfg.train.epochs,
-        "steps": step,
-        "dense_parameters": dense,
-        "embedding_parameters": embedding,
-    });
-    std::fs::write(
-        run_dir.join("summary.json"),
-        serde_json::to_string_pretty(&summary)? + "\n",
-    )?;
-    Ok(())
+    Ok(FitSummary {
+        best_epoch: best.1,
+        best_score: best.0,
+        best_metrics: best.2,
+        steps: step,
+        seconds: started.elapsed().as_secs(),
+        dense,
+        embedding,
+    })
 }
 
 #[cfg(test)]
@@ -314,12 +429,12 @@ mod tests {
         certain[PARSER_LABELS + 3] = 50.0;
         let certain =
             Tensor::<B, 3>::from_data(TensorData::new(certain, [1, 2, PARSER_LABELS]), &device);
-        let loss: f32 = parser_loss(certain, labels.clone(), mask.clone(), weights.clone())
+        let loss: f32 = masked_loss(certain, labels.clone(), mask.clone(), weights.clone())
             .into_scalar()
             .elem();
         assert!(loss < 1e-3, "{loss}");
         let uniform = Tensor::<B, 3>::zeros([1, 2, PARSER_LABELS], &device);
-        let loss: f32 = parser_loss(uniform, labels, mask, weights)
+        let loss: f32 = masked_loss(uniform, labels, mask, weights)
             .into_scalar()
             .elem();
         assert!((loss - (PARSER_LABELS as f32).ln()).abs() < 1e-4, "{loss}");

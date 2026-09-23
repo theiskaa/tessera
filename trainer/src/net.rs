@@ -1,5 +1,6 @@
-//! Burn definition of the address parser. The inference twin is `tessera::model`, and the
-//! golden-vector gate keeps the two in agreement.
+//! Burn definition of the token taggers: the address parser and the entity detector are the
+//! same network with different depths and label counts. The inference twin is
+//! `tessera::model`, and the golden-vector gate keeps the two in agreement.
 //!
 //! Every operation here (embedding lookup and mean, concatenation, linear layers, dilated
 //! 1-D convolution, ReLU, residual addition) has a hand-written counterpart in the library,
@@ -13,11 +14,11 @@ use burn::nn::{
 use burn::prelude::*;
 use burn::tensor::activation::relu;
 
-use crate::dataset::{FLAG_BITS, PARSER_LABELS, SCRIPT_ROWS, SHAPE_ROWS};
+use crate::dataset::{FLAG_BITS, SCRIPT_ROWS, SHAPE_ROWS};
 
-/// Shapes of the parser network; the library runs only the one `export` accepts.
+/// Shapes of a tagger network; the library runs only the ones `export` accepts.
 #[derive(burn::config::Config, Debug)]
-pub struct ParserNetConfig {
+pub struct TaggerNetConfig {
     /// N-gram hash buckets; the table has one more row, for padding.
     pub hash_buckets: usize,
     /// Width of the n-gram embedding.
@@ -37,6 +38,8 @@ pub struct ParserNetConfig {
     pub kernel: usize,
     /// One residual block per dilation.
     pub dilations: Vec<usize>,
+    /// Output labels per token: `PARSER_LABELS` or `DETECTOR_LABELS`.
+    pub labels: usize,
     /// Dropout after each block, during training only.
     #[config(default = 0.1)]
     pub dropout: f64,
@@ -58,10 +61,10 @@ impl<B: Backend> ConvBlock<B> {
     }
 }
 
-/// The parser network: n-gram, script, and shape embeddings plus flags, a projection, four
-/// residual dilated convolutions, and a per-token label head.
+/// A tagger: n-gram, script, and shape embeddings plus flags, a projection, residual dilated
+/// convolutions, and a per-token label head.
 #[derive(Module, Debug)]
-pub struct ParserNet<B: Backend> {
+pub struct TaggerNet<B: Backend> {
     /// `[hash_buckets + 1, ngram_dim]`; row 0 is padding and never contributes.
     pub ngram: Embedding<B>,
     /// `[SCRIPT_ROWS, script_dim]`.
@@ -72,13 +75,13 @@ pub struct ParserNet<B: Backend> {
     pub proj: Linear<B>,
     proj_dropout: Dropout,
     pub blocks: Vec<ConvBlock<B>>,
-    /// `hidden` to `PARSER_LABELS`.
+    /// `hidden` to `labels`.
     pub head: Linear<B>,
 }
 
-impl ParserNetConfig {
+impl TaggerNetConfig {
     /// A freshly initialized network with these shapes.
-    pub fn init<B: Backend>(&self, device: &B::Device) -> ParserNet<B> {
+    pub fn init<B: Backend>(&self, device: &B::Device) -> TaggerNet<B> {
         let blocks = self
             .dilations
             .iter()
@@ -94,7 +97,7 @@ impl ParserNetConfig {
                 }
             })
             .collect();
-        ParserNet {
+        TaggerNet {
             ngram: EmbeddingConfig::new(self.hash_buckets + 1, self.ngram_dim).init(device),
             script: EmbeddingConfig::new(SCRIPT_ROWS, self.script_dim).init(device),
             shape: EmbeddingConfig::new(SHAPE_ROWS, self.shape_dim).init(device),
@@ -105,13 +108,13 @@ impl ParserNetConfig {
             .init(device),
             proj_dropout: DropoutConfig::new(self.dropout).init(),
             blocks,
-            head: LinearConfig::new(self.hidden, PARSER_LABELS).init(device),
+            head: LinearConfig::new(self.hidden, self.labels).init(device),
         }
     }
 }
 
-impl<B: Backend> ParserNet<B> {
-    /// Logits `[B, L, PARSER_LABELS]` for n-gram ids `[B, L, K]`, script and shape ids
+impl<B: Backend> TaggerNet<B> {
+    /// Logits `[B, L, labels]` for n-gram ids `[B, L, K]`, script and shape ids
     /// `[B, L]`, flags `[B, L, FLAG_BITS]`, and `mask` `[B, L]` (1 for real tokens).
     ///
     /// Padded positions are zeroed before every convolution, so a sequence's output does not
@@ -162,14 +165,14 @@ impl<B: Backend> ParserNet<B> {
 /// table's int8 bytes against `max_embedding_bytes`. The hashed table is most of the model,
 /// so one limit for everything would either forbid it or say nothing about the rest.
 pub fn assert_size<B: Backend>(
-    model: &ParserNet<B>,
+    model: &TaggerNet<B>,
     max_params: usize,
     max_embedding_bytes: usize,
 ) -> anyhow::Result<(usize, usize)> {
     let dense = model.non_embedding_params();
     anyhow::ensure!(
         dense <= max_params,
-        "parser has {dense} non-embedding parameters, over the {max_params} budget"
+        "the network has {dense} non-embedding parameters, over the {max_params} budget"
     );
     let embedding_bytes = model.ngram.num_params();
     anyhow::ensure!(
@@ -184,9 +187,10 @@ mod tests {
     use burn::backend::NdArray;
 
     use super::*;
+    use crate::dataset::PARSER_LABELS;
 
-    fn config() -> ParserNetConfig {
-        ParserNetConfig::new(1024, vec![1, 2, 4, 8])
+    fn config() -> TaggerNetConfig {
+        TaggerNetConfig::new(1024, vec![1, 2, 4, 8], PARSER_LABELS)
     }
 
     #[test]
@@ -211,8 +215,8 @@ mod tests {
     #[test]
     fn non_embedding_parameter_count() {
         let net = config().init::<NdArray>(&Default::default());
-        // proj 86*96 + 96, four blocks of 96*96*3 + 96, head 96*23 + 23.
-        assert_eq!(net.non_embedding_params(), 8_352 + 4 * 27_744 + 2_231);
+        // proj 87*96 + 96, four blocks of 96*96*3 + 96, head 96*23 + 23.
+        assert_eq!(net.non_embedding_params(), 8_448 + 4 * 27_744 + 2_231);
     }
 
     #[test]
