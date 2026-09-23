@@ -40,55 +40,91 @@ pub(crate) fn embedding_row(table: &QTensor, id: usize, out: &mut [f32]) {
     }
 }
 
-/// `y[t, o] = b[o] + scale[o] * sum_i q[o, i] * x[t, i]` with weights `[out, in]`.
-pub(crate) fn linear(x: &[f32], len: usize, w: &QTensor, b: &[f32], out: &mut [f32]) {
-    let (out_dim, in_dim) = (w.shape[0], w.shape[1]);
-    debug_assert_eq!(x.len(), len * in_dim);
-    debug_assert_eq!(out.len(), len * out_dim);
-    for (xr, yr) in x.chunks_exact(in_dim).zip(out.chunks_exact_mut(out_dim)) {
-        for (o, y) in yr.iter_mut().enumerate() {
-            let wr = &w.data[o * in_dim..(o + 1) * in_dim];
-            let mut acc = 0f32;
-            for (&q, &v) in wr.iter().zip(xr) {
-                acc += q as f32 * v;
+/// A linear or convolution layer: int8 weights `[out, in]` or `[out, in, taps]` with one scale
+/// per output, laid out once at load as f32 `[taps, in, out]`. The kernels then add one input's
+/// contribution to every output at a time over contiguous memory, a loop of independent sums
+/// that the compiler vectorizes; the scale is still applied once, after the sum.
+#[derive(Debug)]
+pub(crate) struct Dense {
+    w: Vec<f32>,
+    scales: Vec<f32>,
+    bias: Vec<f32>,
+    taps: usize,
+    input: usize,
+    output: usize,
+}
+
+impl Dense {
+    pub(crate) fn new(q: &QTensor, bias: Vec<f32>) -> Dense {
+        let (output, input) = (q.shape[0], q.shape[1]);
+        let taps = q.shape.get(2).copied().unwrap_or(1);
+        let mut w = vec![0f32; taps * input * output];
+        for o in 0..output {
+            for i in 0..input {
+                for k in 0..taps {
+                    w[(k * input + i) * output + o] = f32::from(q.data[(o * input + i) * taps + k]);
+                }
             }
-            *y = b[o] + w.scales[o] * acc;
+        }
+        Dense {
+            w,
+            scales: q.scales.clone(),
+            bias,
+            taps,
+            input,
+            output,
+        }
+    }
+
+    /// Adds `sum_i w[tap, i, o] * x[i]` to `y[o]` for every output.
+    fn accumulate(&self, tap: usize, x: &[f32], y: &mut [f32]) {
+        let weights = &self.w[tap * self.input * self.output..(tap + 1) * self.input * self.output];
+        for (&v, row) in x.iter().zip(weights.chunks_exact(self.output)) {
+            for (acc, &w) in y.iter_mut().zip(row) {
+                *acc += w * v;
+            }
+        }
+    }
+
+    fn finish(&self, y: &mut [f32]) {
+        for ((acc, &s), &b) in y.iter_mut().zip(&self.scales).zip(&self.bias) {
+            *acc = b + s * *acc;
         }
     }
 }
 
-/// Same-length dilated convolution with weights `[C, C, K]` and zero padding
-/// `dilation * (K - 1) / 2` on each side, which is what the trainer's `Conv1d` uses:
-/// `y[t, o] = b[o] + scale[o] * sum_i sum_k q[o, i, k] * x[t + (k - (K - 1) / 2) * d, i]`.
-pub(crate) fn conv1d_same(
-    x: &[f32],
-    len: usize,
-    channels: usize,
-    w: &QTensor,
-    b: &[f32],
-    dilation: usize,
-    out: &mut [f32],
-) {
-    let k = w.shape[2];
-    let half = (k - 1) / 2;
-    debug_assert_eq!(x.len(), len * channels);
-    debug_assert_eq!(out.len(), len * channels);
-    for t in 0..len {
-        for o in 0..channels {
-            let mut acc = 0f32;
-            for i in 0..channels {
-                let taps = &w.data[(o * channels + i) * k..(o * channels + i + 1) * k];
-                for (kk, &q) in taps.iter().enumerate() {
-                    let Some(u) = (t + kk * dilation).checked_sub(half * dilation) else {
-                        continue;
-                    };
-                    if u < len {
-                        acc += q as f32 * x[u * channels + i];
-                    }
-                }
+/// `y[t, o] = b[o] + scale[o] * sum_i q[o, i] * x[t, i]`.
+pub(crate) fn linear(x: &[f32], len: usize, layer: &Dense, out: &mut [f32]) {
+    debug_assert_eq!(x.len(), len * layer.input);
+    debug_assert_eq!(out.len(), len * layer.output);
+    for (xr, yr) in x
+        .chunks_exact(layer.input)
+        .zip(out.chunks_exact_mut(layer.output))
+    {
+        yr.fill(0.0);
+        layer.accumulate(0, xr, yr);
+        layer.finish(yr);
+    }
+}
+
+/// Same-length dilated convolution with zero padding `dilation * (taps - 1) / 2` on each side,
+/// which is what the trainer's `Conv1d` uses:
+/// `y[t, o] = b[o] + scale[o] * sum_k sum_i q[o, i, k] * x[t + (k - (taps - 1) / 2) * d, i]`.
+pub(crate) fn conv1d_same(x: &[f32], len: usize, layer: &Dense, dilation: usize, out: &mut [f32]) {
+    debug_assert_eq!(x.len(), len * layer.input);
+    debug_assert_eq!(out.len(), len * layer.output);
+    let half = (layer.taps - 1) / 2;
+    for (t, yr) in out.chunks_exact_mut(layer.output).enumerate() {
+        yr.fill(0.0);
+        for k in 0..layer.taps {
+            let Some(u) = (t + k * dilation).checked_sub(half * dilation) else {
+                continue;
+            };
+            if u < len {
+                layer.accumulate(k, &x[u * layer.input..(u + 1) * layer.input], yr);
             }
-            out[t * channels + o] = b[o] + w.scales[o] * acc;
         }
+        layer.finish(yr);
     }
 }
 
@@ -184,7 +220,7 @@ mod tests {
         let b = f32_tensor(&mut rng, out_dim);
         let x: Vec<f32> = (0..len * in_dim).map(|_| rng.f32()).collect();
         let mut y = vec![0f32; len * out_dim];
-        linear(&x, len, &w, &b, &mut y);
+        linear(&x, len, &Dense::new(&w, b.clone()), &mut y);
         let wf = dequant_rows(&w);
         let bf = &b;
         for t in 0..len {
@@ -207,7 +243,7 @@ mod tests {
             let b = f32_tensor(&mut rng, c);
             let x: Vec<f32> = (0..len * c).map(|_| rng.f32()).collect();
             let mut y = vec![0f32; len * c];
-            conv1d_same(&x, len, c, &w, &b, d, &mut y);
+            conv1d_same(&x, len, &Dense::new(&w, b.clone()), d, &mut y);
             let wf = dequant_rows(&w);
             let bf = &b;
             // Padded formulation, as Burn computes it: x_padded[t + k * d] with d zeros each side.
@@ -235,10 +271,9 @@ mod tests {
             data: vec![1, 10, 100],
             scales: vec![1.0],
         };
-        let b = [0.0];
         let x = [1.0, 2.0, 3.0];
         let mut y = vec![0f32; len * c];
-        conv1d_same(&x, len, c, &w, &b, d, &mut y);
+        conv1d_same(&x, len, &Dense::new(&w, vec![0.0]), d, &mut y);
         assert_eq!(y[0], 10.0 * 1.0 + 100.0 * 3.0);
         assert_eq!(y[1], 10.0 * 2.0);
         assert_eq!(y[2], 1.0 * 1.0 + 10.0 * 3.0);

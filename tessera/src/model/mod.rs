@@ -64,11 +64,9 @@ pub(crate) struct Tagger {
     ngram: QTensor,
     script: QTensor,
     shape: QTensor,
-    proj_w: QTensor,
-    proj_b: Vec<f32>,
-    blocks: Vec<(QTensor, Vec<f32>, usize)>,
-    head_w: QTensor,
-    head_b: Vec<f32>,
+    proj: kernels::Dense,
+    blocks: Vec<(kernels::Dense, usize)>,
+    head: kernels::Dense,
     labels: usize,
 }
 
@@ -101,15 +99,13 @@ impl Tagger {
             .ok_or(Error::BundleInvalid)?;
         let mut blocks = Vec::with_capacity(dilations.len());
         for (i, &d) in dilations.iter().enumerate() {
-            blocks.push((
-                bundle.take_i8(
-                    &format!("{net}.block{i}.conv.weight"),
-                    &[HIDDEN, HIDDEN, KERNEL],
-                    0,
-                )?,
-                bundle.take_f32(&format!("{net}.block{i}.conv.bias"), HIDDEN)?,
-                d,
-            ));
+            let w = bundle.take_i8(
+                &format!("{net}.block{i}.conv.weight"),
+                &[HIDDEN, HIDDEN, KERNEL],
+                0,
+            )?;
+            let b = bundle.take_f32(&format!("{net}.block{i}.conv.bias"), HIDDEN)?;
+            blocks.push((kernels::Dense::new(&w, b), d));
         }
         Ok(Tagger {
             ngram: bundle.take_i8(&format!("{net}.embed.ngram"), &[rows, NGRAM_DIM], 1)?,
@@ -119,11 +115,15 @@ impl Tagger {
                 1,
             )?,
             shape: bundle.take_i8(&format!("{net}.embed.shape"), &[SHAPE_ROWS, SHAPE_DIM], 1)?,
-            proj_w: bundle.take_i8(&format!("{net}.proj.weight"), &[HIDDEN, INPUT_DIM], 0)?,
-            proj_b: bundle.take_f32(&format!("{net}.proj.bias"), HIDDEN)?,
+            proj: kernels::Dense::new(
+                &bundle.take_i8(&format!("{net}.proj.weight"), &[HIDDEN, INPUT_DIM], 0)?,
+                bundle.take_f32(&format!("{net}.proj.bias"), HIDDEN)?,
+            ),
             blocks,
-            head_w: bundle.take_i8(&format!("{net}.head.weight"), &[labels, HIDDEN], 0)?,
-            head_b: bundle.take_f32(&format!("{net}.head.bias"), labels)?,
+            head: kernels::Dense::new(
+                &bundle.take_i8(&format!("{net}.head.weight"), &[labels, HIDDEN], 0)?,
+                bundle.take_f32(&format!("{net}.head.bias"), labels)?,
+            ),
             labels,
         })
     }
@@ -149,15 +149,15 @@ impl Tagger {
             }
         }
         let mut h = vec![0f32; len * HIDDEN];
-        kernels::linear(&x, len, &self.proj_w, &self.proj_b, &mut h);
+        kernels::linear(&x, len, &self.proj, &mut h);
         let mut conv = vec![0f32; len * HIDDEN];
-        for (w, b, d) in &self.blocks {
-            kernels::conv1d_same(&h, len, HIDDEN, w, b, *d, &mut conv);
+        for (layer, d) in &self.blocks {
+            kernels::conv1d_same(&h, len, layer, *d, &mut conv);
             kernels::relu_inplace(&mut conv);
             kernels::add_inplace(&mut h, &conv);
         }
         let mut logits = vec![0f32; len * self.labels];
-        kernels::linear(&h, len, &self.head_w, &self.head_b, &mut logits);
+        kernels::linear(&h, len, &self.head, &mut logits);
         logits
     }
 }
