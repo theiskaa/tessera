@@ -7,6 +7,7 @@ use wasm_bindgen::prelude::*;
 
 use crate::{Config, Entity, Error, Kind, KindSet, Query, Tessera, token};
 
+/// The JavaScript `Tessera` class: a loaded extractor reporting UTF-16 offsets.
 #[wasm_bindgen(js_name = Tessera)]
 pub struct JsTessera {
     inner: Tessera,
@@ -63,10 +64,24 @@ impl JsTessera {
                 },
             )
             .map_err(to_js)?;
-        let u16 = token::utf16_offsets(text);
+        // One pass over the text for every offset; a table for the whole text would cost four
+        // bytes per input byte, and wasm memory does not shrink.
+        let offsets = entities.iter().flat_map(|e| {
+            [e.start, e.end]
+                .into_iter()
+                .chain(e.components.iter().flat_map(|c| [c.start, c.end]))
+        });
+        let units = token::utf16_at(text, offsets);
         let arr = Array::new();
+        let mut at = 0;
         for e in &entities {
-            arr.push(&entity_to_js(e, text, &u16));
+            let n = 2 + 2 * e.components.len();
+            arr.push(&entity_to_js(
+                e,
+                text,
+                units.get(at..at + n).unwrap_or_default(),
+            ));
+            at += n;
         }
         Ok(arr.into())
     }
@@ -86,12 +101,14 @@ fn set(obj: &Object, key: &str, val: JsValue) {
     let _ = Reflect::set(obj, &JsValue::from_str(key), &val);
 }
 
-fn entity_to_js(e: &Entity, text: &str, u16: &[u32]) -> JsValue {
+/// `units` holds the UTF-16 offsets of `e.start`, `e.end`, then each component's start and end.
+fn entity_to_js(e: &Entity, text: &str, units: &[u32]) -> JsValue {
+    let u16 = |k: usize| units.get(k).copied().unwrap_or(0);
     let obj = Object::new();
     set(&obj, "kind", e.kind.as_str().into());
     set(&obj, "text", e.text(text).into());
-    set(&obj, "start", u16[e.start].into());
-    set(&obj, "end", u16[e.end].into());
+    set(&obj, "start", u16(0).into());
+    set(&obj, "end", u16(1).into());
     set(
         &obj,
         "confidence",
@@ -107,12 +124,12 @@ fn entity_to_js(e: &Entity, text: &str, u16: &[u32]) -> JsValue {
     }
     if !e.components.is_empty() {
         let comps = Array::new();
-        for c in &e.components {
+        for (k, c) in e.components.iter().enumerate() {
             let co = Object::new();
             set(&co, "label", c.label.as_str().into());
             set(&co, "text", c.text(text).into());
-            set(&co, "start", u16[c.start].into());
-            set(&co, "end", u16[c.end].into());
+            set(&co, "start", u16(2 + 2 * k).into());
+            set(&co, "end", u16(3 + 2 * k).into());
             set(
                 &co,
                 "confidence",

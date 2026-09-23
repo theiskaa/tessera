@@ -10,30 +10,50 @@
 /// Writing system of an alphabetic token. Digits, punctuation, and whitespace are `Other`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Script {
+    /// Latin letters, with their accented forms.
     Latin,
+    /// Cyrillic.
     Cyrillic,
+    /// Georgian Mkhedruli.
     Georgian,
+    /// Arabic.
     Arabic,
+    /// Hebrew.
     Hebrew,
+    /// Greek.
     Greek,
+    /// Chinese characters, as used in Chinese and Japanese.
     Han,
+    /// Japanese hiragana.
     Hiragana,
+    /// Japanese katakana.
     Katakana,
+    /// Korean hangul.
     Hangul,
+    /// Thai.
     Thai,
+    /// Devanagari.
     Devanagari,
+    /// Anything else, and every non-alphabetic token.
     Other,
 }
 
 /// Coarse character class of a token.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TokenClass {
+    /// Letters of one script.
     Alpha,
+    /// Digits only.
     Digit,
+    /// Letters and digits mixed, such as `221B`.
     Alnum,
+    /// Punctuation.
     Punct,
+    /// Spaces and tabs.
     Space,
+    /// A line break.
     Newline,
+    /// Anything else, such as a symbol or an emoji.
     Other,
 }
 
@@ -51,7 +71,8 @@ pub struct Token {
 }
 
 impl Token {
-    /// The token's text, sliced from the source it was produced from.
+    /// The token's text, sliced from the source it was produced from. Panics when given any
+    /// other string whose char boundaries differ.
     pub fn text<'a>(&self, source: &'a str) -> &'a str {
         &source[self.start..self.end]
     }
@@ -496,9 +517,52 @@ pub fn utf16_offsets(text: &str) -> Vec<u32> {
     out
 }
 
+/// UTF-16 offsets of the given byte offsets, which must be char boundaries, in one pass over
+/// `text`. Only the offsets asked for are stored, so a long text with a few spans costs a few
+/// entries rather than one per byte.
+#[cfg(any(feature = "wasm", test))]
+pub fn utf16_at(text: &str, bytes: impl IntoIterator<Item = usize>) -> Vec<u32> {
+    let wanted: Vec<usize> = bytes.into_iter().collect();
+    let order: Vec<usize> = {
+        let mut o: Vec<usize> = (0..wanted.len()).collect();
+        o.sort_by_key(|&i| wanted[i]);
+        o
+    };
+    let mut out = vec![0u32; wanted.len()];
+    let (mut units, mut at, mut chars) = (0u32, 0usize, text.char_indices());
+    for i in order {
+        let target = wanted[i];
+        while at < target {
+            match chars.next() {
+                Some((b, c)) => {
+                    units += c.len_utf16() as u32;
+                    at = b + c.len_utf8();
+                }
+                None => break,
+            }
+        }
+        out[i] = units;
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn utf16_at_matches_the_full_table() {
+        let text = "a😀ბ東\n𝔘x";
+        let table = utf16_offsets(text);
+        let bounds: Vec<usize> = (0..=text.len())
+            .filter(|&b| text.is_char_boundary(b))
+            .rev()
+            .collect();
+        let got = utf16_at(text, bounds.iter().copied());
+        for (b, u) in bounds.iter().zip(got) {
+            assert_eq!(table[*b], u, "byte {b}");
+        }
+    }
 
     fn parts(text: &str) -> Vec<(&str, TokenClass, Script)> {
         let toks = tokenize(text);

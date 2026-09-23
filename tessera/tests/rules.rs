@@ -125,6 +125,52 @@ fn detect_rules_only() {
     assert_eq!(out[0].kind, Kind::Email);
 }
 
+/// Whole documents full of numbers that are not phones: order, ticket and invoice numbers,
+/// dates, prices, tracking codes, IBANs, and register numbers. Only the contacts may come out.
+#[cfg(feature = "phone-metadata")]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+fn document_fixtures() {
+    for (file, fixture) in common::rules_fixtures()
+        .into_iter()
+        .filter(|(n, _)| *n == "documents")
+    {
+        for case in &fixture.cases {
+            let hints: Vec<&str> = case.country_hint.iter().map(String::as_str).collect();
+            let found = tessera::internal::scan_rules(&case.input, &hints);
+            for (g, w) in found.iter().zip(&case.expected) {
+                assert_eq!(
+                    g.region, w.region,
+                    "{file}/{}: region of {}",
+                    case.name, w.text
+                );
+                assert!(
+                    g.confidence >= w.min_confidence,
+                    "{file}/{}: confidence of {}",
+                    case.name,
+                    w.text
+                );
+            }
+            let got: Vec<(&str, usize, usize, Option<&str>)> = found
+                .iter()
+                .map(|e| (e.kind.as_str(), e.start, e.end, e.normalized.as_deref()))
+                .collect();
+            let want: Vec<(&str, usize, usize, Option<&str>)> = case
+                .expected
+                .iter()
+                .map(|e| {
+                    let normalized = e
+                        .normalized
+                        .as_deref()
+                        .or((e.kind == "email").then_some(e.text.as_str()));
+                    (e.kind.as_str(), e.start, e.end, normalized)
+                })
+                .collect();
+            assert_eq!(got, want, "{file}/{}", case.name);
+        }
+    }
+}
+
 #[cfg_attr(not(target_arch = "wasm32"), test)]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn model_kinds_are_typed_errors() {

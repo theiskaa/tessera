@@ -1,0 +1,95 @@
+{
+  "cases": [
+    {
+      "name": "support email with ids, prices, tracking code and IBAN",
+      "input": "Subject: Re: Order #48213-B still not delivered (ticket 2026-0917-4471)\n\nHi Oliver,\n\nThanks for getting back to me so quickly. To recap for whoever picks this up next: I ordered two pallets of the SX-400 shelving units on 29 August 2026 (order #48213-B, invoice INV-2026-00871, total £3,418.60 incl. VAT), with delivery promised for 12 September between 08:00 and 12:00. The tracking page (1Z 999 AA1 01 2345 6784) has said \"out for delivery\" since Monday, and nobody has turned up.\n\nI have attached the delivery note (PDF, 214 KB) and a photo of the empty loading bay. Our bank details for the refund, if it comes to that, are IBAN GB29 NWBK 6016 1331 9268 19, reference 48213-B.\n\nPlease send the new delivery slot to our warehouse manager, Priya Raman, who is on site all week:\n\nPriya Raman\nHarbourside Supplies Ltd\nUnit 7, 42 Dock Road, Liverpool L3 4BN, UK\nTel +44 151 496 0147 · Mobile +44 7700 900123\npriya.raman@harbourside.example\n\nThe gate code is 4471# and the bay closes at 16:30 sharp. If nobody answers, try me on 020 7946 0321.\n\nBest regards,\nDaniel Okafor\nOperations, Harbourside Supplies Ltd\n\n> On 15 Sep 2026, at 09:12, Oliver Grant <oliver.grant@northwind.example> wrote:\n> Apologies for the delay. Our depot at 3rd Floor, 1 Canada Square, London E14 5AB has re-booked the van for Thursday 18 September, 07:30-09:30.\n",
+      "country_hint": [
+        "GB",
+        "DE",
+        "GE"
+      ],
+      "expected": [
+        {
+          "kind": "phone",
+          "text": "+44 151 496 0147",
+          "start": 866,
+          "end": 882,
+          "normalized": "+441514960147",
+          "region": "GB",
+          "min_confidence": 0.99
+        },
+        {
+          "kind": "phone",
+          "text": "+44 7700 900123",
+          "start": 893,
+          "end": 908,
+          "normalized": "+447700900123",
+          "region": "GB",
+          "min_confidence": 0.99
+        },
+        {
+          "kind": "email",
+          "text": "priya.raman@harbourside.example",
+          "start": 909,
+          "end": 940,
+          "normalized": "priya.raman@harbourside.example",
+          "min_confidence": 0.99
+        },
+        {
+          "kind": "phone",
+          "text": "020 7946 0321",
+          "start": 1029,
+          "end": 1042,
+          "normalized": "+442079460321",
+          "region": "GB",
+          "min_confidence": 0.99
+        },
+        {
+          "kind": "email",
+          "text": "oliver.grant@northwind.example",
+          "start": 1153,
+          "end": 1183,
+          "normalized": "oliver.grant@northwind.example",
+          "min_confidence": 0.99
+        }
+      ]
+    },
+    {
+      "name": "german invoice with register, VAT and IBAN numbers",
+      "input": "RECHNUNG / INVOICE                                  Nr. RE-2026-004417\nDatum: 19.09.2026        Kundennummer: K-10293        Leistungszeitraum: 08/2026\n\nMusterfirma GmbH · Karl-Marx-Allee 100, 2. OG, 10243 Berlin\nUSt-IdNr. DE123456789 · HRB 187234 B · Amtsgericht Charlottenburg\n\nRechnungsempfänger:\nKavkaz Freight LLC\nz. Hd. Nino Beridze\n14 Rustaveli Avenue, Tbilisi 0108, Georgia\n\nPos  Menge  Beschreibung                               Einzelpreis     Gesamt\n1    12     Lagerregal SX-400, verzinkt                  189,00 EUR   2.268,00 EUR\n2     3     Montagepauschale (je 4 Std.)                 240,00 EUR     720,00 EUR\n3     1     Versand Berlin -> Tbilisi, Palette 120x80    415,50 EUR     415,50 EUR\n                                                          Netto      3.403,50 EUR\n                                                          USt 19 %     646,67 EUR\n                                                          Summe      4.050,17 EUR\n\nZahlbar innerhalb von 14 Tagen ohne Abzug bis 03.10.2026.\nBankverbindung: IBAN DE89 3704 0044 0532 0130 00 · BIC COBADEFFXXX\n\nFragen zur Rechnung: Anna Schmidt, Buchhaltung\nTel. +49 30 23125 000 · Fax +49 30 23125 099\nanna.schmidt@musterfirma.example\n",
+      "country_hint": [
+        "GB",
+        "DE",
+        "GE"
+      ],
+      "expected": [
+        {
+          "kind": "phone",
+          "text": "+49 30 23125 000",
+          "start": 1140,
+          "end": 1156,
+          "normalized": "+493023125000",
+          "region": "DE",
+          "min_confidence": 0.99
+        },
+        {
+          "kind": "phone",
+          "text": "+49 30 23125 099",
+          "start": 1164,
+          "end": 1180,
+          "normalized": "+493023125099",
+          "region": "DE",
+          "min_confidence": 0.99
+        },
+        {
+          "kind": "email",
+          "text": "anna.schmidt@musterfirma.example",
+          "start": 1181,
+          "end": 1213,
+          "normalized": "anna.schmidt@musterfirma.example",
+          "min_confidence": 0.99
+        }
+      ]
+    }
+  ]
+}
