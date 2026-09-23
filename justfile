@@ -58,3 +58,8 @@ js-test: wasm
 # then rejects `memory.copy`. Trunk.toml builds in release.
 site:
     cd site && env {{size_env}} trunk build
+
+# Package sizes, cold init, warm latency, and memory in Chrome, Firefox and Safari, e.g.
+# `just measure safari` or `just measure --json out.json`.
+measure *args: wasm
+    python3 bench/web/measure.py {{args}}

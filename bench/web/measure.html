@@ -1,0 +1,66 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>tessera browser measurements</title>
+<script type="module">
+  // Loaded fresh for every measurement, so each call starts without the package or its wasm.
+  const now = () => performance.now();
+
+  // Measured rather than assumed: engines coarsen performance.now differently, less so under
+  // cross-origin isolation.
+  function timerResolution() {
+    let min = Infinity;
+    let last = now();
+    for (let i = 0; i < 200000; i++) {
+      const t = now();
+      if (t > last) {
+        min = Math.min(min, t - last);
+        last = t;
+      }
+    }
+    return min;
+  }
+
+  async function memory() {
+    return performance.measureUserAgentSpecificMemory ? (await performance.measureUserAgentSpecificMemory()).bytes : null;
+  }
+
+  async function timed(runs, inputs, call) {
+    for (const input of inputs) await call(input);
+    const times = [];
+    const results = [];
+    const start = now();
+    for (let i = 0; i < runs; i++) {
+      const t = now();
+      results.push(await call(inputs[i % inputs.length]));
+      times.push(now() - t);
+    }
+    return { times, total: now() - start, results };
+  }
+
+  window.measure = async (cfg) => {
+    // As on an engine without SIMD: the package's probe fails and it loads the baseline wasm.
+    if (cfg.baseline) WebAssembly.validate = () => false;
+    const out = { isolated: self.crossOriginIsolated, resolution: timerResolution() };
+    const mem0 = cfg.memory ? await memory() : null;
+    const { createTessera } = await import("/tessera/pkg/index.js");
+    const options = cfg.mode === "detect"
+      ? { kinds: ["email", "phone"], worker: cfg.worker }
+      : { kinds: ["address"], modelUrl: cfg.modelUrl, integrity: cfg.integrity, worker: cfg.worker };
+    const t0 = now();
+    const tessera = await createTessera(options);
+    out.init = now() - t0;
+    if (mem0 !== null) out.memLoad = (await memory()) - mem0;
+    if (cfg.mode === "cold") {
+      out.components = (await tessera.parseAddress(cfg.addresses[0])).components.length;
+    } else if (cfg.mode === "parse") {
+      const r = await timed(cfg.runs, cfg.addresses, (a) => tessera.parseAddress(a));
+      Object.assign(out, { times: r.times, total: r.total, components: r.results.reduce((n, e) => n + e.components.length, 0) });
+    } else {
+      const r = await timed(cfg.runs, [cfg.text], (t) => tessera.detect(t, { countryHint: cfg.countryHint }));
+      Object.assign(out, { times: r.times, total: r.total, entities: r.results[0].length });
+    }
+    if (mem0 !== null) out.memParsed = (await memory()) - mem0;
+    tessera.dispose();
+    return out;
+  };
+</script>
