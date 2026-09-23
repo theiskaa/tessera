@@ -957,10 +957,42 @@ async fn worker_needs_the_entry_urls() {
 }
 
 #[test]
-async fn a_worker_that_cannot_start_rejects() {
+async fn a_worker_script_that_fails_to_load_rejects() {
     let (opts, _worker) = in_worker(&address_options(), true);
     let opts = with_bundle(opts);
     Reflect::set(&opts, &text("workerUrl"), &text("/no-such-worker.js")).unwrap();
     let err = create_instance(opts).await.err().unwrap();
     assert_tessera_error(&err, "UNSUPPORTED_RUNTIME");
+}
+
+/// Parses with `worker: true` while `globalThis.Worker` throws the `SecurityError` a cross-origin
+/// script raises, and returns the constructor's call count, the instance, and its result.
+async fn observe_blocked_worker() -> Result<(f64, JsTessera, JsValue), JsValue> {
+    let block = Function::new_no_args(
+        "const { Worker } = globalThis;
+         const seen = { calls: 0 };
+         globalThis.Worker = function () {
+           seen.calls++;
+           throw new DOMException('the script is on another origin', 'SecurityError');
+         };
+         return { seen, restore() { globalThis.Worker = Worker; } };",
+    );
+    let patch = block.call0(&JsValue::NULL)?;
+    let (opts, _worker) = in_worker(&address_options(), true);
+    let created = create_instance(with_bundle(opts)).await;
+    let restore: Function = prop(&patch, "restore").dyn_into()?;
+    restore.call0(&patch)?;
+    let tessera = created?;
+    let parsed = settled(tessera.parse_address(&text("10 Downing Street, London"), None)).await?;
+    Ok((number(&prop(&patch, "seen"), "calls"), tessera, parsed))
+}
+
+#[test]
+async fn a_worker_the_page_may_not_start_runs_inline() {
+    let (calls, tessera, parsed) = observe_blocked_worker().await.unwrap();
+    assert_eq!(calls, 1.0);
+    assert_eq!(kind_labels(&tessera), ["address"]);
+    let inline = address_tessera();
+    let want = resolved(inline.parse_address(&text("10 Downing Street, London"), None)).await;
+    assert_eq!(json(&parsed), json(&want));
 }

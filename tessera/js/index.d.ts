@@ -68,7 +68,10 @@ export interface CreateOptions {
   integrity?: string;
   /** Kinds to detect, at least one. Defaults to all. */
   kinds?: Kind[];
-  /** Run inference in a Web Worker. Ignored outside a browser main thread. */
+  /**
+   * Run inference in a Web Worker on a browser main thread; ignored elsewhere. Where the page may
+   * not start a worker, as for a package loaded cross-origin from a CDN, calls run inline.
+   */
   worker?: boolean;
 }
 

@@ -8,6 +8,10 @@ const SIMD_PROBE = new Uint8Array([
   0, 97, 115, 109, 1, 0, 0, 0, 1, 5, 1, 96, 0, 1, 123, 3, 2, 1, 0, 10, 10, 1, 8, 0, 65, 0, 253, 15, 253, 98, 11,
 ]);
 
+// Not a literal, so browser bundlers leave the Node-only import alone instead of failing to
+// resolve the `node:` scheme; webpack and vite are told to skip it so they do not warn either.
+const NODE_FS = "node:fs/promises";
+
 let ready;
 
 export async function createTessera(options = {}) {
@@ -18,7 +22,9 @@ export async function createTessera(options = {}) {
   const wasmUrl = new URL(variant, import.meta.url);
   // Node cannot fetch a file: URL, so the module is read from disk there.
   const wasmSource = () =>
-    wasmUrl.protocol === "file:" ? import("node:fs/promises").then((fs) => fs.readFile(wasmUrl)) : wasmUrl;
+    wasmUrl.protocol === "file:"
+      ? import(/* webpackIgnore: true */ /* @vite-ignore */ NODE_FS).then((fs) => fs.readFile(wasmUrl))
+      : wasmUrl;
   ready ??= init({ module_or_path: wasmSource() }).catch((e) => {
     ready = undefined;
     throw unsupported(`could not load the WebAssembly module: ${e?.message ?? e}`);

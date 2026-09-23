@@ -146,7 +146,9 @@ impl JsTessera {
 ///
 /// `worker: true` on a browser main thread loads the bundle into a module worker started from
 /// `workerUrl`, which instantiates the module from `wasmUrl`; the package entry supplies both, and
-/// their absence is `UNSUPPORTED_RUNTIME`. Elsewhere, in Node, Bun, or a worker, it is ignored.
+/// their absence is `UNSUPPORTED_RUNTIME`, as is a worker that starts but cannot load the module.
+/// Elsewhere, in Node, Bun, or a worker, it is ignored, and where the page may not start the
+/// worker at all, as for a package loaded cross-origin from a CDN, the instance runs inline.
 #[wasm_bindgen(js_name = createInstance)]
 pub async fn create_instance(
     #[wasm_bindgen(
@@ -182,15 +184,17 @@ pub async fn create_instance(
         }
     };
     let integrity = integrity.as_deref();
-    let backend = match worker {
-        Some((worker_url, wasm_url)) => {
+    // Started only once the bundle is in hand, so a failed fetch leaves no idle worker behind.
+    let spawned = worker.and_then(|(worker_url, wasm_url)| Some((spawn(&worker_url)?, wasm_url)));
+    let backend = match spawned {
+        Some((worker, wasm_url)) => {
             let bundle = Bundle {
                 bytes,
                 owned,
                 kinds,
                 integrity,
             };
-            Backend::Remote(Remote::start(&worker_url, &wasm_url, bundle).await?)
+            Backend::Remote(Remote::start(worker, &wasm_url, bundle).await?)
         }
         None => Backend::Local(Box::new(load_local(&bytes.to_vec(), kinds, integrity)?)),
     };
@@ -224,6 +228,14 @@ fn worker_urls(options: &JsValue) -> Result<Option<(String, String)>, JsValue> {
         })
     };
     Ok(Some((required("workerUrl")?, required("wasmUrl")?)))
+}
+
+/// A module worker started from `url`, or `None` when the constructor throws, as it does with a
+/// `SecurityError` for a script from another origin.
+fn spawn(url: &str) -> Option<Worker> {
+    let options = WorkerOptions::new();
+    options.set_type(WorkerType::Module);
+    Worker::new_with_options(url, &options).ok()
 }
 
 /// What a worker needs to load its instance.
@@ -265,18 +277,8 @@ struct Remote {
 }
 
 impl Remote {
-    /// Starts the worker at `worker_url` and waits for it to load `bundle`.
-    async fn start(
-        worker_url: &str,
-        wasm_url: &str,
-        bundle: Bundle<'_>,
-    ) -> Result<Remote, JsValue> {
-        let options = WorkerOptions::new();
-        options.set_type(WorkerType::Module);
-        let worker = Worker::new_with_options(worker_url, &options).map_err(|e| {
-            let message = format!("could not start the worker: {}", describe(&e));
-            tessera_error("UNSUPPORTED_RUNTIME", &message, None)
-        })?;
+    /// Takes over a started `worker` and waits for it to load `bundle`.
+    async fn start(worker: Worker, wasm_url: &str, bundle: Bundle<'_>) -> Result<Remote, JsValue> {
         let pending: Pending = Rc::default();
         let stopped: Rc<RefCell<Option<String>>> = Rc::default();
         let onmessage = {

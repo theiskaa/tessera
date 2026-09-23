@@ -46,3 +46,8 @@ wasm-size: wasm
 # once per worker, which leaves Firefox close to that edge.
 wasm-test +browsers="chrome firefox":
     WASM_BINDGEN_TEST_TIMEOUT=120 wasm-pack test --headless {{prepend("--", browsers)}} tessera --features wasm
+
+# The built package in Node and Bun: loading from disk, UTF-16 offsets, and typed errors.
+js-test: wasm
+    node tessera/js/test/smoke.mjs
+    bun tessera/js/test/smoke.mjs
