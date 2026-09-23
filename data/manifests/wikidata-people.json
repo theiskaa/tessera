@@ -1,8 +1,8 @@
 {
   "source": "wikidata-people",
   "kind": "person",
-  "use": "planned",
-  "status": "sampled",
+  "use": "training",
+  "status": "downloaded",
   "url": "https://query.wikidata.org/sparql",
   "index_url": "https://www.wikidata.org/wiki/Wikidata:Licensing",
   "upstream": "Wikidata",
@@ -16,26 +16,121 @@
     "only names of humans (Q5) are sampled; nothing is stored beyond country of citizenship, name labels, and birth decade used for slicing",
     "living people are public figures on Wikidata; the project stores names only, never any other attribute"
   ],
-  "format": "SPARQL JSON results; queries recorded in bench/inspect/sample_wikidata.py (phase 0.3)",
-  "sha256": "",
-  "downloaded": "",
+  "format": "SPARQL CSV results, one file per country, label language, and birth year; a year that reaches the 5000-row limit is replaced by one file per month",
+  "sha256": "ae62136e5cd01783d399ea6df0d13a2176d88be035fff9fda124efb6fa13c4bf",
+  "downloaded": "2026-09-23",
   "filters": {
     "properties": [
       "P31=Q5",
       "P27",
+      "P569",
       "P1559",
-      "P735",
-      "P734",
       "rdfs:label"
-    ]
+    ],
+    "birth_years": [
+      1930,
+      2005
+    ],
+    "label_langs": {
+      "DE": [
+        "de"
+      ],
+      "GB": [
+        "en"
+      ],
+      "GE": [
+        "ka",
+        "en"
+      ],
+      "JP": [
+        "ja",
+        "en"
+      ],
+      "US": [
+        "en"
+      ]
+    },
+    "query_limit": 5000,
+    "rules": "native name (P1559) used when in the label language's script; names NFC with whitespace collapsed; dropped: parentheses, commas, slashes, or ASCII digits; over 60 bytes; dominant script not the language's; fewer than two alphabetic tokens in Latin or Georgian; duplicates by (country, lowercase name)",
+    "people_per_country": 20000
   },
   "counts": {
-    "train": 0,
-    "valid": 0,
-    "test": 0
+    "train": 80289,
+    "valid": 4462,
+    "test": 4408,
+    "per_country": {
+      "DE": {
+        "test": 956,
+        "total": 20000,
+        "train": 18006,
+        "valid": 1038
+      },
+      "GB": {
+        "test": 998,
+        "total": 20000,
+        "train": 18006,
+        "valid": 996
+      },
+      "GE": {
+        "test": 465,
+        "total": 9159,
+        "train": 8253,
+        "valid": 441
+      },
+      "JP": {
+        "test": 1010,
+        "total": 20000,
+        "train": 17998,
+        "valid": 992
+      },
+      "US": {
+        "test": 979,
+        "total": 20000,
+        "train": 18026,
+        "valid": 995
+      }
+    },
+    "per_script": {
+      "georgian": {
+        "test": 187,
+        "total": 3916,
+        "train": 3539,
+        "valid": 190
+      },
+      "han": {
+        "test": 493,
+        "total": 9683,
+        "train": 8696,
+        "valid": 494
+      },
+      "hiragana": {
+        "test": 8,
+        "total": 171,
+        "train": 158,
+        "valid": 5
+      },
+      "katakana": {
+        "test": 8,
+        "total": 146,
+        "train": 134,
+        "valid": 4
+      },
+      "latin": {
+        "test": 3712,
+        "total": 75243,
+        "train": 67762,
+        "valid": 3769
+      }
+    }
   },
-  "split_seed": 42,
-  "dropped_tags": {},
+  "dropped": {
+    "duplicate": 66823,
+    "one_token": 8406,
+    "punctuation_or_digit": 5505,
+    "too_long": 193,
+    "wrong_script": 1805
+  },
+  "warnings": [],
   "verified_on": "2026-09-22",
   "verified_by": "theiskaa",
   "notes": "The page https://www.wikidata.org/wiki/Wikidata:SPARQL_query_service/Query_limits named in the plan returns 404; the limits live in the User Manual on mediawiki.org.",
@@ -50,5 +145,9 @@
     },
     "query": "PEOPLE in internal/bench/inspect/sample_wikidata.py",
     "seed": 42
-  }
+  },
+  "sha256_rule": "over the cached files concatenated in sorted file-name order",
+  "files": 620,
+  "sample_seed": 42,
+  "split_rule": "fnv1a64(0, lowercase normalized name) % 100: 0-89 train, 90-94 valid, 95-99 test; names are NFC with whitespace runs collapsed to one space"
 }

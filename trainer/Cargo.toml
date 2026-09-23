@@ -24,3 +24,7 @@ polars = { version = "0.55", default-features = false, features = ["parquet", "d
 burn = { version = "0.21", features = ["autodiff", "dataset", "ndarray", "wgpu"] }
 safetensors = "0.8"
 sha2 = "0.10"
+ureq = "3"
+zip = { version = "7", default-features = false, features = ["deflate-flate2"] }
+csv = "1"
+unicode-normalization = "0.1"

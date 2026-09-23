@@ -36,10 +36,12 @@ const GOLDEN_PER_COUNTRY: usize = 4;
 const GOLDEN_LONG_TOKENS: usize = 200;
 
 fn sha256_hex(bytes: &[u8]) -> String {
-    Sha256::digest(bytes)
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect()
+    hex(&Sha256::digest(bytes))
+}
+
+/// Lowercase hexadecimal of a digest.
+pub(crate) fn hex(digest: &[u8]) -> String {
+    digest.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 /// The bundle's `__metadata__`: format, versions, label sets, feature settings, and data

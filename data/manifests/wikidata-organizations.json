@@ -1,8 +1,8 @@
 {
   "source": "wikidata-organizations",
   "kind": "org",
-  "use": "planned",
-  "status": "sampled",
+  "use": "top-up for countries where GLEIF has fewer usable names than the quota",
+  "status": "downloaded",
   "url": "https://query.wikidata.org/sparql",
   "index_url": "https://www.wikidata.org/wiki/Wikidata:Licensing",
   "upstream": "Wikidata",
@@ -15,25 +15,60 @@
     "same query service limits as wikidata-people",
     "only official names, short names, and labels are stored, with the country"
   ],
-  "format": "SPARQL JSON results; queries recorded in bench/inspect/sample_wikidata.py (phase 0.3)",
-  "sha256": "",
-  "downloaded": "",
+  "format": "SPARQL CSV results, one file per country, label language, and class",
+  "sha256": "14b81b1f2a39b2b7cecb8def7670c51db94539ee8cab5508cd5f73f920f128e5",
+  "downloaded": "2026-09-23",
   "filters": {
     "properties": [
-      "P31/P279* in {Q4830453 business, Q3918 university, Q327333 government agency, Q31855 research institute, Q163740 nonprofit}",
+      "P31 in classes",
       "P17 country",
-      "P1448 official name",
-      "P1813 short name",
       "rdfs:label"
-    ]
+    ],
+    "classes": [
+      "Q4830453",
+      "Q783794",
+      "Q6881511",
+      "Q891723",
+      "Q3918",
+      "Q327333",
+      "Q31855",
+      "Q163740",
+      "Q79913",
+      "Q22687",
+      "Q7278",
+      "Q2085381"
+    ],
+    "query_limit": 50000,
+    "rules": "names NFC with whitespace collapsed; the label's dominant script must match its language; dropped: shorter than 3 bytes, the word LEI, duplicates of GLEIF names and of each other"
   },
   "counts": {
-    "train": 0,
-    "valid": 0,
-    "test": 0
+    "train": 14821,
+    "valid": 854,
+    "test": 842,
+    "per_country": {
+      "GE": {
+        "test": 24,
+        "total": 580,
+        "train": 517,
+        "valid": 39
+      },
+      "JP": {
+        "test": 818,
+        "total": 15937,
+        "train": 14304,
+        "valid": 815
+      }
+    },
+    "shortfall": {
+      "GE": 19265
+    }
   },
-  "split_seed": 42,
-  "dropped_tags": {},
+  "split_rule": "fnv1a64(0, lowercase normalized name) % 100: 0-89 train, 90-94 valid, 95-99 test; names are NFC with whitespace runs collapsed to one space",
+  "dropped": {
+    "duplicate": 5204,
+    "too_short": 56,
+    "wrong_script": 3169
+  },
   "verified_on": "2026-09-22",
   "verified_by": "theiskaa",
   "notes": "",
@@ -48,5 +83,11 @@
     },
     "query": "ORGS in internal/bench/inspect/sample_wikidata.py",
     "seed": 42
-  }
+  },
+  "sha256_rule": "over the cached files concatenated in sorted file-name order",
+  "files": 48,
+  "sample_seed": 42,
+  "warnings": [
+    "GE has 19265 fewer organizations than the quota"
+  ]
 }

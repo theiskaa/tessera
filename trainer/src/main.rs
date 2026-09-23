@@ -10,6 +10,7 @@ mod eval;
 mod export;
 mod fixtures;
 mod model_eval;
+mod names;
 mod net;
 mod quantize;
 mod report;
@@ -41,6 +42,12 @@ enum Command {
     Names {
         #[arg(long)]
         config: PathBuf,
+        /// Re-download cached query results and files.
+        #[arg(long)]
+        refresh: bool,
+        /// Date recorded in the manifests, for example `$(date +%F)`.
+        #[arg(long, default_value = "unknown")]
+        date: String,
     },
     /// Generate synthetic detector documents with safe contact details.
     Generate {
@@ -131,7 +138,12 @@ struct EvalArgs {
 fn main() -> anyhow::Result<()> {
     match Cli::parse().command {
         Command::Prepare { config, date } => data::prepare(&config, &date),
-        Command::Names { .. } | Command::Generate { .. } => bail!("arrives in milestone 4"),
+        Command::Names {
+            config,
+            refresh,
+            date,
+        } => names::run(&config, refresh, &date),
+        Command::Generate { .. } => bail!("arrives in milestone 4"),
         Command::Train {
             config,
             name,

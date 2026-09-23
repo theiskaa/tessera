@@ -1,9 +1,9 @@
 {
   "source": "gleif-lei",
   "kind": "org",
-  "use": "planned",
-  "status": "sampled",
-  "url": "https://api.gleif.org/api/v1/lei-records",
+  "use": "training",
+  "status": "downloaded",
+  "url": "https://goldencopy.gleif.org/storage/golden-copy-files/2026/09/23/1279865/20260923-0800-gleif-goldencopy-lei2-golden-copy.csv.zip",
   "index_url": "https://www.gleif.org/en/lei-data/gleif-golden-copy",
   "upstream": "GLEIF Global LEI Index",
   "upstream_url": "https://www.gleif.org/",
@@ -17,26 +17,87 @@
     "API (probed 2026-09-22): page[size] must be between 1 and 200 (HTTP 400 above 200); no rate-limit headers are returned and the documentation page is rendered by script and could not be read, so sampling keeps to at most one request per second",
     "GE has 162 active records (probe on 2026-09-22), so the Georgian org sample will be small and must be supplemented from Wikidata"
   ],
-  "format": "JSON:API pages of up to 200 records; fields used: attributes.entity.legalName.name, attributes.entity.legalName.language, attributes.entity.legalAddress.country, attributes.entity.legalForm.id, attributes.entity.otherNames[*].name",
-  "sha256": "",
-  "downloaded": "",
+  "format": "Level 1 golden copy CSV (LEI-CDF 3.1), streamed from its zip; columns used: LEI, Entity.LegalName, Entity.LegalName.xmllang, Entity.LegalJurisdiction, Entity.LegalForm.EntityLegalFormCode, Entity.EntityStatus, Entity.EntityCategory",
+  "sha256": "cba671622f472dd218bfd2ad55ff4e6ff393cc1a40eac04128e91261cf9f72c0",
+  "downloaded": "2026-09-23",
   "filters": {
-    "countries": [
-      "GB",
-      "DE",
-      "GE",
-      "US",
-      "JP"
+    "status": "ACTIVE",
+    "categories_dropped": [
+      "FUND",
+      "BRANCH",
+      "SOLE_PROPRIETOR"
     ],
-    "status": "ACTIVE"
+    "jurisdictions": {
+      "DE": [
+        "DE"
+      ],
+      "GB": [
+        "GB"
+      ],
+      "GE": [
+        "GE"
+      ],
+      "JP": [
+        "JP"
+      ],
+      "US": [
+        "US"
+      ]
+    },
+    "rules": "names NFC with whitespace collapsed; dropped: shorter than 3 bytes, the word LEI, duplicates by (country, lowercase name)",
+    "orgs_per_country": 20000
   },
   "counts": {
-    "train": 0,
-    "valid": 0,
-    "test": 0
+    "train": 57934,
+    "valid": 3212,
+    "test": 3072,
+    "per_country": {
+      "DE": {
+        "test": 967,
+        "total": 20000,
+        "train": 18017,
+        "valid": 1016
+      },
+      "GB": {
+        "test": 970,
+        "total": 20000,
+        "train": 18011,
+        "valid": 1019
+      },
+      "GE": {
+        "test": 11,
+        "total": 155,
+        "train": 139,
+        "valid": 5
+      },
+      "JP": {
+        "test": 186,
+        "total": 4063,
+        "train": 3670,
+        "valid": 207
+      },
+      "US": {
+        "test": 938,
+        "total": 20000,
+        "train": 18097,
+        "valid": 965
+      }
+    },
+    "available": {
+      "DE": 228226,
+      "GB": 204968,
+      "GE": 155,
+      "JP": 4063,
+      "US": 300318
+    }
   },
-  "split_seed": 42,
-  "dropped_tags": {},
+  "split_rule": "fnv1a64(0, lowercase normalized name) % 100: 0-89 train, 90-94 valid, 95-99 test; names are NFC with whitespace runs collapsed to one space",
+  "dropped": {
+    "category": 64527,
+    "contains_lei": 14,
+    "duplicate": 2945,
+    "too_short": 13
+  },
   "verified_on": "2026-09-22",
   "verified_by": "theiskaa",
   "notes": "",
@@ -77,5 +138,6 @@
       }
     },
     "page_size": 200
-  }
+  },
+  "sample_seed": 42
 }

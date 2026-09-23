@@ -1,0 +1,18 @@
+{
+  "source": "gleif-elf",
+  "kind": "org",
+  "use": "maps GLEIF legal form codes to abbreviations for the generator; not redistributed",
+  "status": "downloaded",
+  "url": "https://www.gleif.org/lei-data/code-lists/iso-20275-entity-legal-forms-code-list/2026-02-19-elf-code-list-v1.6.csv",
+  "index_url": "https://www.gleif.org/en/about-lei/code-lists/iso-20275-entity-legal-forms-code-list",
+  "license": "unstated",
+  "attribution": "GLEIF, ISO 20275 Entity Legal Forms code list",
+  "constraints": [
+    "the code list states no license of its own and the LEI Data Terms of Use do not name it (internal licensing review, 4.4); the list itself is never committed or shipped, and legal-form abbreviations are facts about company law"
+  ],
+  "sha256": "c55edc421e49ce362457f772d6bfa41f5fc63ecaadea74db5735722625506ef4",
+  "downloaded": "2026-09-23",
+  "counts": {
+    "codes_with_abbreviations": 1285
+  }
+}

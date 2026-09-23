@@ -28,3 +28,13 @@ max_params = 1000000
 epochs = 10
 batch_size = 32
 learning_rate = 0.001
+
+[names]
+countries = ["US", "GB", "DE", "GE", "JP"]
+people_per_country = 20000
+orgs_per_country = 20000
+raw = "data/raw"
+interim = "data/interim"
+out = "data/processed/names"
+sample_seed = 42
+birth_years = [1930, 2005]

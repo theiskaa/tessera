@@ -17,6 +17,8 @@ pub struct Config {
     pub train: TrainConfig,
     #[serde(default)]
     pub augment: AugmentConfig,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub names: Option<NamesConfig>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
@@ -74,6 +76,28 @@ pub struct NetConfig {
 
 fn default_max_embedding_bytes() -> usize {
     4_000_000
+}
+
+/// Name sampling for `trainer names`.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NamesConfig {
+    /// ISO 3166-1 alpha-2 codes; the Wikidata QID and label languages are looked up in `names::COUNTRIES`.
+    pub countries: Vec<String>,
+    /// People kept per country, shared equally between its label languages.
+    pub people_per_country: usize,
+    /// Organizations kept per country: GLEIF first, then Wikidata for any shortfall.
+    pub orgs_per_country: usize,
+    /// Cache directory for query results and downloads.
+    pub raw: String,
+    /// Where derived lookup files such as the legal-form abbreviations are written.
+    pub interim: String,
+    /// Where `people.parquet` and `orgs.parquet` are written.
+    pub out: String,
+    /// Seeds the per-country sampling shuffles; the split itself is a hash of the name.
+    pub sample_seed: u64,
+    /// Inclusive range of birth years queried per country and language.
+    pub birth_years: (u32, u32),
 }
 
 /// Augmented copies per training row.
@@ -157,6 +181,8 @@ mod tests {
         let d = load(&root.join("configs/detector-small.toml")).unwrap();
         assert_eq!(d.task, Task::Detector);
         assert_eq!(d.net.dilations, vec![1, 2, 4, 8, 16, 1]);
+        assert_eq!(d.names.unwrap().birth_years, (1930, 2005));
+        assert!(p.names.is_none());
     }
 
     #[test]
