@@ -13,22 +13,23 @@ use burn::tensor::activation::softmax;
 use polars::prelude::{ParquetReader, SerReader};
 use serde::{Deserialize, Serialize};
 use tessera::Kind;
-use tessera::internal::{FeatureConfig, TokenClass, featurize, flag, scan_rules, tokenize};
+use tessera::internal::{
+    DETECT_MIN_ADDRESS, DETECT_MIN_ORG, DETECT_MIN_PERSON, FeatureConfig, TokenClass, featurize,
+    flag, scan_rules, tokenize,
+};
 
 use crate::data::Split;
 use crate::dataset::{Encoded, ParserBatch, ParserBatcher};
 use crate::net::TaggerNet;
 
-/// `O`, then `B-` and `I-` for person, org, and address.
-pub const DETECTOR_LABELS: usize = 7;
+pub use tessera::internal::DETECTOR_LABELS;
 /// The model kinds, in label order: kind `k` has `B = 1 + 2k` and `I = 2 + 2k`.
 pub const KINDS: [Kind; 3] = [Kind::Person, Kind::Org, Kind::Address];
 /// A decoded span longer than this many retained tokens is dropped; `chunk.rs` in the library
 /// uses the same bound.
 const MAX_ENTITY_TOKENS: usize = 256;
-/// Lowest mean label probability kept per kind. The source of truth becomes
-/// `tessera::policy` in phase 4.6, and this copy is removed then.
-pub const DETECT_MIN: [f32; 3] = [0.80, 0.80, 0.50];
+/// Lowest mean label probability kept per kind, in `KINDS` order, from the library's policy.
+const DETECT_MIN: [f32; 3] = [DETECT_MIN_PERSON, DETECT_MIN_ORG, DETECT_MIN_ADDRESS];
 
 fn kind_index(kind: Kind) -> Option<usize> {
     KINDS.iter().position(|k| *k == kind)

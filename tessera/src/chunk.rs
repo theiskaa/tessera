@@ -74,6 +74,15 @@ fn breaks_before(tokens: &[Token], retained: &[usize]) -> Vec<Break> {
     out
 }
 
+/// Per retained position, whether a blank line separates it from the previous one. Position 0
+/// counts as one, like the start of any document.
+pub(crate) fn paragraph_breaks(tokens: &[Token], retained: &[usize]) -> Vec<bool> {
+    breaks_before(tokens, retained)
+        .into_iter()
+        .map(|b| b == Break::Paragraph)
+        .collect()
+}
+
 /// Covers the retained positions with windows of at most `window` positions, overlapping by
 /// at least `overlap`, each ending at the strongest natural boundary within `CUT_SEARCH`
 /// positions of its target end.

@@ -4,10 +4,29 @@
 //! already knows the text is an address, so the entity is always returned and the
 //! bands apply to its components.
 
-use crate::{AddressLabel, Component, Entity};
+use crate::{AddressLabel, Component, Entity, Kind};
 
 pub(crate) const HIGH: f32 = 0.85;
 pub(crate) const MEDIUM: f32 = 0.50;
+
+/// Lowest mean label probability a detected person keeps. Person and org are precision-first:
+/// nothing downstream can reject a wrong name.
+pub const DETECT_MIN_PERSON: f32 = 0.80;
+/// Lowest mean label probability a detected org keeps.
+pub const DETECT_MIN_ORG: f32 = 0.80;
+/// Lowest mean label probability a detected address keeps. Address is recall-first: the parser
+/// rejects spans it cannot decompose.
+pub const DETECT_MIN_ADDRESS: f32 = 0.50;
+
+/// The detection threshold for a model kind; rule kinds are never thresholded here.
+pub(crate) fn detect_min(kind: Kind) -> f32 {
+    match kind {
+        Kind::Person => DETECT_MIN_PERSON,
+        Kind::Org => DETECT_MIN_ORG,
+        Kind::Address => DETECT_MIN_ADDRESS,
+        Kind::Email | Kind::Phone => 0.0,
+    }
+}
 
 pub(crate) const STAGE_DETECT: &str = "detect";
 pub(crate) const STAGE_PARSE: &str = "parse";

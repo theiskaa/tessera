@@ -6,13 +6,6 @@
 //! exclusive. The `wasm` feature converts them to UTF-16 code units at the
 //! binding boundary.
 
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "`Tessera::detect` runs its windows from phase 4.6"
-    )
-)]
 mod chunk;
 mod features;
 mod model;
@@ -29,9 +22,11 @@ pub mod internal {
         FeatureConfig, MAX_NGRAMS_PER_TOKEN, TokenFeatures, featurize, flag, fnv1a, is_content,
         line_ranges,
     };
-    pub use crate::model::bio::parser_label_strings;
-    pub use crate::model::{FLAG_BITS, PARSER_LABELS, SCRIPT_ROWS, SHAPE_ROWS};
-    pub use crate::policy::display_confidence;
+    pub use crate::model::bio::{detector_label_strings, parser_label_strings};
+    pub use crate::model::{DETECTOR_LABELS, FLAG_BITS, PARSER_LABELS, SCRIPT_ROWS, SHAPE_ROWS};
+    pub use crate::policy::{
+        DETECT_MIN_ADDRESS, DETECT_MIN_ORG, DETECT_MIN_PERSON, display_confidence,
+    };
     pub use crate::rules::email::scan as scan_email;
     pub use crate::rules::phone::scan as scan_phone;
     pub use crate::rules::scan as scan_rules;
@@ -396,7 +391,8 @@ pub struct Tessera {
 /// What the bundle contributes once loaded: the networks and the settings their inputs need.
 #[derive(Debug)]
 struct Model {
-    parser: Option<model::Parser>,
+    parser: Option<model::Tagger>,
+    detector: Option<model::Tagger>,
     feature_config: features::FeatureConfig,
     version: String,
 }
@@ -424,7 +420,18 @@ impl Tessera {
             if !bundle.has_net("parser") {
                 return Err(Error::BundleInvalid);
             }
-            Some(model::Parser::new(&bundle)?)
+            Some(model::Tagger::parser(&bundle)?)
+        } else {
+            None
+        };
+        // An address-only instance on a parser-only bundle still serves `parse_address`; its
+        // `detect` then reports the missing stage.
+        let detector = if model::bio::DETECTOR_KINDS
+            .iter()
+            .any(|&k| config.kinds.contains(k))
+            && bundle.has_net("detector")
+        {
+            Some(model::Tagger::detector(&bundle)?)
         } else {
             None
         };
@@ -432,6 +439,7 @@ impl Tessera {
             kinds: config.kinds,
             model: Some(Model {
                 parser,
+                detector,
                 feature_config: bundle.manifest.feature_config,
                 version: bundle.manifest.model_version,
             }),
@@ -440,20 +448,152 @@ impl Tessera {
 
     /// Every supported entity in `text`, as non-overlapping spans sorted by position.
     ///
-    /// Until the detector ships, only a rules-only instance (emails and phones) can detect;
-    /// an instance loaded with a model kind returns `Error::Inference` here and serves
-    /// `parse_address` instead.
+    /// Emails and phones come from the rules; people, organizations, and addresses from the
+    /// detector, run over windows of a long document. A detected address is then parsed into
+    /// components and kept only if the parser finds at least two distinct labels in it, unless
+    /// `include_uncertain`, which keeps it as uncertain.
     pub fn detect(&self, text: &str, query: &Query<'_>) -> Result<Vec<Entity>, Error> {
-        if !self.kinds.is_rules_only() {
-            return Err(Error::Inference {
-                stage: policy::STAGE_DETECT,
-            });
-        }
-        let found = rules::scan(text, query.country_hint)
-            .into_iter()
+        let rule_entities = rules::scan(text, query.country_hint);
+        let mut out: Vec<Entity> = rule_entities
+            .iter()
             .filter(|e| self.kinds.contains(e.kind))
+            .cloned()
             .collect();
-        Ok(policy::apply(found, query.include_uncertain))
+        if model::bio::DETECTOR_KINDS
+            .iter()
+            .any(|&k| self.kinds.contains(k))
+        {
+            let stage = Error::Inference {
+                stage: policy::STAGE_DETECT,
+            };
+            let model = self.model.as_ref().ok_or(stage.clone())?;
+            let detector = model.detector.as_ref().ok_or(stage)?;
+            out.extend(self.detect_model(text, &rule_entities, model, detector, query)?);
+        }
+        let mut out = policy::apply(out, query.include_uncertain);
+        out.sort_by_key(|e| (e.start, e.end));
+        Ok(out)
+    }
+
+    /// The detector's entities of the wanted kinds: features over the whole document once,
+    /// the network per window, spans kept only where their window trusts them, merged across
+    /// windows and against the rule spans, and addresses checked by the parser.
+    fn detect_model(
+        &self,
+        text: &str,
+        rule_entities: &[Entity],
+        model: &Model,
+        detector: &model::Tagger,
+        query: &Query<'_>,
+    ) -> Result<Vec<Entity>, Error> {
+        let tokens = token::tokenize(text);
+        let rule_spans: Vec<(usize, usize)> =
+            rule_entities.iter().map(|e| (e.start, e.end)).collect();
+        let all_feats =
+            features::featurize(text, &tokens, &rule_spans, None, &model.feature_config);
+        let retained: Vec<usize> = tokens
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| features::is_content(t))
+            .map(|(i, _)| i)
+            .collect();
+        let feats: Vec<features::TokenFeatures> =
+            retained.iter().map(|&i| all_feats[i].clone()).collect();
+        let masked: Vec<bool> = feats
+            .iter()
+            .map(|f| f.flags & features::flag::IN_RULE_SPAN != 0)
+            .collect();
+        let breaks = chunk::paragraph_breaks(&tokens, &retained);
+        let n = retained.len();
+        let mut candidates = Vec::new();
+        for w in chunk::windows(
+            &tokens,
+            &retained,
+            chunk::WINDOW_TOKENS,
+            chunk::OVERLAP_TOKENS,
+        )? {
+            let range = w.tok_start..w.tok_end;
+            let mut probs = detector.forward(&feats[range.clone()]);
+            model::kernels::softmax_rows(&mut probs, detector.labels());
+            for s in model::bio::decode_detector(&probs, &masked[range.clone()], &breaks[range]) {
+                let (first, last) = (w.tok_start + s.first, w.tok_start + s.last);
+                if chunk::trusted(&w, n, first, last) && s.confidence >= policy::detect_min(s.kind)
+                {
+                    candidates.extend(span_entity(
+                        text,
+                        &tokens,
+                        &retained,
+                        s.kind,
+                        (first, last),
+                        s.confidence,
+                    ));
+                }
+            }
+        }
+        let merged = chunk::merge(
+            candidates
+                .into_iter()
+                .chain(rule_entities.iter().cloned())
+                .collect(),
+        );
+        let mut out = Vec::new();
+        for mut e in merged {
+            if e.source != Source::Model || !self.kinds.contains(e.kind) {
+                continue;
+            }
+            if e.kind == Kind::Address && !self.check_address(text, &mut e, query)? {
+                continue;
+            }
+            out.push(e);
+        }
+        Ok(out)
+    }
+
+    /// Parses a detected address on its own text, as the parser was trained, and decides
+    /// whether to keep it: at least two components with distinct labels (each at least
+    /// `MEDIUM`, since weaker ones are `Unknown`) accept it, with confidence bounded by their
+    /// mean; otherwise it is kept as uncertain only when the caller asks for uncertain results.
+    fn check_address(&self, text: &str, e: &mut Entity, query: &Query<'_>) -> Result<bool, Error> {
+        let parsed = match self.parse_address(&text[e.start..e.end], query) {
+            Ok(p) => p,
+            Err(Error::InputTooLarge) => return Ok(false),
+            Err(other) => return Err(other),
+        };
+        let mut labels: Vec<AddressLabel> = parsed
+            .components
+            .iter()
+            .map(|c| c.label)
+            .filter(|l| *l != AddressLabel::Unknown)
+            .collect();
+        let labelled = labels.len();
+        labels.sort_by_key(|l| *l as u8);
+        labels.dedup();
+        let components = parsed
+            .components
+            .into_iter()
+            .map(|mut c| {
+                c.start += e.start;
+                c.end += e.start;
+                c
+            })
+            .collect::<Vec<_>>();
+        if labels.len() >= 2 {
+            let mean = components
+                .iter()
+                .filter(|c| c.label != AddressLabel::Unknown)
+                .map(|c| c.confidence)
+                .sum::<f32>()
+                / labelled as f32;
+            e.confidence = e.confidence.min(mean);
+            e.components = components;
+            Ok(true)
+        } else if query.include_uncertain {
+            e.confidence = e.confidence.min(policy::MEDIUM - 0.01);
+            e.components = components;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
     }
 
     /// Entities grouped into contacts, plus everything that could not be assigned.
@@ -552,9 +692,136 @@ impl Tessera {
     }
 }
 
+/// A model entity over retained positions `first..=last`, with quotes trimmed from both ends
+/// and, for names, trailing `,` `.` `;` `:` trimmed; `None` when nothing is left.
+fn span_entity(
+    text: &str,
+    tokens: &[token::Token],
+    retained: &[usize],
+    kind: Kind,
+    (mut first, mut last): (usize, usize),
+    confidence: f32,
+) -> Option<Entity> {
+    const QUOTES: &[&str] = &[
+        "\"", "'", "\u{201c}", "\u{201d}", "\u{2018}", "\u{2019}", "\u{ab}", "\u{bb}", "\u{201e}",
+    ];
+    const NAME_TAIL: &[&str] = &[",", ".", ";", ":"];
+    let at = |i: usize| {
+        let t = &tokens[retained[i]];
+        &text[t.start..t.end]
+    };
+    loop {
+        if first < last && QUOTES.contains(&at(first)) {
+            first += 1;
+        } else if first < last
+            && (QUOTES.contains(&at(last))
+                || (matches!(kind, Kind::Person | Kind::Org) && NAME_TAIL.contains(&at(last))))
+        {
+            last -= 1;
+        } else {
+            break;
+        }
+    }
+    if QUOTES.contains(&at(first)) {
+        return None;
+    }
+    Some(Entity {
+        kind,
+        start: tokens[retained[first]].start,
+        end: tokens[retained[last]].end,
+        confidence,
+        review_recommended: false,
+        source: Source::Model,
+        components: Vec::new(),
+        normalized: None,
+        region: None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const SIGNATURE: &str = "Thanks, see you on Monday.\n\nNino Beridze\nKavkaz Freight LLC\n14 Rustaveli Avenue, Tbilisi 0108, Georgia\n+995 32 212 3456\nnino@kavkaz-freight.example";
+
+    fn load_all(bundle: &[u8]) -> Result<Tessera, Error> {
+        Tessera::load(
+            bundle,
+            Config {
+                kinds: Kind::all(),
+                expected_checksum: None,
+            },
+        )
+    }
+
+    #[test]
+    fn detect_keeps_its_invariants_with_any_weights() {
+        for seed in [3, 5, 8] {
+            let t = load_all(&model::testing::with_random_detector(seed, 6)).unwrap();
+            for include_uncertain in [false, true] {
+                let query = Query {
+                    country_hint: &["GE"],
+                    include_uncertain,
+                };
+                let found = t.detect(SIGNATURE, &query).unwrap();
+                for pair in found.windows(2) {
+                    assert!(pair[0].end <= pair[1].start, "{pair:?}");
+                }
+                let rules: Vec<&Entity> =
+                    found.iter().filter(|e| e.source == Source::Rules).collect();
+                assert!(rules.iter().any(|e| e.kind == Kind::Email));
+                assert!(rules.iter().any(|e| e.kind == Kind::Phone));
+                for m in found.iter().filter(|e| e.source == Source::Model) {
+                    assert!(rules.iter().all(|r| m.end <= r.start || r.end <= m.start));
+                    assert!(
+                        SIGNATURE.is_char_boundary(m.start) && SIGNATURE.is_char_boundary(m.end)
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn rules_only_detect_needs_no_bundle() {
+        let kinds = Kind::Email | Kind::Phone;
+        let t = Tessera::load(
+            &[],
+            Config {
+                kinds,
+                expected_checksum: None,
+            },
+        )
+        .unwrap();
+        let query = Query {
+            country_hint: &["GE"],
+            include_uncertain: false,
+        };
+        let found = t.detect(SIGNATURE, &query).unwrap();
+        let rules = policy::apply(rules::scan(SIGNATURE, &["GE"]), false);
+        assert_eq!(found, rules);
+    }
+
+    #[test]
+    fn people_need_a_detector_in_the_bundle() {
+        let t = Tessera::load(
+            &model::testing::parser_bundle(),
+            Config {
+                kinds: Kind::Person.into(),
+                expected_checksum: None,
+            },
+        );
+        assert_eq!(t.unwrap_err(), Error::BundleInvalid);
+    }
+
+    #[test]
+    fn an_unbroken_document_is_too_large() {
+        let t = load_all(&model::testing::with_random_detector(1, 6)).unwrap();
+        let text = ".".repeat(6000);
+        assert_eq!(
+            t.detect(&text, &Query::default()).unwrap_err(),
+            Error::InputTooLarge
+        );
+    }
 
     #[test]
     fn labels_round_trip() {

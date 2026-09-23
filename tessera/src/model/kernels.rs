@@ -2,7 +2,7 @@
 //! `[len, channels]`. Formulas match the trainer's dequantized model up to floating-point
 //! summation order: the per-channel scale is applied once, after the integer-weight dot product.
 //!
-//! Every tensor's dtype and shape is validated once in `Parser::new`; the kernels trust it.
+//! Every tensor's dtype and shape is validated once in `Tagger::load`; the kernels trust it.
 
 use super::weights::QTensor;
 

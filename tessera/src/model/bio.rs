@@ -1,9 +1,110 @@
-//! BIO label ids and greedy transition-masked decoding, mirroring the trainer's
-//! `dataset::decode_labels` and `model_eval::decode_probs`. Id 0 is `O`; semantic label `i`
-//! (in `AddressLabel::ALL` order) has `B` at `1 + 2i` and `I` at `2 + 2i`.
+//! BIO label ids and greedy decoding, mirroring the trainer's `dataset::decode_labels`,
+//! `model_eval::decode_probs`, and `detector::decode`. Id 0 is `O`; semantic label `i` has
+//! `B` at `1 + 2i` and `I` at `2 + 2i`, in `AddressLabel::ALL` order for the parser and in
+//! `DETECTOR_KINDS` order for the detector.
 
-use super::PARSER_LABELS;
-use crate::{AddressLabel, Component};
+use super::{DETECTOR_LABELS, PARSER_LABELS};
+use crate::chunk::MAX_ENTITY_TOKENS;
+use crate::{AddressLabel, Component, Kind};
+
+/// The detector's kinds in label order.
+pub(crate) const DETECTOR_KINDS: [Kind; 3] = [Kind::Person, Kind::Org, Kind::Address];
+
+/// Detector label strings in id order, as the bundle manifest lists them.
+pub fn detector_label_strings() -> Vec<String> {
+    let mut out = Vec::with_capacity(DETECTOR_LABELS);
+    out.push("O".to_string());
+    for kind in DETECTOR_KINDS {
+        let name = kind.as_str().to_uppercase();
+        out.push(format!("B-{name}"));
+        out.push(format!("I-{name}"));
+    }
+    out
+}
+
+/// A decoded detector span over retained positions `first..=last`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct DetectedSpan {
+    pub kind: Kind,
+    pub first: usize,
+    pub last: usize,
+    /// Mean probability of the chosen label over the span.
+    pub confidence: f32,
+}
+
+/// Greedy decoding of `[len, DETECTOR_LABELS]` probabilities: the most probable label per
+/// position, `O` at masked positions (inside an email or phone), an `I-X` that does not
+/// continue an `X` span read as `B-X`, and every span closed before a paragraph break. Spans
+/// longer than `MAX_ENTITY_TOKENS` are dropped.
+pub(crate) fn decode_detector(
+    probs: &[f32],
+    masked: &[bool],
+    paragraph_break: &[bool],
+) -> Vec<DetectedSpan> {
+    let mut out = Vec::new();
+    let mut open: Option<(usize, usize, f32, usize)> = None;
+    let mut close = |open: &mut Option<(usize, usize, f32, usize)>, last: usize| {
+        if let Some((kind, first, sum, n)) = open.take()
+            && last + 1 - first <= MAX_ENTITY_TOKENS
+        {
+            out.push(DetectedSpan {
+                kind: DETECTOR_KINDS[kind],
+                first,
+                last,
+                confidence: sum / n as f32,
+            });
+        }
+    };
+    let mut prev: Option<usize> = None;
+    for (t, row) in probs.chunks(DETECTOR_LABELS).enumerate() {
+        if t > 0 && paragraph_break.get(t).copied().unwrap_or(false) {
+            close(&mut open, t - 1);
+            prev = None;
+        }
+        let label = if masked.get(t).copied().unwrap_or(false) {
+            0
+        } else {
+            argmax(row)
+        };
+        let kind = (label != 0).then(|| (label - 1) / 2);
+        let begin = label % 2 == 1;
+        let p = row
+            .get(label)
+            .copied()
+            .filter(|p| !p.is_nan())
+            .unwrap_or(0.0);
+        match (kind, open.as_mut()) {
+            (Some(k), Some(o)) if !begin && prev == Some(k) => {
+                o.2 += p;
+                o.3 += 1;
+            }
+            _ => {
+                if t > 0 {
+                    close(&mut open, t - 1);
+                }
+                if let Some(k) = kind {
+                    open = Some((k, t, p, 1));
+                }
+            }
+        }
+        prev = kind;
+    }
+    if let Some(last) = (probs.len() / DETECTOR_LABELS).checked_sub(1) {
+        close(&mut open, last);
+    }
+    out
+}
+
+/// The first index of the largest value; NaN never wins.
+fn argmax(row: &[f32]) -> usize {
+    let mut best = (0, f32::NEG_INFINITY);
+    for (i, &p) in row.iter().enumerate() {
+        if p > best.1 {
+            best = (i, p);
+        }
+    }
+    best.0
+}
 
 /// Label strings in id order, as the bundle manifest lists them.
 pub fn parser_label_strings() -> Vec<String> {
@@ -85,6 +186,77 @@ pub(crate) fn components(token_spans: &[(usize, usize)], decoded: &[(u8, f32)]) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn rows(labels: &[usize]) -> Vec<f32> {
+        labels
+            .iter()
+            .flat_map(|&l| (0..DETECTOR_LABELS).map(move |k| if k == l { 0.9 } else { 0.1 / 6.0 }))
+            .collect()
+    }
+
+    fn spans(found: &[DetectedSpan]) -> Vec<(Kind, usize, usize)> {
+        found.iter().map(|s| (s.kind, s.first, s.last)).collect()
+    }
+
+    #[test]
+    fn detector_labels_name_the_kinds_in_order() {
+        assert_eq!(
+            detector_label_strings(),
+            [
+                "O",
+                "B-PERSON",
+                "I-PERSON",
+                "B-ORG",
+                "I-ORG",
+                "B-ADDRESS",
+                "I-ADDRESS"
+            ]
+        );
+    }
+
+    #[test]
+    fn stray_inside_labels_start_spans_and_masks_force_o() {
+        // O, B-PERSON, I-PERSON, I-ORG, O, I-ADDRESS, I-ADDRESS
+        let p = rows(&[0, 1, 2, 4, 0, 6, 6]);
+        let none = [false; 7];
+        assert_eq!(
+            spans(&decode_detector(&p, &none, &none)),
+            [
+                (Kind::Person, 1, 2),
+                (Kind::Org, 3, 3),
+                (Kind::Address, 5, 6)
+            ]
+        );
+        let mut masked = [false; 7];
+        masked[1] = true;
+        let found = decode_detector(&p, &masked, &none);
+        assert!(!found.iter().any(|s| s.kind == Kind::Person && s.first == 1));
+    }
+
+    #[test]
+    fn a_paragraph_break_splits_a_span() {
+        let p = rows(&[5, 6, 6, 6]);
+        let mut breaks = [false; 4];
+        breaks[2] = true;
+        assert_eq!(
+            spans(&decode_detector(&p, &[false; 4], &breaks)),
+            [(Kind::Address, 0, 1), (Kind::Address, 2, 3)]
+        );
+    }
+
+    #[test]
+    fn spans_over_the_entity_limit_are_dropped() {
+        let mut labels = vec![5];
+        labels.extend(std::iter::repeat_n(6, MAX_ENTITY_TOKENS));
+        let n = labels.len();
+        assert!(decode_detector(&rows(&labels), &vec![false; n], &vec![false; n]).is_empty());
+        labels.pop();
+        let n = labels.len();
+        assert_eq!(
+            decode_detector(&rows(&labels), &vec![false; n], &vec![false; n]).len(),
+            1
+        );
+    }
 
     #[test]
     fn label_strings_follow_the_id_table() {
