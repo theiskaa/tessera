@@ -46,9 +46,11 @@ COLLECTED = {
                  "de-berlin", "de-impressum", "gb-contacts", "gb-courts")},
     **{s: (f"data/raw/silver/{s}/*.json", s[:2].upper())
        for s in ("jp-env", "ge-mepa", "ge-tbilisi", "ge-parliament", "de-bnetza", "jp-yokohama",
-                 "ge-tbilisi2")},
+                 "ge-tbilisi2", "ge-govge", "ge-govge-en", "ge-mfa", "ge-mfa-en", "jp-mhlw", "jp-mlit",
+                 "jp-fsa", "jp-mext", "de-sachsen", "de-nrw", "de-bmg", "de-behoerden",
+                 "gb-govuk-orgs", "gb-govuk-world", "gb-govuk-about", "gb-scotgov")},
 }
-# Rounds 1, 3, 5, and 7 are silver (training) rounds; round 2 is the GE and JP evaluation set,
+# Odd rounds are silver (training) rounds; round 2 is the GE and JP evaluation set,
 # and rounds 4 and 6 the DE and GB additions to the review set. No document is sampled twice. A count of None takes every document of the source.
 PLAN = {
     1: {"federal-register": 150, "govuk": 150},
@@ -59,6 +61,11 @@ PLAN = {
     5: {"de-bnetza": None},
     6: {"gb-courts": None},
     7: {"govuk": 150, "jp-yokohama": None, "ge-tbilisi2": None},
+    9: {s: None for s in ("ge-govge", "ge-govge-en", "ge-mfa", "ge-mfa-en", "jp-mhlw", "jp-mlit",
+                          "jp-fsa", "jp-mext")},
+    11: {"federal-register": 200, **{s: None for s in (
+        "de-sachsen", "de-nrw", "de-bmg", "de-behoerden", "gb-govuk-orgs", "gb-govuk-world",
+        "gb-govuk-about", "gb-scotgov")}},
 }
 CONTACT = re.compile(r"@|\b\d{3}[-. ]\d{3}[-. ]\d{4}\b|\b0\d{2,4} ?\d{3} ?\d{3,4}\b|\b(Street|Avenue|Road|Room|Suite)\b")
 
