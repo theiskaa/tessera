@@ -416,22 +416,25 @@ pub fn money(country: &str, lead: bool, rng: &mut ChaCha8Rng) -> String {
         _ => rng.random_range(1_000_000..50_000_000),
     };
     let cents = rng.random_range(0..100u32);
-    let country = if rng.random_bool(0.85) { country } else { "US" };
+    // English documents quote other currencies now and then; the others write their own.
+    let country = if matches!(country, "US" | "GB") && rng.random_bool(0.15) {
+        "US"
+    } else {
+        country
+    };
     let pick = |list: &[&'static str], rng: &mut ChaCha8Rng| -> &'static str {
         list.choose(rng).copied().unwrap_or("")
     };
     let (amount, leads): (String, &[&str]) = match country {
         "GE" => {
             let g = grouped(n, if rng.random_bool(0.6) { " " } else { "" });
-            let amount = match rng.random_range(0..9) {
+            let amount = match rng.random_range(0..7) {
                 0 => format!("{g},{cents:02} ₾"),
                 1 => format!("{g} ₾"),
                 2 => format!("₾{g}"),
                 3 => format!("{g} ლარი"),
-                4 => format!("{g} ლარს"),
-                5 => format!("{g} ლარის"),
-                6 => format!("{g},{cents:02} ლარი"),
-                7 => format!("{g} ლარი და {cents} თეთრი"),
+                4 => format!("{g},{cents:02} ლარი"),
+                5 => format!("{g} ლარი და {cents} თეთრი"),
                 _ => format!("{g} GEL"),
             };
             let leads: &[&str] = &[
@@ -510,6 +513,52 @@ pub fn money(country: &str, lead: bool, rng: &mut ChaCha8Rng) -> String {
     format!("{}{colon} {amount}", pick(leads, rng))
 }
 
+/// A date the way `country` writes one: `30.09.2026`, `2026 წლის 30 სექტემბერი`,
+/// `30. September 2026`, `2026年9月30日`, `令和8年9月30日`.
+pub fn date(country: &str, rng: &mut ChaCha8Rng) -> String {
+    let (y, m, d) = (
+        rng.random_range(2019..=2027),
+        rng.random_range(1..=12usize),
+        rng.random_range(1..=28),
+    );
+    const GE_MONTHS: [&str; 12] = [
+        "იანვარი",
+        "თებერვალი",
+        "მარტი",
+        "აპრილი",
+        "მაისი",
+        "ივნისი",
+        "ივლისი",
+        "აგვისტო",
+        "სექტემბერი",
+        "ოქტომბერი",
+        "ნოემბერი",
+        "დეკემბერი",
+    ];
+    const DE_MONTHS: [&str; 12] = [
+        "Januar",
+        "Februar",
+        "März",
+        "April",
+        "Mai",
+        "Juni",
+        "Juli",
+        "August",
+        "September",
+        "Oktober",
+        "November",
+        "Dezember",
+    ];
+    match (country, rng.random_range(0..3)) {
+        ("GE", 0) => format!("{y} წლის {d} {}", GE_MONTHS[m - 1]),
+        ("DE", 0) => format!("{d}. {} {y}", DE_MONTHS[m - 1]),
+        ("JP", 0) => format!("{y}年{m}月{d}日"),
+        ("JP", 1) => format!("令和{}年{m}月{d}日", y - 2018),
+        ("JP", _) => format!("{y}/{m:02}/{d:02}"),
+        _ => format!("{d:02}.{m:02}.{y}"),
+    }
+}
+
 /// An order, invoice, or case number the way `country` writes one: `№7781`, `INV-2026-0412`,
 /// `Nr. 20417`, `No. 2026-118`, `第1204号`.
 pub fn order(country: &str, rng: &mut ChaCha8Rng) -> String {
@@ -518,9 +567,13 @@ pub fn order(country: &str, rng: &mut ChaCha8Rng) -> String {
     match (country, rng.random_range(0..4)) {
         ("GE", 0 | 1) => format!("№{n}"),
         ("GE", 2) => format!("№ {n}"),
+        ("GE", _) => format!("{year}/{n:04}"),
         ("DE", 0 | 1) => format!("Nr. {n}"),
+        ("DE", 2) => format!("RE-{year}-{n:04}"),
+        ("DE", _) => format!("{year}-{n:05}"),
         ("JP", 0) => format!("第{n}号"),
         ("JP", 1) => format!("No. {year}-{n}"),
+        ("JP", _) => format!("{year}-{n:05}"),
         (_, 0) => format!("INV-{year}-{n:04}"),
         (_, 1) => format!("#{n}"),
         (_, 2) => format!("{year}/{n:04}"),

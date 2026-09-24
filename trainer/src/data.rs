@@ -791,9 +791,15 @@ fn normalize_japanese(p: &mut Pieces) {
             || i.label == Some(L::PoBox)
     });
     for i in &mut p.items {
-        // `北海` is the source's truncation of the prefecture `北海道`.
-        if i.label == Some(L::Region) && i.text == "北海" {
-            i.text = "北海道".into();
+        // The source cuts prefectures short (`北海`, `長野`, `徳島`); written without its
+        // suffix a prefecture teaches that any two kanji before a city are one (`福知` of
+        // `福知山市`).
+        if i.label == Some(L::Region)
+            && let Some(full) = JP_PREFECTURES
+                .iter()
+                .find(|full| full.strip_suffix(['県', '府', '都', '道']) == Some(i.text.as_str()))
+        {
+            i.text = full.to_string();
         }
         // `豊洲豊洲2`: the source writes some towns twice in one piece.
         if i.label == Some(L::Suburb) {
@@ -809,6 +815,7 @@ fn normalize_japanese(p: &mut Pieces) {
     strip_repeated_prefecture(p);
     strip_prefecture_from_city(p);
     split_ward_from_city(p);
+    split_county_from_town(p);
     let has_city = p.items.iter().any(|i| {
         let lower = i.text.to_lowercase();
         i.label == Some(L::City)
@@ -1023,6 +1030,39 @@ fn is_japanese_town(text: &str) -> bool {
         || ["-cho", "-chō", "-machi", " chome", "-chome"]
             .iter()
             .any(|s| lower.ends_with(s))
+}
+
+/// A county written into its town's piece (`中川郡池田町`) becomes its own district piece.
+fn split_county_from_town(p: &mut Pieces) {
+    use AddressLabel as L;
+    let Some(c) = p.items.iter().position(|i| {
+        i.label == Some(L::City)
+            && i.text.chars().all(is_cjk)
+            && (i.text.ends_with('町') || i.text.ends_with('村'))
+    }) else {
+        return;
+    };
+    let Some(cut) = p.items[c]
+        .text
+        .find('郡')
+        .filter(|&k| k > 0)
+        .map(|k| k + '郡'.len_utf8())
+    else {
+        return;
+    };
+    if cut >= p.items[c].text.len() {
+        return;
+    }
+    let town = p.items[c].text.split_off(cut);
+    let county = std::mem::replace(&mut p.items[c].text, town);
+    p.items.insert(
+        c,
+        Piece {
+            label: Some(L::District),
+            text: county,
+        },
+    );
+    p.seps.insert(c, String::new());
 }
 
 /// A designated city's ward written into the city piece (`札幌市中央区`) becomes its own
@@ -2193,7 +2233,11 @@ pub(crate) mod augment {
             (false, 0) => format!("{a}-{b}"),
             (false, 1) => format!("{a}-{b}-{c}"),
             (false, 2) => format!("{a}番{b}号"),
-            (false, _) => format!("{a}番地"),
+            (false, _) => match rng.random_range(0..3) {
+                0 => format!("{a}番地{b}"),
+                1 => format!("{a}番地の{b}"),
+                _ => format!("{a}番地"),
+            },
         };
         // Glued to a block ending in a Japanese character; after a digit or a romanized word,
         // gluing would merge the two into one token.
@@ -2590,8 +2634,21 @@ pub(crate) mod augment {
         }
         items.push(p.items[city].clone());
         seps.push(", ".into());
-        items.push(p.items[road].clone());
-        seps.push(" ".into());
+        // Village and suburb streets are often numbered, not named: `1-ლი ქ.`, `მე-3 ქ.`,
+        // `30-ე ქ.`, `მე-17 ქუჩის I შესახვევი`.
+        let mut road_piece = p.items[road].clone();
+        if native && rng.random::<f32>() < 0.25 {
+            let n = rng.random_range(1..=40);
+            let kind = ["ქ.", "ქუჩა", "შესახვევი", "ჩიხი"][rng.random_range(0..4)];
+            road_piece.text = match (n, rng.random_range(0..3)) {
+                (1, _) => format!("1-ლი {kind}"),
+                (_, 0) => format!("{n}-ე {kind}"),
+                (_, 1) => format!("მე-{n} ქუჩის I შესახვევი"),
+                _ => format!("მე-{n} {kind}"),
+            };
+        }
+        items.push(road_piece);
+        seps.push(if rng.random::<f32>() < 0.2 { ", " } else { " " }.into());
         match rng.random_range(0..20) {
             0..=6 => items.push(piece(Some(L::HouseNumber), format!("№{number}"))),
             7..=9 => {
@@ -2656,6 +2713,20 @@ pub(crate) mod augment {
             _ => format!("ოთ. {room}"),
         };
         let mut added = vec![];
+        // A campus or estate block, and the institution the office is in, are not address
+        // components: `თსუ, III კორპუსი, ოთახი №206`.
+        if rng.random::<f32>() < 0.4 {
+            if rng.random::<f32>() < 0.5 {
+                let place = ["თსუ", "სტუ", "თსსუ", "ბიზნესცენტრი", "სავაჭრო ცენტრი"];
+                added.push(piece(None, place[rng.random_range(0..place.len())]));
+            }
+            let block = match rng.random_range(0..3) {
+                0 => format!("{} კორპუსი", ROMAN[rng.random_range(0..ROMAN.len())]),
+                1 => format!("კორპუსი {}", rng.random_range(1..=12)),
+                _ => format!("მე-{} კორპუსი", rng.random_range(2..=12)),
+            };
+            added.push(piece(None, block));
+        }
         match rng.random_range(0..3) {
             0 => added.push(piece(Some(L::Level), floor)),
             1 => added.push(piece(Some(L::Unit), room)),
@@ -3375,7 +3446,7 @@ mod tests {
             assert!(official_format_ge("GE", &mut p, &mut rng));
             floor_room_ge("GE", &mut p, &mut rng);
             let (text, spans, parts) = spans_of(&p);
-            assert!(text.contains("ქუთაისი, წერეთლის ქ. "), "{text}");
+            assert!(text.contains("ქუთაისი, "), "{text}");
             assert!(!text.contains("საქართველო"), "{text}");
             assert_invariant(&LabelledExample {
                 text,
@@ -3786,7 +3857,11 @@ mod tests {
                 "JP",
                 "ja\tjp\t東/city_district 区/city_district |/FSEP 福/city 岡/city 市/city 東/city 区/city |/FSEP 福/state 岡/state"
             ),
-            pairs(&[("region", "福岡"), ("city", "福岡市"), ("district", "東区")])
+            pairs(&[
+                ("region", "福岡県"),
+                ("city", "福岡市"),
+                ("district", "東区")
+            ])
         );
         assert_eq!(
             labelled(

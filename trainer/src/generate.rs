@@ -596,12 +596,15 @@ impl<'a> Ctx<'a> {
             Slot::NegWordName => Filled::plain(*pick(templates::NEG_WORD_NAMES, rng)),
             Slot::NegHandle => Filled::plain(*pick(templates::NEG_HANDLES, rng)),
             Slot::NegUrl => Filled::plain(*pick(templates::NEG_URLS, rng)),
-            Slot::NegDate => Filled::plain(*pick(templates::NEG_DATES, rng)),
-            Slot::NegPrice if rng.random_bool(0.2) => {
+            Slot::NegDate if matches!(self.country, "US" | "GB") || rng.random_bool(0.1) => {
+                Filled::plain(*pick(templates::NEG_DATES, rng))
+            }
+            Slot::NegDate => Filled::plain(negatives::date(self.country, rng)),
+            Slot::NegPrice if matches!(self.country, "US" | "GB") && rng.random_bool(0.2) => {
                 Filled::plain(*pick(templates::NEG_PRICES, rng))
             }
             Slot::NegPrice => Filled::plain(negatives::money(self.country, false, rng)),
-            Slot::NegOrder if rng.random_bool(0.2) => {
+            Slot::NegOrder if matches!(self.country, "US" | "GB") && rng.random_bool(0.2) => {
                 Filled::plain(*pick(templates::NEG_ORDERS, rng))
             }
             Slot::NegOrder => Filled::plain(negatives::order(self.country, rng)),
@@ -1293,6 +1296,52 @@ fn phone(
     })
 }
 
+/// `the` before a public body, unit, council, or university named in running English text
+/// (`told the Planning Inspectorate`, `said. The Environment Agency`), outside its span, as real
+/// documents write about one in five of their organizations. Only after a lower-case word or
+/// the end of a sentence, so never in headlines, lists, or tag rows, and never before a name
+/// written without one (`HM Revenue & Customs`, `Companies House`, `Leeds City Council`).
+fn article(
+    text: &str,
+    value: &str,
+    slot: Slot,
+    country: &str,
+    rng: &mut ChaCha8Rng,
+) -> Option<&'static str> {
+    let body = matches!(
+        slot,
+        Slot::OrgGov | Slot::OrgUnit | Slot::OrgCouncil | Slot::OrgUniv
+    );
+    if !body || !matches!(country, "US" | "GB") || !rng.random_bool(0.4) {
+        return None;
+    }
+    let bare = [
+        "HM ",
+        "UK ",
+        "NHS ",
+        "British Embassy",
+        "British High Commission",
+    ]
+    .iter()
+    .any(|p| value.starts_with(p))
+        || ["Council", "Court", "House", "College London"]
+            .iter()
+            .any(|s| value.ends_with(s))
+        || value.contains("'s ")
+        || value.contains("\u{2019}s ");
+    let line = text.rsplit('\n').next().unwrap_or("");
+    let last = line.split_whitespace().next_back().unwrap_or("");
+    let taken = [
+        "the", "a", "an", "this", "that", "its", "their", "our", "your",
+    ];
+    let sentence_end = last.ends_with(['.', '!', '?']);
+    let prose = last.chars().all(|c| c.is_lowercase()) && !taken.contains(&last);
+    if bare || !line.ends_with(' ') || !(prose || sentence_end) {
+        return None;
+    }
+    Some(if sentence_end { "The" } else { "the" })
+}
+
 /// Renders a template, measuring every labelled value's span on the string being built, so
 /// the offsets are exact by construction. Honorifics are written before the span starts.
 pub fn render(template: &Template, ctx: &mut Ctx, rng: &mut ChaCha8Rng) -> anyhow::Result<Doc> {
@@ -1326,6 +1375,9 @@ pub fn render(template: &Template, ctx: &mut Ctx, rng: &mut ChaCha8Rng) -> anyho
             filled.suffix = outside;
         }
         phones_fixture_safe &= filled.fixture_safe;
+        if filled.prefix.is_none() {
+            filled.prefix = article(&text, &filled.value, slot, ctx.country, rng);
+        }
         if let Some(prefix) = filled.prefix {
             text.push_str(prefix);
             text.push(' ');

@@ -141,6 +141,27 @@ pub const TEMPLATES: &[Local] = &[
     ),
     (
         Prose,
+        55,
+        NoAddr,
+        NEWS,
+        "{person#1} met {person#2} on {date}. {person_last#1} told reporters that the talks with {person_last#2} were constructive, while {person_last:poss#2} office declined to comment. {sentence} {person_last#1} later left for {neg_place}.",
+    ),
+    (
+        Prose,
+        56,
+        NoAddr,
+        NEWS,
+        "{org_party#1} chair {person#2} called on {person#3} to resign. \u{201c}{sentence}\u{201d} {person_last#2} said. {person_last#3} rejected the call, and {person_last:poss#3} spokesperson said {person_last#2} had misread the report.",
+    ),
+    (
+        Prose,
+        57,
+        NoAddr,
+        NEWS,
+        "Read more:\n\n{date} \u{2013} {person_last#1} Meets {person_last#2} in {neg_place}\n{date} \u{2013} {person#3} Named {title}\n\n{sentence} {person#1} and {person#2} discussed trade. {person_last#1} thanked {person_last#2}.",
+    ),
+    (
+        Prose,
         59,
         NoAddr,
         NEWS,
