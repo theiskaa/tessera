@@ -9,6 +9,7 @@
 mod chunk;
 mod detect;
 mod features;
+mod group;
 mod model;
 mod policy;
 mod rules;
