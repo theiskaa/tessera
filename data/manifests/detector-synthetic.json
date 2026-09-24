@@ -2,7 +2,7 @@
   "source": "tessera-generator",
   "version": 1,
   "seed": 42,
-  "templates": 222,
+  "templates": 224,
   "max_tokens": 900,
   "names": "data/processed/names",
   "addresses": "data/processed/parser",
@@ -34,107 +34,107 @@
     },
     "family": {
       "email_body": {
-        "test": 2033,
-        "train": 23407,
-        "valid": 1330
+        "test": 2112,
+        "train": 23487,
+        "valid": 1384
       },
       "invoice": {
-        "test": 1656,
-        "train": 19770,
-        "valid": 1202
+        "test": 1673,
+        "train": 19769,
+        "valid": 1150
       },
       "letterhead": {
-        "test": 2549,
-        "train": 28375,
-        "valid": 1700
+        "test": 2567,
+        "train": 28558,
+        "valid": 1674
       },
       "markdown": {
         "test": 5000
       },
       "prose": {
-        "test": 2692,
-        "train": 29508,
-        "valid": 1701
+        "test": 2636,
+        "train": 29302,
+        "valid": 1760
       },
       "signature": {
-        "test": 2124,
-        "train": 24514,
-        "valid": 1427
+        "test": 2130,
+        "train": 24355,
+        "valid": 1371
       },
       "support": {
-        "test": 1572,
-        "train": 19296,
-        "valid": 1146
+        "test": 1524,
+        "train": 19107,
+        "valid": 1132
       },
       "table": {
-        "test": 1794,
-        "train": 19475,
-        "valid": 1157
+        "test": 1805,
+        "train": 19542,
+        "valid": 1198
       },
       "technical": {
-        "test": 580,
-        "train": 5655,
-        "valid": 337
+        "test": 553,
+        "train": 5880,
+        "valid": 331
       }
     },
     "category": {
       "both": {
-        "test": 11175,
-        "train": 84956,
-        "valid": 4946
+        "test": 11110,
+        "train": 85039,
+        "valid": 5007
       },
       "no_address_with_person": {
-        "test": 3799,
-        "train": 28327,
-        "valid": 1653
+        "test": 3724,
+        "train": 28625,
+        "valid": 1626
       },
       "no_person_with_address": {
-        "test": 2509,
-        "train": 28573,
-        "valid": 1648
+        "test": 2646,
+        "train": 27923,
+        "valid": 1658
       },
       "nothing": {
-        "test": 2517,
-        "train": 28144,
-        "valid": 1753
+        "test": 2520,
+        "train": 28413,
+        "valid": 1709
       }
     },
     "country": {
       "DE": {
-        "test": 3891,
-        "train": 34115,
-        "valid": 1939
+        "test": 4010,
+        "train": 33915,
+        "valid": 1970
       },
       "GB": {
-        "test": 3968,
-        "train": 34004,
-        "valid": 1986
+        "test": 4086,
+        "train": 34023,
+        "valid": 1957
       },
       "GE": {
-        "test": 3974,
-        "train": 34004,
-        "valid": 2022
+        "test": 3970,
+        "train": 33962,
+        "valid": 2050
       },
       "JP": {
-        "test": 4110,
-        "train": 33770,
-        "valid": 2085
+        "test": 3923,
+        "train": 34028,
+        "valid": 1981
       },
       "US": {
-        "test": 4057,
-        "train": 34107,
-        "valid": 1968
+        "test": 4011,
+        "train": 34072,
+        "valid": 2042
       }
     }
   },
   "train_category_share": {
-    "both": 0.49974117647058824,
-    "no_address_with_person": 0.1666294117647059,
-    "no_person_with_address": 0.1680764705882353,
-    "nothing": 0.1655529411764706
+    "both": 0.5002294117647059,
+    "no_address_with_person": 0.16838235294117648,
+    "no_person_with_address": 0.1642529411764706,
+    "nothing": 0.16713529411764705
   },
   "dropped": {
-    "boundary_misaligned": 110
+    "boundary_misaligned": 111
   },
   "pools": {
     "DE/test": {
@@ -195,19 +195,19 @@
       "people": 1010,
       "orgs": 1002,
       "borrowed_orgs": 0,
-      "addresses": 946
+      "addresses": 1269
     },
     "JP/train": {
       "people": 17995,
       "orgs": 17937,
       "borrowed_orgs": 0,
-      "addresses": 9746
+      "addresses": 13237
     },
     "JP/valid": {
       "people": 992,
       "orgs": 1021,
       "borrowed_orgs": 0,
-      "addresses": 1024
+      "addresses": 1394
     },
     "US/test": {
       "people": 979,
@@ -228,5 +228,5 @@
       "addresses": 2396
     }
   },
-  "phones_fixture_safe_ratio": 0.804905
+  "phones_fixture_safe_ratio": 0.80588
 }

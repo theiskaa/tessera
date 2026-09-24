@@ -22,31 +22,31 @@
       "train": 30000,
       "valid": 3000,
       "test": 3000,
-      "augmented": 46279
+      "augmented": 44931
     },
     "GE": {
       "train": 30000,
       "valid": 3000,
       "test": 3000,
-      "augmented": 37373
+      "augmented": 37208
     },
     "DE": {
       "train": 30000,
       "valid": 3000,
       "test": 3000,
-      "augmented": 44840
+      "augmented": 44811
     },
     "US": {
       "train": 30000,
       "valid": 3000,
       "test": 3000,
-      "augmented": 41750
+      "augmented": 41465
     },
     "JP": {
       "train": 27591,
       "valid": 2737,
       "test": 2723,
-      "augmented": 45184
+      "augmented": 44988
     }
   },
   "split_seed": 42,
@@ -68,7 +68,7 @@
     "mislabelled": 12314,
     "invalid_span": 0,
     "locality_over_cap": 959050,
-    "unencodable_copies": 261,
+    "unencodable_copies": 281,
     "duplicate": 35583,
     "same_place": 27917,
     "over_quota": 97152908
