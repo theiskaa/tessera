@@ -12,6 +12,18 @@ wasm_opt := "wasm-opt -Oz --strip-debug --strip-producers --enable-bulk-memory -
 # The SIMD build has its own target directory so switching RUSTFLAGS keeps both caches warm.
 simd_env := "RUSTFLAGS='-C target-feature=+simd128' CARGO_TARGET_DIR='" + justfile_directory() / "target/wasm-simd'"
 
+# Formatting, lints on every feature, and the native tests: what CI's native job runs.
+default: fmt lint test
+
+fmt:
+    cargo fmt --all --check
+
+lint:
+    cargo clippy --workspace --all-features --all-targets -- -D warnings
+
+test:
+    cargo test --workspace
+
 # Release npm package in tessera/pkg: the baseline and SIMD wasm, the generated glue, and the
 # hand-written entry, worker, and types.
 wasm: wasm-baseline wasm-simd wasm-package
@@ -34,14 +46,21 @@ wasm-simd:
 wasm-package:
     node tessera/js/build/package.mjs
 
-# Gzip size of both release variants with the phone tables, and of the baseline without them.
+# Gzip sizes of both release variants, the bundle, and the phone tables, into target/sizes.json.
 wasm-size: wasm
-    @echo "baseline, with phone tables:    $(gzip -9 -c tessera/pkg/tessera_bg.wasm | wc -c | tr -d ' ') bytes gzip"
-    @echo "simd128, with phone tables:     $(gzip -9 -c tessera/pkg/tessera_simd_bg.wasm | wc -c | tr -d ' ') bytes gzip"
-    env {{wasm_env}} wasm-pack build --release --target web --out-dir pkg-nophone tessera --no-default-features --features wasm
-    {{wasm_opt}} -o tessera/pkg-nophone/tessera_bg.wasm tessera/pkg-nophone/tessera_bg.wasm
-    @echo "baseline, without phone tables: $(gzip -9 -c tessera/pkg-nophone/tessera_bg.wasm | wc -c | tr -d ' ') bytes gzip"
-    rm -rf tessera/pkg-nophone
+    scripts/sizes.sh
+
+# Fails when a tracked size grew more than three percent over reports/sizes.json.
+size-gate: wasm-size
+    scripts/size-gate.sh
+
+# Replaces the size baseline; commit it on its own, with the reason in the message.
+sizes-baseline: wasm-size
+    cp target/sizes.json reports/sizes.json
+
+# Native per-stage timings on the profiling fixtures, appended to internal/reports/m7-profile.md.
+bench:
+    cargo run --release -p trainer -- bench
 
 # The never-published `wasm,profile` build the profiling page loads, into bench/web/pkg, with the
 # shipped size profile; `just profile-web baseline` builds it without simd128.
@@ -54,6 +73,12 @@ profile-web variant="simd":
 # once per worker, which leaves Firefox close to that edge.
 wasm-test +browsers="chrome firefox":
     WASM_BINDGEN_TEST_TIMEOUT=120 wasm-pack test --headless {{prepend("--", browsers)}} tessera --features wasm,markdown
+
+# The browser tests CI runs: Chrome only, every test on the baseline build, and on simd128 the
+# golden vectors and the test that the simd128 and scalar kernels agree bit for bit.
+test-web-ci:
+    WASM_BINDGEN_TEST_TIMEOUT=120 wasm-pack test --headless --chrome tessera --features wasm,markdown
+    env RUSTFLAGS='-C target-feature=+simd128' WASM_BINDGEN_TEST_TIMEOUT=120 wasm-pack test --headless --chrome tessera --features wasm,profile --test kernels --test golden
 
 # The built package in Node and Bun: loading from disk, UTF-16 offsets, typed errors, and
 # extractContacts on the spec's worked example.

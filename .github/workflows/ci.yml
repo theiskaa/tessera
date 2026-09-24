@@ -1,0 +1,49 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  native:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-features --all-targets -- -D warnings
+      - run: cargo test --workspace
+
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just,wasm-pack
+      - uses: browser-actions/setup-chrome@v1
+      - uses: oven-sh/setup-bun@v2
+      - name: install binaryen
+        run: |
+          curl -sSfL https://github.com/WebAssembly/binaryen/releases/download/version_133/binaryen-version_133-x86_64-linux.tar.gz | tar xz -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/binaryen-version_133/bin" >> "$GITHUB_PATH"
+      - run: just test-web-ci
+      - run: just js-test
+      - run: just size-gate
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sizes
+          path: target/sizes.json

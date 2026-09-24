@@ -1,0 +1,6 @@
+{
+  "wasm_simd_gz": 131054,
+  "wasm_nosimd_gz": 130694,
+  "bundle_gz": 3050609,
+  "phone_metadata_gz": 15319
+}
