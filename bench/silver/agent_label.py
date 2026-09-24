@@ -43,12 +43,12 @@ SOURCES = {
 COLLECTED = {
     **{s: (f"data/raw/review/{s}/*.json", s[:2].upper())
        for s in ("jp-soumu", "jp-maff", "jp-caa", "ge-economy", "ge-civil", "ge-tsu", "ge-contacts",
-                 "de-berlin", "de-impressum", "gb-contacts")},
+                 "de-berlin", "de-impressum", "gb-contacts", "gb-courts")},
     **{s: (f"data/raw/silver/{s}/*.json", s[:2].upper())
        for s in ("jp-env", "ge-mepa", "ge-tbilisi", "ge-parliament", "de-bnetza")},
 }
-# Rounds 1, 3, and 5 are silver (training) rounds; round 2 is the GE and JP evaluation set and
-# round 4 the DE and GB additions to the review set. A count of None takes every document of the source.
+# Rounds 1, 3, and 5 are silver (training) rounds; round 2 is the GE and JP evaluation set, and
+# rounds 4 and 6 the DE and GB additions to the review set. A count of None takes every document of the source.
 PLAN = {
     1: {"federal-register": 150, "govuk": 150},
     2: {s: None for s in ("jp-soumu", "jp-maff", "jp-caa", "ge-economy", "ge-civil", "ge-tsu",
@@ -56,6 +56,7 @@ PLAN = {
     3: {s: None for s in ("jp-env", "ge-mepa", "ge-tbilisi", "ge-parliament")},
     4: {s: None for s in ("de-berlin", "de-impressum", "gb-contacts")},
     5: {"de-bnetza": None},
+    6: {"gb-courts": None},
 }
 CONTACT = re.compile(r"@|\b\d{3}[-. ]\d{3}[-. ]\d{4}\b|\b0\d{2,4} ?\d{3} ?\d{3,4}\b|\b(Street|Avenue|Road|Room|Suite)\b")
 
