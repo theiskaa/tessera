@@ -98,10 +98,18 @@ pub(crate) fn is_newline(c: char) -> bool {
     matches!(c, '\n' | '\r' | '\u{85}' | '\u{2028}' | '\u{2029}')
 }
 
+/// Invisible characters inside words: the soft hyphen German web text breaks long words with
+/// (`Te\u{AD}le\u{AD}kom`), the zero-width joiners, and the word joiner. They stay inside their
+/// word's token, as combining marks do, and features skip them.
+pub(crate) const INVISIBLE: [char; 4] = ['\u{AD}', '\u{200C}', '\u{200D}', '\u{2060}'];
+
 fn classify(c: char) -> CharKind {
     let u = c as u32;
     if is_newline(c) {
         return CharKind::Newline;
+    }
+    if INVISIBLE.contains(&c) {
+        return CharKind::Combining;
     }
     if c == ' '
         || c == '\t'
@@ -109,7 +117,8 @@ fn classify(c: char) -> CharKind {
         || u == 0x0C
         || u == 0xA0
         || u == 0x1680
-        || (0x2000..=0x200A).contains(&u)
+        || (0x2000..=0x200B).contains(&u)
+        || u == 0xFEFF
         || u == 0x202F
         || u == 0x205F
         || u == 0x3000
@@ -264,7 +273,6 @@ const COMBINING: &[(u32, u32)] = &[
     (0x0E47, 0x0E4E),
     (0x1AB0, 0x1AFF),
     (0x1DC0, 0x1DFF),
-    (0x200C, 0x200D),
     (0x20D0, 0x20FF),
     (0x3099, 0x309A),
     (0xFE00, 0xFE0F),
@@ -751,6 +759,28 @@ mod tests {
             ]
         );
         assert_eq!(parts("José"), vec![("José", Alpha, Latin)]);
+    }
+
+    #[test]
+    fn invisible_characters_stay_inside_words() {
+        assert_eq!(
+            parts("Te\u{AD}le\u{AD}kom AG"),
+            vec![
+                ("Te\u{AD}le\u{AD}kom", Alpha, Latin),
+                (" ", TokenClass::Space, Script::Other),
+                ("AG", Alpha, Latin)
+            ]
+        );
+        assert_eq!(parts("\u{FEFF}Max")[1], ("Max", Alpha, Latin));
+        assert_eq!(parts("\u{FEFF}Max")[0].1, TokenClass::Space);
+        assert_eq!(
+            parts("a\u{200B}b"),
+            vec![
+                ("a", Alpha, Latin),
+                ("\u{200B}", TokenClass::Space, Script::Other),
+                ("b", Alpha, Latin)
+            ]
+        );
     }
 
     #[test]

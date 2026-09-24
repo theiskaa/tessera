@@ -382,7 +382,9 @@ fn name_parts(person: &str) -> Option<Vec<String>> {
     let mut current = String::new();
     for c in person.chars() {
         // `ß` is alphabetic but has no one-letter fold, so it is spelled out before the table.
-        if c == 'ß' {
+        if crate::token::INVISIBLE.contains(&c) {
+            continue;
+        } else if c == 'ß' {
             current.push_str("ss");
         } else if c.is_alphabetic() {
             current.push(fold(c)?);
@@ -845,6 +847,14 @@ pub fn group(text: &str, entities: Vec<Entity>) -> Extraction {
 mod tests {
     use super::*;
     use crate::token::{TokenClass, tokenize};
+
+    #[test]
+    fn soft_hyphens_do_not_split_name_parts() {
+        assert_eq!(
+            name_parts("Max Mus\u{AD}ter\u{AD}mann"),
+            name_parts("Max Mustermann")
+        );
+    }
 
     #[test]
     fn lines_cut_where_the_tokenizer_cuts_newlines() {

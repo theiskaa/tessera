@@ -8,7 +8,7 @@
 //! legal form list; honorifics, salutations, and closings hand-written.
 
 use crate::chunk::Mask;
-use crate::token::{Token, TokenClass};
+use crate::token::{INVISIBLE, Token, TokenClass};
 
 /// How token text is hashed into n-gram ids. A bundle records the values it was trained
 /// with, and inference must use the same ones.
@@ -113,10 +113,11 @@ pub fn fnv1a(bytes: &[u8], seed: u64) -> u64 {
 pub const MAX_NGRAMS_PER_TOKEN: usize = 64;
 
 /// Hashed ids of the character n-grams of `^text$`, for each size in `config.ngram_sizes`
-/// in order, at most [`MAX_NGRAMS_PER_TOKEN`] of them.
+/// in order, at most [`MAX_NGRAMS_PER_TOKEN`] of them. Invisible characters are skipped, so
+/// `Te\u{AD}le\u{AD}kom` reads as `Telekom`.
 pub(crate) fn ngram_ids(text: &str, config: &FeatureConfig) -> Vec<u32> {
     let wrapped: Vec<char> = core::iter::once('^')
-        .chain(text.chars())
+        .chain(text.chars().filter(|c| !INVISIBLE.contains(c)))
         .chain(core::iter::once('$'))
         .collect();
     let mut out = Vec::new();
@@ -516,6 +517,7 @@ pub(crate) const CLOSINGS: &[&str] = &[
 /// Shape string: `A` for a letter, `9` for a digit, other chars kept.
 pub(crate) fn shape_string(text: &str) -> String {
     text.chars()
+        .filter(|c| !INVISIBLE.contains(c))
         .map(|c| {
             if c.is_ascii_digit() {
                 '9'
@@ -713,7 +715,12 @@ fn term_flags(text: &str, tokens: &[Token]) -> Vec<u32> {
                     phrase.push(' ');
                     continue;
                 }
-                _ => phrase.extend(t.text(text).chars().flat_map(char::to_lowercase)),
+                _ => phrase.extend(
+                    t.text(text)
+                        .chars()
+                        .filter(|c| !INVISIBLE.contains(c))
+                        .flat_map(char::to_lowercase),
+                ),
             }
             used += 1;
             let bits = DICTS
@@ -880,6 +887,24 @@ mod tests {
 
     fn has(v: &[(String, u32)], text: &str, bit: u32) -> bool {
         v.iter().any(|(s, f)| s == text && f & bit != 0)
+    }
+
+    #[test]
+    fn invisible_characters_do_not_change_ngrams() {
+        let config = FeatureConfig::default();
+        assert_eq!(
+            ngram_ids("Te\u{AD}le\u{AD}kom", &config),
+            ngram_ids("Telekom", &config)
+        );
+    }
+
+    #[test]
+    fn invisible_characters_do_not_hide_terms_or_shapes() {
+        let plain = feats("Berliner Straße 5, Deutschland", Some("DE"));
+        let soft = feats("Berliner Stra\u{AD}ße 5, Deutsch\u{AD}land", Some("DE"));
+        let flags = |f: &[(String, u32)]| f.iter().map(|(_, b)| *b).collect::<Vec<_>>();
+        assert_eq!(flags(&soft), flags(&plain));
+        assert_eq!(shape_string("10\u{AD}115"), "99999");
     }
 
     #[test]
