@@ -13,6 +13,7 @@ mod export;
 mod filler;
 mod fixtures;
 mod generate;
+mod group_eval;
 mod model_eval;
 mod names;
 mod net;
@@ -157,9 +158,16 @@ struct EvalArgs {
     /// The bundle `detect` loads for `--gold` and for a detector run's split.
     #[arg(long, default_value = "models/tessera-v1.safetensors")]
     bundle: PathBuf,
-    /// With `--gold` or a detector run: write the report tables here as Markdown.
+    /// With `--gold`, a detector run, or `--grouper`: write the report as Markdown here.
     #[arg(long)]
     report: Option<PathBuf>,
+    /// Score the contact grouper on the fixtures in this directory, on gold entities and end
+    /// to end with `--bundle`.
+    #[arg(long)]
+    grouper: Option<PathBuf>,
+    /// With `--grouper`: a directory of known-hard grouper cases, scored but never gating.
+    #[arg(long)]
+    grouper_hard: Option<PathBuf>,
 }
 
 fn main() -> anyhow::Result<()> {

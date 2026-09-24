@@ -1,0 +1,55 @@
+{
+  "cases": [
+    {
+      "name": "two_people_one_line",
+      "input": "Nino Beridze and Amelia Okafor\nnino@kavkaz-freight.example\namelia.okafor@northgate.example\n",
+      "entities": [
+        {
+          "kind": "person",
+          "text": "Nino Beridze",
+          "start": 0,
+          "end": 12
+        },
+        {
+          "kind": "person",
+          "text": "Amelia Okafor",
+          "start": 17,
+          "end": 30
+        },
+        {
+          "kind": "email",
+          "text": "nino@kavkaz-freight.example",
+          "start": 31,
+          "end": 58
+        },
+        {
+          "kind": "email",
+          "text": "amelia.okafor@northgate.example",
+          "start": 59,
+          "end": 90
+        }
+      ],
+      "contacts": [
+        {
+          "person": 0,
+          "org": null,
+          "addresses": [],
+          "emails": [
+            2
+          ],
+          "phones": []
+        },
+        {
+          "person": 1,
+          "org": null,
+          "addresses": [],
+          "emails": [
+            3
+          ],
+          "phones": []
+        }
+      ],
+      "unassigned": []
+    }
+  ]
+}
