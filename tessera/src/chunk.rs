@@ -15,11 +15,13 @@
 //! targets 2,104 and cuts at 2,080: `[1080, 2080)`, next start 1,696 snapped to 1,680.
 //! Window 4 reaches the end: `[1680, 2500)`. Consecutive overlaps are 420, 400, and 400.
 
+use std::collections::BTreeMap;
+
 use crate::token::{Token, TokenClass};
 use crate::{Entity, Error, Source};
 
 /// Longest entity, in retained positions, that windowing guarantees to see whole.
-pub(crate) const MAX_ENTITY_TOKENS: usize = 256;
+pub const MAX_ENTITY_TOKENS: usize = 256;
 /// Positions at a window's inner edges whose predictions the window does not trust.
 pub(crate) const CONTEXT_MARGIN_TOKENS: usize = 64;
 /// Most retained positions in one window.
@@ -76,7 +78,7 @@ fn breaks_before(tokens: &[Token], retained: &[usize]) -> Vec<Break> {
 
 /// Per retained position, whether a blank line separates it from the previous one. Position 0
 /// counts as one, like the start of any document.
-pub(crate) fn paragraph_breaks(tokens: &[Token], retained: &[usize]) -> Vec<bool> {
+pub fn paragraph_breaks(tokens: &[Token], retained: &[usize]) -> Vec<bool> {
     breaks_before(tokens, retained)
         .into_iter()
         .map(|b| b == Break::Paragraph)
@@ -165,9 +167,11 @@ pub(crate) fn trusted(w: &Window, n: usize, first: usize, last: usize) -> bool {
 }
 
 /// Deduplicates predictions from overlapping windows and resolves overlaps: exact duplicates
-/// collapse; of two overlapping spans, a rules span beats a model span, then the longer
-/// wins, then the more confident, then the earlier. Rules spans are never dropped for a model
-/// span. Output is sorted by start and non-overlapping.
+/// collapse; spans are then taken best first (a rules span before a model span, then the
+/// longer, then the more confident, then the earlier) and each is kept unless it overlaps one
+/// already kept, so a span is lost only to a better span it overlaps. Rules spans never
+/// overlap each other, so none is dropped for a model span. Output is sorted by start and
+/// non-overlapping.
 pub(crate) fn merge(mut spans: Vec<Entity>) -> Vec<Entity> {
     spans.sort_by(|a, b| a.start.cmp(&b.start).then(b.end.cmp(&a.end)));
     spans.dedup_by(|a, b| a.start == b.start && a.end == b.end && a.kind == b.kind);
@@ -176,21 +180,18 @@ pub(crate) fn merge(mut spans: Vec<Entity>) -> Vec<Entity> {
             e.source == Source::Rules,
             e.end - e.start,
             e.confidence.to_bits(),
+            std::cmp::Reverse(e.start),
         )
     };
-    let mut kept: Vec<Entity> = Vec::with_capacity(spans.len());
+    spans.sort_by_key(|e| std::cmp::Reverse(rank(e)));
+    let mut kept: BTreeMap<usize, Entity> = BTreeMap::new();
     for s in spans {
-        match kept.last() {
-            Some(k) if s.start < k.end => {
-                if rank(&s) > rank(k) {
-                    kept.pop();
-                    kept.push(s);
-                }
-            }
-            _ => kept.push(s),
+        let before = kept.range(..s.end).next_back();
+        if before.is_none_or(|(_, k)| k.end <= s.start) {
+            kept.insert(s.start, s);
         }
     }
-    kept
+    kept.into_values().collect()
 }
 
 #[cfg(test)]
@@ -366,6 +367,20 @@ mod tests {
         ]);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].kind, Kind::Email);
+    }
+
+    /// A span is lost only to a better span it overlaps: `A` overlaps the longer `B`, `B`
+    /// overlaps the still longer `C`, and `A` and `C` do not overlap, so `A` survives.
+    #[test]
+    fn merge_keeps_a_span_whose_rival_lost_to_a_third() {
+        let m = |k, s, e| entity(k, Source::Model, s, e, 0.9);
+        let out = merge(vec![
+            m(Kind::Person, 0, 5),
+            m(Kind::Org, 3, 15),
+            m(Kind::Address, 14, 40),
+        ]);
+        let got: Vec<(Kind, usize, usize)> = out.iter().map(|e| (e.kind, e.start, e.end)).collect();
+        assert_eq!(got, vec![(Kind::Person, 0, 5), (Kind::Address, 14, 40)]);
     }
 
     #[test]

@@ -8,7 +8,7 @@ use crate::chunk::MAX_ENTITY_TOKENS;
 use crate::{AddressLabel, Component, Kind};
 
 /// The detector's kinds in label order.
-pub(crate) const DETECTOR_KINDS: [Kind; 3] = [Kind::Person, Kind::Org, Kind::Address];
+pub const DETECTOR_KINDS: [Kind; 3] = [Kind::Person, Kind::Org, Kind::Address];
 
 /// Detector label strings in id order, as the bundle manifest lists them.
 pub fn detector_label_strings() -> Vec<String> {
@@ -24,7 +24,7 @@ pub fn detector_label_strings() -> Vec<String> {
 
 /// A decoded detector span over retained positions `first..=last`.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct DetectedSpan {
+pub struct DetectedSpan {
     pub kind: Kind,
     pub first: usize,
     pub last: usize,
@@ -36,7 +36,7 @@ pub(crate) struct DetectedSpan {
 /// position, `O` at masked positions (inside an email or phone), an `I-X` that does not
 /// continue an `X` span read as `B-X`, and every span closed before a paragraph break. Spans
 /// longer than `MAX_ENTITY_TOKENS` are dropped.
-pub(crate) fn decode_detector(
+pub fn decode_detector(
     probs: &[f32],
     masked: &[bool],
     paragraph_break: &[bool],
@@ -96,7 +96,7 @@ pub(crate) fn decode_detector(
 }
 
 /// The first index of the largest value; NaN never wins.
-fn argmax(row: &[f32]) -> usize {
+pub fn argmax(row: &[f32]) -> usize {
     let mut best = (0, f32::NEG_INFINITY);
     for (i, &p) in row.iter().enumerate() {
         if p > best.1 {

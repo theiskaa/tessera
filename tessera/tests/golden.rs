@@ -1,7 +1,7 @@
 //! Golden-vector gate: the hand-written forward passes must reproduce the trainer's quantized
 //! outputs from `models/golden/parser/` and `models/golden/detector/`, natively and in the
-//! browser. Features, logits, and
-//! decoded labels are checked in that order because each fails for a different reason.
+//! browser. Features, logits, and decoded labels are checked in that order because each fails
+//! for a different reason.
 
 mod common;
 
