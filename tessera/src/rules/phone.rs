@@ -262,11 +262,15 @@ const DATES: [[u8; 3]; 6] = [
     [2, 2, 2],
 ];
 
+/// Hyphens and dashes numbers are written with: Japanese text often uses the minus sign, the
+/// fullwidth hyphen, or the long vowel mark (`03−5253−5111`, `03－5253－5111`, `03ー5253ー5111`).
+const DASHES: [char; 9] = [
+    '-', '\u{2010}', '\u{2012}', '\u{2013}', '\u{2014}', '\u{2015}', '\u{2212}', '\u{FF0D}',
+    '\u{30FC}',
+];
+
 fn is_sep(c: char) -> bool {
-    matches!(
-        c,
-        ' ' | '\u{A0}' | '-' | '\u{2010}' | '\u{2013}' | '.' | '/' | '(' | ')'
-    )
+    matches!(c, ' ' | '\u{A0}' | '.' | '/' | '(' | ')') || DASHES.contains(&c)
 }
 
 fn is_currency(c: char) -> bool {
@@ -688,7 +692,7 @@ fn is_slash_list(c: &Candidate) -> bool {
 /// 31.12.2026`: segments split at a dash that are each a time (`HH.MM`, `HHMM`) or a day and
 /// month with an optional year, or full dates split at spaces.
 fn is_time_or_date_range(c: &Candidate) -> bool {
-    let dash = |g: &str| g.contains(['-', '\u{2010}', '\u{2013}']);
+    let dash = |g: &str| g.contains(DASHES);
     let space = |g: &str| g.chars().all(char::is_whitespace);
     // Every shape below has groups of at most four digits, and all but `HHMM-HHMM` join some
     // of them with a point.
@@ -2019,6 +2023,25 @@ mod tests {
                 ("0300 200 3300".into(), "+443002003300".into())
             ]
         );
+    }
+
+    #[cfg(feature = "phone-metadata")]
+    #[test]
+    fn japanese_dashes_separate_groups() {
+        for text in [
+            "直通電話：03−5253−5533",
+            "TEL 03－5253－5533",
+            "電話 03ー5253ー5533",
+        ] {
+            let found = scan(text, &["JP"]);
+            assert_eq!(found.len(), 1, "{text}");
+            assert_eq!(
+                found[0].normalized.as_deref(),
+                Some("+81352535533"),
+                "{text}"
+            );
+        }
+        assert!(scan("10:00−12:00", &["JP"]).is_empty());
     }
 
     #[test]
