@@ -292,10 +292,11 @@ fn span_entity(
     {
         return None;
     }
+    let start = tokens[retained[first]].start;
     Some(Entity {
         kind,
-        start: tokens[retained[first]].start,
-        end: tokens[retained[last]].end,
+        start,
+        end: inside_last_token(text, start, tokens[retained[last]].end, kind),
         confidence,
         review_recommended: false,
         source: Source::Model,
@@ -303,6 +304,67 @@ fn span_entity(
         normalized: None,
         region: None,
     })
+}
+
+/// Roles that directories glue to a name with a hyphen (`Alice KUHNKE-Member`), which the
+/// tokenizer keeps in the name's token.
+const GLUED_ROLES: [&str; 22] = [
+    "Member",
+    "Substitute",
+    "Alternate",
+    "Observer",
+    "Chair",
+    "Chairman",
+    "Chairwoman",
+    "Chairperson",
+    "Vice-Chair",
+    "President",
+    "Vice-President",
+    "Governor",
+    "Director",
+    "Head",
+    "Deputy",
+    "Secretary",
+    "Adviser",
+    "Advisor",
+    "Officer",
+    "Coordinator",
+    "Assistant",
+    "Rapporteur",
+];
+
+/// The end of a span that the token grid cannot cut: a person's name stops before a role glued
+/// on with a hyphen, and a person or organization stops before a possessive `'s` (`the SEC's
+/// Office`). Only the last token can hold either.
+fn inside_last_token(text: &str, start: usize, end: usize, kind: Kind) -> usize {
+    let mut end = end;
+    if kind == Kind::Person {
+        let span = &text[start..end];
+        let glued = span.match_indices('-').find_map(|(i, _)| {
+            let rest = &span[i + 1..];
+            GLUED_ROLES
+                .iter()
+                .any(|role| {
+                    rest.strip_prefix(role)
+                        .is_some_and(|after| !after.starts_with(char::is_alphabetic))
+                })
+                .then_some(i)
+        });
+        if let Some(cut) = glued.filter(|&cut| cut > 0) {
+            end = start + cut;
+        }
+    }
+    if matches!(kind, Kind::Person | Kind::Org) {
+        for possessive in ["'s", "\u{2019}s"] {
+            if let Some(kept) = text[start..end].strip_suffix(possessive)
+                && !kept.is_empty()
+            {
+                end = start + kept.len();
+                break;
+            }
+        }
+    }
+    end
 }
 
 #[cfg(test)]
@@ -455,6 +517,17 @@ mod tests {
             (Kind::Person, "<Oliver Grant>", Some("Oliver Grant")),
             (Kind::Org, "Acme Ltd (", Some("Acme Ltd")),
             (Kind::Org, ") Acme Ltd", Some("Acme Ltd")),
+            (Kind::Person, "Alice KUHNKE-Member", Some("Alice KUHNKE")),
+            (Kind::Person, "Anna BERG-Vice-Chair", Some("Anna BERG")),
+            (
+                Kind::Person,
+                "Jean-Pierre Dubois",
+                Some("Jean-Pierre Dubois"),
+            ),
+            (Kind::Person, "Ana Headley-Smith", Some("Ana Headley-Smith")),
+            (Kind::Org, "the SEC's", Some("the SEC")),
+            (Kind::Org, "DVLA\u{2019}s", Some("DVLA")),
+            (Kind::Address, "Kings's Road", Some("Kings's Road")),
         ];
         for (kind, text, want) in cases {
             assert_eq!(trimmed(kind, text), want, "{text:?}");
