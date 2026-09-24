@@ -62,14 +62,25 @@ pub(crate) fn from_links(links: &[LinkTarget], country_hint: &[&str]) -> Vec<Ent
     out
 }
 
-/// Scanned entities plus link entities, sorted by start. A link entity wins over any scanned
-/// entity it overlaps: the destination is where a click goes.
+/// Scanned entities plus link entities, sorted by start and non-overlapping. A link entity wins
+/// over any scanned entity it overlaps, since the destination is where a click goes, and of two
+/// overlapping link entities the innermost wins.
 pub(crate) fn merge_links(mut scanned: Vec<Entity>, mut linked: Vec<Entity>) -> Vec<Entity> {
     if linked.is_empty() {
         return scanned;
     }
-    // Link texts never overlap, so sorted by start their ends ascend too, and the only link an
-    // entity can overlap first is the first one ending after the entity starts.
+    // pulldown-cmark nests an autolink inside a link's text, so link entities can overlap.
+    // The innermost is kept: it is the more specific destination. What remains is disjoint,
+    // so sorted by start the ends ascend too, and the only link an entity can overlap first
+    // is the first one ending after the entity starts.
+    linked.sort_by_key(|l| (l.end - l.start, l.start));
+    let mut kept: Vec<Entity> = Vec::with_capacity(linked.len());
+    for l in linked {
+        if !kept.iter().any(|k| l.start < k.end && k.start < l.end) {
+            kept.push(l);
+        }
+    }
+    let mut linked = kept;
     linked.sort_by_key(|l| l.start);
     scanned.retain(|e| {
         let i = linked.partition_point(|l| l.end <= e.start);
@@ -219,6 +230,32 @@ mod link_tests {
         assert_eq!(
             merged.iter().map(|e| (e.start, e.end)).collect::<Vec<_>>(),
             [(0, 5), (5, 9), (25, 35), (40, 45)]
+        );
+    }
+
+    #[test]
+    fn a_link_nested_in_a_link_keeps_the_inner_one() {
+        let scanned = vec![
+            email_at(11, 22, "x@y.example"),
+            email_at(24, 37, "ops@z.example"),
+        ];
+        let linked = from_links(
+            &[
+                link("mailto:x@y.example", 4, 22),
+                link("mailto:w@z.example", 1, 37),
+            ],
+            &[],
+        );
+        let merged = merge_links(scanned, linked);
+        assert_eq!(
+            merged
+                .iter()
+                .map(|e| (e.start, e.end, e.normalized.as_deref()))
+                .collect::<Vec<_>>(),
+            [
+                (4, 22, Some("x@y.example")),
+                (24, 37, Some("ops@z.example"))
+            ]
         );
     }
 

@@ -333,10 +333,13 @@ impl Iterator for Segments<'_> {
 }
 
 /// Pieces of about [`SEGMENT_BYTES`], parsed lazily after one planning pass over bounded
-/// windows. A top-level block longer than a piece, such as a long table or a paragraph without
-/// blank lines, is kept whole, so memory is bounded by the larger of the two. Joined in order
-/// with `skip` re-sorted, the selections equal [`select`] on the whole document, except that a
-/// label defined twice in different pieces resolves to the definition in its own piece.
+/// windows. Cuts fall only between top-level blocks after a blank line, so a block longer than
+/// a piece (a long table, a paragraph without blank lines) or a run with no blocks at all (only
+/// reference definitions) is kept whole, and memory is bounded by the larger of the two.
+/// Joined in order with `skip` re-sorted, the selections equal [`select`] on the whole
+/// document, with two exceptions: a label defined twice in different pieces resolves to the
+/// definition in its own piece, and `[^x]` whose footnote definition lies in another piece is
+/// plain text in its piece, which can turn link text holding it back into a link.
 pub fn segments<'a>(text: &'a str, options: &'a MarkdownOptions) -> Segments<'a> {
     segments_with(text, options, SEGMENT_BYTES)
 }

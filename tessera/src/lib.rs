@@ -624,9 +624,9 @@ impl Tessera {
     /// Runs [`Tessera::detect`] with the same query, format included, then the deterministic
     /// grouper. A contact's confidence is the minimum over its anchor and its assignments;
     /// contacts below the medium band are dissolved into `unassigned` unless
-    /// `query.include_uncertain` is set. A wrong assignment is treated as worse than an unassigned entity, so ties go to
-    /// `unassigned`. An instance without people or organizations has no anchors: its contacts
-    /// are empty and every entity is unassigned.
+    /// `query.include_uncertain` is set. A wrong assignment is treated as worse than an
+    /// unassigned entity, so ties go to `unassigned`. An instance without people or
+    /// organizations has no anchors: its contacts are empty and every entity is unassigned.
     pub fn extract_contacts(&self, text: &str, query: &Query<'_>) -> Result<Extraction, Error> {
         let entities = self.detect(text, query)?;
         let grouped = group::group(text, entities);
