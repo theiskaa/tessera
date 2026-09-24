@@ -10,6 +10,8 @@ mod chunk;
 mod detect;
 mod features;
 mod group;
+#[cfg(feature = "markdown")]
+pub mod markdown;
 mod model;
 mod policy;
 mod rules;
@@ -423,6 +425,28 @@ pub struct Query<'a> {
     /// thresholds still apply first, so a person or organization it scores below them is never
     /// returned; an address the parser cannot split is kept as uncertain.
     pub include_uncertain: bool,
+}
+
+/// How Markdown input is selected for scanning.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MarkdownOptions {
+    /// Scan fenced, indented, and inline code. Off by default: code is where
+    /// example addresses and placeholder emails live.
+    pub include_code: bool,
+    /// Scan raw HTML blocks and inline HTML as text. Off by default.
+    pub include_html: bool,
+    /// Parse GFM tables so each cell is its own scannable range. On by default.
+    pub gfm_tables: bool,
+}
+
+impl Default for MarkdownOptions {
+    fn default() -> Self {
+        MarkdownOptions {
+            include_code: false,
+            include_html: false,
+            gfm_tables: true,
+        }
+    }
 }
 
 /// A loaded extractor. Immutable after load; one instance serves many calls and threads.
