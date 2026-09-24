@@ -231,6 +231,13 @@ pub const TEMPLATES: &[Local] = &[
         "{org#1}御中\n\n請求書番号 {neg_order}\n請求金額 {neg_price}\nお支払期限 {neg_date}\n\n{org#2}\n〒{address#3}\n担当：{person_last#4}",
     ),
     (
+        Prose,
+        68,
+        NoPers,
+        JP,
+        "{org_gov#1}は、{org#2}（{address#3}。{neg_register_no}。以下「{org#2}」という。）に対し、{sentence_local}\n\n会場：{org#4} ({address#5} )\n{sentence_local}",
+    ),
+    (
         Letterhead,
         360,
         Both,
@@ -299,6 +306,20 @@ pub const TEMPLATES: &[Local] = &[
         Both,
         DE,
         "{org#1}\n{address_ml#2}\n\nRechnung {neg_order} vom {neg_date}\n{product} {neg_price}\nGesamtbetrag {neg_price}\n\nBei Fragen: {person#3}, {phone#3}",
+    ),
+    (
+        Letterhead,
+        391,
+        Both,
+        DE,
+        "{org_gov#1}\n{address#2}\n\n{person_directory#3}\n\n{person_directory#4}\n\n{person_directory#5}\n\n{person_directory#6}",
+    ),
+    (
+        Letterhead,
+        392,
+        NoAddr,
+        DE,
+        "{role_heading}\n{person#1} (Ltg.)\n{person#2}\n{person#3} (stellv. Ltg.)\n\n{role_heading}\n{person#4} (abw.), {person#5}, {person#6}\n\nFoto: {person#7} / {org#8}",
     ),
     (
         Letterhead,

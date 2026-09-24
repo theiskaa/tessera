@@ -122,6 +122,9 @@ pub enum Slot {
     PersonFirst,
     PersonLast,
     PersonNative,
+    /// A directory line's name, surname in capitals, with its role glued on by a hyphen and
+    /// outside the span: `Joachim NAGEL-President`.
+    PersonDirectory,
     PersonList,
     PersonEponymous,
     Org,
@@ -187,9 +190,8 @@ impl Slot {
     pub fn kind(self) -> Option<Kind> {
         use Slot::*;
         match self {
-            Person | PersonFirst | PersonLast | PersonNative | PersonList | PersonEponymous => {
-                Some(Kind::Person)
-            }
+            Person | PersonFirst | PersonLast | PersonNative | PersonDirectory | PersonList
+            | PersonEponymous => Some(Kind::Person),
             Org | OrgEponymous | OrgSchool | OrgGov | OrgAcronym | OrgUnit | OrgRegistry
             | OrgChain | OrgUniv | OrgCouncil | OrgParty | OrgList => Some(Kind::Org),
             Address | AddressMultiline | AddressPersonStreet => Some(Kind::Address),
@@ -206,6 +208,7 @@ impl Slot {
             "person_first" => PersonFirst,
             "person_last" => PersonLast,
             "person_native" => PersonNative,
+            "person_directory" => PersonDirectory,
             "person_list" => PersonList,
             "person_eponymous" => PersonEponymous,
             "org" => Org,
@@ -466,6 +469,8 @@ impl<'a> Ctx<'a> {
                 }
                 let value = if self.plain || !p.latin() {
                     p.name
+                } else if matches!(self.country, "DE" | "GB" | "US") && rng.random_bool(0.06) {
+                    self.hyphenated(&p.name, rng)
                 } else {
                     capitalized(&p.name, rng)
                 };
@@ -508,6 +513,21 @@ impl<'a> Ctx<'a> {
                     }
                 };
                 Filled::plain(family_name(&p))
+            }
+            Slot::PersonDirectory => {
+                let p = self.person(rng)?;
+                let value = match p.name.split_once(' ') {
+                    Some((given, surname)) if p.latin() => {
+                        format!("{given} {}", surname.to_uppercase())
+                    }
+                    _ => p.name.clone(),
+                };
+                Filled {
+                    value,
+                    prefix: Some(*pick(&["Mr", "Ms", "Mrs", "Dr"], rng)),
+                    suffix: Some(*pick(GLUED_ROLES, rng)),
+                    fixture_safe: true,
+                }
             }
             Slot::PersonNative => {
                 let p = self.native_person(0.7, rng)?;
@@ -702,6 +722,32 @@ impl<'a> Ctx<'a> {
         }
     }
 
+    /// `name` with a second given name or surname joined by a hyphen, drawn from another
+    /// Latin name of the pool: `Jens-Uwe Walther`, `Florian Zick-Mayer`.
+    fn hyphenated(&self, name: &str, rng: &mut ChaCha8Rng) -> String {
+        let other = self
+            .pools
+            .people
+            .iter()
+            .filter(|p| p.latin() && p.name != name)
+            .collect::<Vec<_>>()
+            .choose(rng)
+            .and_then(|p| p.name.split_once(' '));
+        match (name.split_once(' '), other) {
+            (Some((given, rest)), Some((other_given, _))) if rng.random_bool(0.5) => {
+                format!("{given}-{other_given} {rest}")
+            }
+            (Some(_), Some((_, other_surname))) => {
+                let last = other_surname
+                    .split(' ')
+                    .next_back()
+                    .unwrap_or(other_surname);
+                format!("{name}-{last}")
+            }
+            _ => name.to_string(),
+        }
+    }
+
     fn person(&self, rng: &mut ChaCha8Rng) -> anyhow::Result<PoolPerson> {
         self.pools
             .people
@@ -780,6 +826,14 @@ impl<'a> Ctx<'a> {
                 }
                 if rng.random_bool(0.1) {
                     address = with_number_range(&address, rng);
+                }
+            }
+            // Office pages print the postcode on a line of its own above the rest.
+            "JP" if rng.random_bool(0.3) => {
+                if let Some((code, rest)) = address.split_once(' ')
+                    && code.chars().filter(char::is_ascii_digit).count() == 7
+                {
+                    address = format!("{code}\n{rest}");
                 }
             }
             _ => {}
@@ -944,6 +998,20 @@ fn capitalized(name: &str, rng: &mut ChaCha8Rng) -> String {
         _ => name.to_string(),
     }
 }
+
+/// Roles directories glue to a name with a hyphen, as the EU Whoiswho writes them.
+const GLUED_ROLES: &[&str] = &[
+    "-Member",
+    "-Delegate",
+    "-Substitute",
+    "-President",
+    "-Vice-President",
+    "-Governor",
+    "-Chair",
+    "-Head of Unit",
+    "-Director",
+    "-Adviser",
+];
 
 /// A building or site line: `Marine House`, `The Law Courts`, `Riverside Campus`.
 fn building_name(rng: &mut ChaCha8Rng) -> String {
@@ -1800,6 +1868,7 @@ fn load_pools(
             if e.augmented
                 || pool_filter::hydrant(&e.text)
                 || (e.country == "GE" && pool_filter::unusable_ge_address(&e))
+                || (e.country == "JP" && pool_filter::unusable_jp_address(&e.text))
             {
                 continue;
             }

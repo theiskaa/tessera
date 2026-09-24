@@ -326,6 +326,26 @@ pub fn unusable_ge_address(e: &LabelledExample) -> bool {
     OCCUPIED.iter().any(|p| places.contains(p)) || cyrillic_part || e.text.contains("??")
 }
 
+/// A Japanese address row the pools leave out: one carrying a phone number (`0745-73-1138`)
+/// or a romanized word inside its Japanese text (`Nara Prefecture 三郷町…`), which the source
+/// sometimes merges into one field.
+pub fn unusable_jp_address(text: &str) -> bool {
+    let japanese = text.chars().any(|c| ('\u{3040}'..='\u{9fff}').contains(&c));
+    let latin_word = text
+        .split(|c: char| !c.is_ascii_alphabetic())
+        .any(|w| w.len() >= 4);
+    let phone = text
+        .split(|c: char| !(c.is_ascii_digit() || c == '-'))
+        .any(|run| {
+            let groups: Vec<&str> = run.split('-').collect();
+            groups.len() == 3
+                && groups.iter().all(|g| !g.is_empty())
+                && groups[0].starts_with('0')
+                && groups.iter().map(|g| g.len()).sum::<usize>() >= 9
+        });
+    phone || (japanese && latin_word)
+}
+
 /// Map rows about a fire hydrant or water tank rather than a place anyone writes to.
 pub fn hydrant(text: &str) -> bool {
     let lower = text.to_lowercase();
@@ -458,6 +478,17 @@ pub fn without_article(name: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn japanese_rows_with_phones_or_romanized_words_are_left_out() {
+        assert!(unusable_jp_address(
+            "636-0822 Nara Prefecture 三郷町立野南1-29-1 0745-73-1138号"
+        ));
+        assert!(unusable_jp_address("三郷町立野南1-29-1 0745-73-1138"));
+        assert!(!unusable_jp_address("100-8926 東京都千代田区霞が関2-1-2"));
+        assert!(!unusable_jp_address("北海道札幌市北区北8条西2-1-1"));
+        assert!(!unusable_jp_address("1-1 Marunouchi, Chiyoda-ku, Tokyo"));
+    }
 
     #[test]
     fn private_arrangements_and_their_institutional_look_alikes() {
