@@ -14,7 +14,9 @@ pass<P>/slice-NN.json:
 
     {"<doc id>": [{"kind": "person|org|address", "text": "exact text"}, ...], ...}
 
-listing every distinct entity string once. A checking pass reads pass<P>-view/slice-NN.md
+listing every distinct entity string once. An entry may add `"within": "longer text"` to label
+the string only inside occurrences of that context, as a one- or two-character Japanese name
+must (`{"kind": "person", "text": "中", "within": "中 国際食料情報特別分析官"}`). A checking pass reads pass<P>-view/slice-NN.md
 (the documents with the labels inline) and writes pass<P+1>/slice-NN.json in the same shape,
 the full corrected list. `apply` turns a pass into byte spans: every occurrence of each string
 that is not glued to a word, longest strings first, never overlapping. It reports strings it
@@ -40,17 +42,19 @@ SOURCES = {
 # Collected documents, one JSON file each (internal/bench/review/fetch_sites.py).
 COLLECTED = {
     **{s: (f"data/raw/review/{s}/*.json", s[:2].upper())
-       for s in ("jp-soumu", "jp-maff", "jp-caa", "ge-economy", "ge-civil", "ge-tsu", "ge-contacts")},
+       for s in ("jp-soumu", "jp-maff", "jp-caa", "ge-economy", "ge-civil", "ge-tsu", "ge-contacts",
+                 "de-berlin", "de-impressum", "gb-contacts")},
     **{s: (f"data/raw/silver/{s}/*.json", s[:2].upper())
        for s in ("jp-env", "ge-mepa", "ge-tbilisi", "ge-parliament")},
 }
-# Round 1 and 3 are silver (training) rounds, round 2 the GE and JP evaluation sets; a count of
-# None takes every document of the source.
+# Rounds 1 and 3 are silver (training) rounds; round 2 is the GE and JP evaluation set and round
+# 4 the DE and GB additions to the review set. A count of None takes every document of the source.
 PLAN = {
     1: {"federal-register": 150, "govuk": 150},
     2: {s: None for s in ("jp-soumu", "jp-maff", "jp-caa", "ge-economy", "ge-civil", "ge-tsu",
                           "ge-contacts")},
     3: {s: None for s in ("jp-env", "ge-mepa", "ge-tbilisi", "ge-parliament")},
+    4: {s: None for s in ("de-berlin", "de-impressum", "gb-contacts")},
 }
 CONTACT = re.compile(r"@|\b\d{3}[-. ]\d{3}[-. ]\d{4}\b|\b0\d{2,4} ?\d{3} ?\d{3,4}\b|\b(Street|Avenue|Road|Room|Suite)\b")
 
@@ -115,46 +119,94 @@ def slices(round_no):
     print(f"{(len(docs) + PER_SLICE - 1) // PER_SLICE} slices in {root(round_no)}")
 
 
+def script(ch):
+    o = ord(ch)
+    if 0x4E00 <= o <= 0x9FFF or 0x3400 <= o <= 0x4DBF or ch in "々〆〇":
+        return "han"
+    if 0x3040 <= o <= 0x309F:
+        return "hiragana"
+    if 0x30A0 <= o <= 0x30FF or 0xFF66 <= o <= 0xFF9D:
+        return "katakana"
+    return "word"
+
+
+def joins(a, b):
+    """Whether two adjacent letters are one token to the tokenizer: every Han character is a
+    token of its own, and a kana run ends where the script changes (`消費者庁が`)."""
+    if not (a.isalnum() and b.isalnum()):
+        return False
+    sa, sb = script(a), script(b)
+    return sa == sb and sa != "han"
+
+
 def glued(b, at, end):
     """Whether bytes `at..end` of `b` continue a word, an identifier, or an address on
     either side: `NRC` in `NRC-2025-0012`, `Smith` in `jsmith@x.gov`. A slash separates
     names (`DOL-OWCP/DFEC` is one org per segment), so it does not glue."""
     before = b[:at].decode("utf-8", "ignore")[-2:]
     after = b[end:].decode("utf-8", "ignore")[:2]
-    if before and before[-1].isalnum():
+    value = b[at:end].decode("utf-8")
+    if before and joins(before[-1], value[0]):
         return True
-    if after and after[0].isalnum():
+    if after and joins(value[-1], after[0]):
         return True
-    if len(before) == 2 and before[-1] in "-@._" and before[0].isalnum():
+    if len(before) == 2 and before[-1] in "-@._" and before[0].isalnum() and value[0].isalnum():
         return True
-    if len(after) == 2 and after[0] in "-@_" and after[1].isalnum():
+    if len(after) == 2 and after[0] in "-@_" and after[1].isalnum() and value[-1].isalnum():
         return True
     return False
 
 
+def occurrences(b, e):
+    """Byte offsets of the entity's text in `b`; with `within`, only its first place inside
+    each occurrence of that longer context string."""
+    v = e["text"].encode("utf-8")
+    if e.get("within"):
+        w = e["within"].encode("utf-8")
+        inner = w.find(v)
+        if inner < 0:
+            return []
+        at, out = b.find(w), []
+        while at >= 0:
+            out.append(at + inner)
+            at = b.find(w, at + 1)
+        return out
+    at, out = b.find(v), []
+    while at >= 0:
+        out.append(at)
+        at = b.find(v, at + 1)
+    return out
+
+
+def short_cjk(text):
+    return len(text) <= 2 and all(script(c) != "word" for c in text)
+
+
 def spans(text, entities):
-    """Byte spans for `entities` (kind, text), every free occurrence, longest first."""
+    """Byte spans for `entities` (kind, text, optional within), every free occurrence,
+    longest first. Returns the spans, the entities not found, and short CJK strings without
+    `within` that matched more than once, which usually label unrelated characters."""
     b = text.encode("utf-8")
     taken = []
     out = []
     missing = []
+    risky = []
     for e in sorted(entities, key=lambda e: -len(e["text"].encode("utf-8"))):
         v = e["text"].encode("utf-8")
         if not v.strip():
             continue
-        found = False
-        at = b.find(v)
-        while at >= 0:
+        places = occurrences(b, e)
+        if not places:
+            missing.append(e)
+        if short_cjk(e["text"]) and not e.get("within") and len(places) > 1:
+            risky.append(e)
+        for at in places:
             end = at + len(v)
-            found = True
             if not glued(b, at, end) and not any(at < te and ts < end for ts, te in taken):
                 taken.append((at, end))
                 out.append({"kind": e["kind"], "start": at, "end": end})
-            at = b.find(v, at + 1)
-        if not found:
-            missing.append(e)
     out.sort(key=lambda s: s["start"])
-    return out, missing
+    return out, missing, risky
 
 
 def read_pass(round_no, pass_no):
@@ -195,11 +247,14 @@ def apply(round_no, pass_no):
             if d["id"] not in labels:
                 problems.append(f"slice {idx:02d}: {d['id']} has no labels")
                 continue
-            doc_spans, missing = spans(d["text"], labels[d["id"]])
+            doc_spans, missing, risky = spans(d["text"], labels[d["id"]])
             for s in doc_spans:
                 counts[s["kind"]] += 1
             for m in missing:
                 problems.append(f"{d['id']}: not found: {m['kind']} {m['text']!r}")
+            for m in risky:
+                problems.append(f"{d['id']}: short CJK string matches several places, give "
+                                f"`within`: {m['kind']} {m['text']!r}")
             listed = "\n".join(f"- {e['kind']}: `{e['text']}`" for e in labels[d["id"]]) or "- (none)"
             md.append(f"\n## Document `{d['id']}` ({d['source']}, {d['country']})\n\n"
                       f"```text\n{render(d['text'], doc_spans)}\n```\n\nPass {pass_no} list:\n\n{listed}\n")
@@ -218,7 +273,7 @@ def gold(round_no, pass_no):
             problems.append(f"{d['id']} has no labels")
             continue
         b = d["text"].encode("utf-8")
-        doc_spans, _ = spans(d["text"], labels[d["id"]])
+        doc_spans, _, _ = spans(d["text"], labels[d["id"]])
         rows.append({"name": d["id"], "input": d["text"], "country": d["country"],
                      "doc_type": d.get("doc_type", ""),
                      "expected": [s | {"text": b[s["start"]:s["end"]].decode("utf-8")} for s in doc_spans]})
@@ -236,7 +291,7 @@ def export(round_no, pass_no):
     for d in docs:
         if d["id"] not in labels:
             continue
-        doc_spans, _ = spans(d["text"], labels[d["id"]])
+        doc_spans, _, _ = spans(d["text"], labels[d["id"]])
         rows.append({"id": d["id"], "source": d["source"], "country": d["country"], "text": d["text"],
                      "entities": doc_spans})
     out = root(round_no) / "train.jsonl"
