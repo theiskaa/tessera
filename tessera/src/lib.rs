@@ -521,18 +521,21 @@ impl Tessera {
     /// components and kept only if the parser finds at least two distinct labels in it, unless
     /// `include_uncertain`, which keeps it as uncertain.
     pub fn detect(&self, text: &str, query: &Query<'_>) -> Result<Vec<Entity>, Error> {
-        self.detect_masked(text, query, None)
+        self.detect_masked(text, query, None, Vec::new())
     }
 
-    /// `detect` where only the bytes in `mask` may hold entities; `None` is plain text.
+    /// `detect` where only the bytes in `mask` may hold entities (`None` is plain text), with
+    /// `linked` rule entities from link destinations winning over scanned ones they overlap.
     pub(crate) fn detect_masked(
         &self,
         text: &str,
         query: &Query<'_>,
         mask: Option<&chunk::Mask>,
+        linked: Vec<Entity>,
     ) -> Result<Vec<Entity>, Error> {
-        let mut rule_entities = rules::scan(text, query.country_hint);
-        rules::retain_in_mask(&mut rule_entities, mask);
+        let mut scanned = rules::scan(text, query.country_hint);
+        rules::retain_in_mask(&mut scanned, mask);
+        let rule_entities = rules::merge_links(scanned, linked);
         let mut out: Vec<Entity> = rule_entities
             .iter()
             .filter(|e| self.kinds.contains(e.kind))

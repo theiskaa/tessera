@@ -893,6 +893,17 @@ pub fn scan(text: &str, country_hint: &[&str]) -> Vec<Entity> {
     out
 }
 
+/// `candidate` as one phone number, as the scanner would read it in running text: the entity
+/// when the scan finds exactly one and it covers the whole string.
+#[cfg(feature = "markdown")]
+pub(crate) fn whole(candidate: &str, country_hint: &[&str]) -> Option<Entity> {
+    let mut found = scan(candidate, country_hint);
+    match found.as_slice() {
+        [only] if only.start == 0 && only.end == candidate.len() => found.pop(),
+        _ => None,
+    }
+}
+
 /// Confidence, E.164 form, and region of a validated candidate.
 type Validated = (f32, String, Option<String>);
 
