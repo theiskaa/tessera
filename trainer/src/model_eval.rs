@@ -354,15 +354,13 @@ fn shipped_spans(
         .collect()
 }
 
-/// `trainer eval --addresses`: the bundle's `parse_address` on reviewed real addresses, parser
-/// fixture files in `dir`, scored per country and label. With `report`, every address whose
-/// parse is not exact is written there as JSON lines for error analysis.
-pub fn run_addresses(dir: &Path, bundle: &Path, report: Option<&Path>) -> anyhow::Result<()> {
-    let bytes = std::fs::read(bundle).with_context(|| format!("reading {}", bundle.display()))?;
+/// Reviewed real addresses in parser fixture files in `dir`, with their case names.
+fn address_examples(dir: &Path) -> anyhow::Result<(Vec<String>, Vec<LabelledExample>)> {
     let fixtures: Vec<(String, crate::fixtures::ParserFixture)> = crate::fixtures::load_dir(dir)?;
-    let examples = fixtures
+    let cases: Vec<&crate::fixtures::ParserCase> =
+        fixtures.iter().flat_map(|(_, f)| &f.cases).collect();
+    let examples = cases
         .iter()
-        .flat_map(|(_, f)| &f.cases)
         .enumerate()
         .map(|(i, case)| {
             let spans = case
@@ -389,9 +387,63 @@ pub fn run_addresses(dir: &Path, bundle: &Path, report: Option<&Path>) -> anyhow
             })
         })
         .collect::<anyhow::Result<Vec<LabelledExample>>>()?;
+    Ok((cases.iter().map(|c| c.name.clone()).collect(), examples))
+}
+
+/// `trainer eval --addresses`: the bundle's `parse_address` on reviewed real addresses, parser
+/// fixture files in `dir`, scored per country and label. With `report`, every address whose
+/// parse is not exact is written there as JSON lines for error analysis.
+pub fn run_addresses(dir: &Path, bundle: &Path, report: Option<&Path>) -> anyhow::Result<()> {
+    let bytes = std::fs::read(bundle).with_context(|| format!("reading {}", bundle.display()))?;
+    let (names, examples) = address_examples(dir)?;
     let refs: Vec<&LabelledExample> = examples.iter().collect();
     let preds = shipped_spans(&bytes, None, &refs)?;
-    let scores = score(&refs, &preds);
+    report_addresses(&names, &examples, &preds, report)
+}
+
+/// `trainer eval --addresses --run`: a parser run's best checkpoint on the same addresses,
+/// without the library's confidence policy, so a parser can be compared before a detector is
+/// trained on its n-gram table. An address the run cannot encode counts as parsed wrong.
+pub fn run_addresses_model<B: Backend>(
+    dir: &Path,
+    run_dir: &Path,
+    report: Option<&Path>,
+    device: &B::Device,
+) -> anyhow::Result<()> {
+    let cfg = crate::config::load(&run_dir.join("config.toml"))?;
+    let fc = cfg.features.to_tessera();
+    let (names, examples) = address_examples(dir)?;
+    let (kept, items) = encode_examples(&examples, &fc);
+    let model: TaggerNet<B> = cfg
+        .parser_net_config()
+        .init::<B>(device)
+        .load_file(
+            run_dir.join("best"),
+            &NamedMpkFileRecorder::<FullPrecisionSettings>::new(),
+            device,
+        )
+        .with_context(|| format!("loading {}", run_dir.join("best.mpk").display()))?;
+    let predicted = predict(&model, &items, cfg.train.batch_size, device);
+    let mut by_id: BTreeMap<u64, Vec<Span>> = kept
+        .iter()
+        .zip(predicted)
+        .map(|(ex, p)| (ex.id, p.into_iter().map(|(s, _)| s).collect()))
+        .collect();
+    let preds: Vec<Vec<Span>> = examples
+        .iter()
+        .map(|ex| by_id.remove(&ex.id).unwrap_or_default())
+        .collect();
+    report_addresses(&names, &examples, &preds, report)
+}
+
+fn report_addresses(
+    names: &[String],
+    examples: &[LabelledExample],
+    preds: &[Vec<Span>],
+    report: Option<&Path>,
+) -> anyhow::Result<()> {
+    let refs: Vec<&LabelledExample> = examples.iter().collect();
+    let scores = score(&refs, preds);
 
     println!(
         "{:<8} {:>6} {:>8} {:>8}",
@@ -421,9 +473,8 @@ pub fn run_addresses(dir: &Path, bundle: &Path, report: Option<&Path>) -> anyhow
     }
 
     if let Some(path) = report {
-        let names = fixtures.iter().flat_map(|(_, f)| &f.cases).map(|c| &c.name);
         let mut out = String::new();
-        for ((ex, pred), name) in examples.iter().zip(&preds).zip(names) {
+        for ((ex, pred), name) in examples.iter().zip(preds).zip(names) {
             if *pred == ex.spans {
                 continue;
             }

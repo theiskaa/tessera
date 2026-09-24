@@ -115,7 +115,26 @@ pub fn run(args: EvalArgs) -> anyhow::Result<()> {
         return crate::group_eval::run(&args, dir);
     }
     if let Some(dir) = &args.addresses {
-        return crate::model_eval::run_addresses(dir, &args.bundle, args.report.as_deref());
+        let report = args.report.as_deref();
+        return match (&args.run, args.backend) {
+            (None, _) => crate::model_eval::run_addresses(dir, &args.bundle, report),
+            (Some(run), crate::train::BackendKind::Wgpu) => {
+                crate::model_eval::run_addresses_model::<burn::backend::Wgpu>(
+                    dir,
+                    run,
+                    report,
+                    &Default::default(),
+                )
+            }
+            (Some(run), crate::train::BackendKind::Ndarray) => {
+                crate::model_eval::run_addresses_model::<burn::backend::NdArray>(
+                    dir,
+                    run,
+                    report,
+                    &Default::default(),
+                )
+            }
+        };
     }
     if args.gold.is_some() {
         return crate::detect_eval::run_gold(&args);
