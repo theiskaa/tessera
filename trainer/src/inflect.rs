@@ -1,7 +1,6 @@
 //! Word forms a template slot can ask for: Georgian case endings, which are glued to the last
 //! word of a name and stay inside its span (`თამარ იოსელიანმა`, `შემოსავლების სამსახურის`),
-//! and the English possessive, which stays in the span only where the tokenizer keeps it in the
-//! name's last token (`HMRC’s`).
+//! and the English possessive, which follows the span (`HMRC` then `’s`).
 
 use rand::Rng;
 use rand_chacha::ChaCha8Rng;
@@ -54,8 +53,7 @@ const QUOTES: [char; 4] = ['"', '“', '”', '»'];
 /// noun declines with it (`საქართველოს ეროვნულმა ბანკმა`); `person` tells a proper name,
 /// whose genitive keeps its final `-ა` (`ლუკას`), from a common noun (`მერია` → `მერიის`).
 ///
-/// The English possessive is part of the span only where the tokenizer keeps it in the name's
-/// last token, after a Latin letter; elsewhere it follows the span.
+/// The English possessive, a token of its own, always follows the span.
 pub fn apply(
     value: &str,
     form: Form,
@@ -66,15 +64,7 @@ pub fn apply(
         Form::Plain => (value.to_string(), None),
         Form::Poss => {
             let suffix = if rng.random_bool(0.5) { "’s" } else { "'s" };
-            if value
-                .chars()
-                .last()
-                .is_some_and(|c| c.is_ascii_alphabetic())
-            {
-                (format!("{value}{suffix}"), None)
-            } else {
-                (value.to_string(), Some(suffix))
-            }
+            (value.to_string(), Some(suffix))
         }
         _ => (georgian_form(value, form, person), None),
     }
@@ -241,8 +231,8 @@ mod tests {
         let mut rng = ChaCha8Rng::seed_from_u64(1);
         for _ in 0..20 {
             let (p, outside) = apply("HMRC", Form::Poss, false, &mut rng);
-            assert!(p == "HMRC's" || p == "HMRC’s", "{p}");
-            assert_eq!(outside, None);
+            assert_eq!(p, "HMRC");
+            assert!(outside == Some("'s") || outside == Some("’s"));
         }
         let (p, outside) = apply("ანთაძე", Form::Poss, true, &mut rng);
         assert_eq!(p, "ანთაძე");
