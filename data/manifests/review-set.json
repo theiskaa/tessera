@@ -1,0 +1,71 @@
+{
+  "name": "review-set",
+  "gold": "data/interim/review/gold.jsonl",
+  "sha256": "557487a12fb45499d1f60da929b22717f38a2072eb4660ce5a558815437ef237",
+  "documents": 350,
+  "documents_by_source": {
+    "eu-whoiswho": 100,
+    "federal-register": 100,
+    "govuk-contact": 50,
+    "lkml": 100
+  },
+  "documents_by_country": {
+    "AT": 4,
+    "BE": 50,
+    "BG": 1,
+    "BR": 1,
+    "CG": 1,
+    "CL": 1,
+    "CN": 1,
+    "CZ": 2,
+    "DE": 38,
+    "ES": 1,
+    "EU": 4,
+    "FI": 1,
+    "FR": 12,
+    "GB": 53,
+    "GR": 1,
+    "HR": 1,
+    "HU": 1,
+    "IE": 1,
+    "IN": 2,
+    "IT": 2,
+    "KE": 1,
+    "KR": 3,
+    "LU": 13,
+    "LV": 1,
+    "NL": 3,
+    "PL": 1,
+    "PT": 1,
+    "SI": 1,
+    "SK": 3,
+    "TR": 1,
+    "US": 101,
+    "unknown": 43
+  },
+  "entities_by_kind": {
+    "address": 299,
+    "email": 384,
+    "org": 2161,
+    "person": 2530,
+    "phone": 1000
+  },
+  "sheet_verdicts": {
+    "correct": 1614,
+    "missing": 2223,
+    "not_entity": 3944,
+    "wrong_boundary": 2428,
+    "wrong_kind": 111
+  },
+  "licences": {
+    "eu-whoiswho": "© European Union, reuse under the Commission's reuse policy (CC BY 4.0)",
+    "federal-register": "US government work, public domain",
+    "govuk-contact": "Open Government Licence v3.0",
+    "lkml": "publicly archived mailing list posts, evaluation use only, never redistributed"
+  },
+  "reviewed_by": "model",
+  "reviewed_on": [
+    "2026-09-24"
+  ],
+  "note": "Real documents; the gold file and the documents stay out of the repository."
+}

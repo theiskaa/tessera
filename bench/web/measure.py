@@ -1,7 +1,8 @@
 """Measures the built npm package in tessera/pkg in Chrome, Firefox and Safari through WebDriver:
-compressed file sizes, cold createTessera time, warm parseAddress and detect latency, and, in
-Chrome, the memory the page gains. Every browser configuration runs with the SIMD wasm and with
-the baseline, with the worker off and on. Prints markdown tables. Run from the repository root
+compressed file sizes, cold createTessera time, warm parseAddress and detect latency (rules only,
+and with the model on a 10,000-character document), and, in Chrome, the memory the page gains.
+Every browser configuration runs with the SIMD wasm and with the baseline, with the worker off
+and on. Prints markdown tables. Run from the repository root
 after `just wasm`:
 
     python3 bench/web/measure.py [chrome] [firefox] [safari] [--json out.json]
@@ -39,6 +40,9 @@ SHIPPED = ["tessera.js", "index.js", "worker.js", "tessera_simd_bg.wasm", "tesse
 COLD_RUNS = 10
 # Warm calls cycle through the fixture addresses this many times, so each weighs the same.
 WARM_PASSES = 3
+# Model-backed detect runs on one document of this many characters, this many times.
+LONG_CHARS = 10_000
+MODEL_RUNS = 20
 CONFIGS = [(variant, worker) for variant in ("simd", "baseline") for worker in ("off", "on")]
 
 requested = []
@@ -226,7 +230,7 @@ def run_browser(name, url, base_cfg):
     if not command[0]:
         raise RuntimeError(f"no driver found for {name}")
     driver = Driver(name, command, port, caps)
-    out = {"version": driver.version, "cold": {}, "cold_process": {}, "parse": {}, "detect": {}}
+    out = {"version": driver.version, "cold": {}, "cold_process": {}, "parse": {}, "detect": {}, "detect_model": {}}
     try:
         # Round robin, so drift spreads evenly across configurations. "cold" loads a new document
         # in the same browser process; "cold_process" starts a new session first, so nothing the
@@ -239,7 +243,7 @@ def run_browser(name, url, base_cfg):
                     cfg = {**base_cfg, "mode": "cold", "baseline": variant == "baseline", "worker": worker == "on", "memory": False}
                     r = driver.measure(url, cfg)
                     out["cold_process" if fresh else "cold"].setdefault(f"{variant} {worker}", []).append(r)
-        for mode in ("parse", "detect"):
+        for mode in ("parse", "detect", "detect_model"):
             for variant, worker in CONFIGS:
                 cfg = {**base_cfg, "mode": mode, "baseline": variant == "baseline", "worker": worker == "on", "memory": True}
                 out[mode][f"{variant} {worker}"] = driver.measure(url, cfg)
@@ -251,7 +255,7 @@ def run_browser(name, url, base_cfg):
 def check(results):
     problems = []
     for name, r in results.items():
-        for mode in ("cold", "cold_process", "parse", "detect"):
+        for mode in ("cold", "cold_process", "parse", "detect", "detect_model"):
             for key, runs in r[mode].items():
                 for run in runs if isinstance(runs, list) else [runs]:
                     variant, worker = key.split()
@@ -260,9 +264,9 @@ def check(results):
                     want = ["tessera_bg.wasm" if variant == "baseline" else "tessera_simd_bg.wasm"] * (2 if worker == "on" else 1)
                     if run["wasm"] != want:
                         problems.append(f"{name} {mode} {key}: requested {run['wasm']}, expected {want}")
-                    if mode != "detect" and run["components"] == 0:
+                    if not mode.startswith("detect") and run["components"] == 0:
                         problems.append(f"{name} {mode} {key}: parse returned no components")
-                    if mode == "detect" and run["entities"] == 0:
+                    if mode.startswith("detect") and run["entities"] == 0:
                         problems.append(f"{name} {mode} {key}: detect found nothing")
                     if not run["isolated"]:
                         problems.append(f"{name} {mode} {key}: page not cross-origin isolated")
@@ -316,7 +320,12 @@ def report(size_rows, results, environment):
                 lines.append(
                     f"| {name} | {label} | {variant} | {worker} | {ms(q2)} | {ms(min(init))} | {ms(q1)} | {ms(q3)} | {ms(max(init))} |"
                 )
-    for mode, title in (("parse", "Warm parseAddress"), ("detect", "Warm detect")):
+    titles = (
+        ("parse", "Warm parseAddress"),
+        ("detect", "Warm detect, emails and phones"),
+        ("detect_model", f"Warm detect with the model, every kind, {LONG_CHARS:,}-character document"),
+    )
+    for mode, title in titles:
         calls = len(next(iter(next(iter(results.values()))[mode].values()))["times"])
         lines += [
             "",
@@ -345,7 +354,7 @@ def report(size_rows, results, environment):
         "| --- | --- | --- | --- | ---: | ---: |",
     ]
     for name, r in results.items():
-        for mode in ("parse", "detect"):
+        for mode in ("parse", "detect", "detect_model"):
             for key, run in r[mode].items():
                 variant, worker = key.split()
                 lines.append(f"| {name} | {mode} | {variant} | {worker} | {mb(run.get('memLoad'))} | {mb(run.get('memParsed'))} |")
@@ -368,6 +377,10 @@ def main():
 
     text, hint = email_sample()
     inputs = addresses()
+    long_text = text
+    while len(long_text) < LONG_CHARS:
+        long_text += "\n\n" + text
+    long_text = long_text[:LONG_CHARS]
     base_cfg = {
         "modelUrl": f"/{BUNDLE}",
         # The digest format Tessera::load verifies: sha256- and lowercase hex.
@@ -375,6 +388,8 @@ def main():
         "addresses": inputs,
         "runs": WARM_PASSES * len(inputs),
         "text": text,
+        "longText": long_text,
+        "modelRuns": MODEL_RUNS,
         "countryHint": [hint],
     }
     environment = {

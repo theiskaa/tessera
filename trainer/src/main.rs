@@ -6,6 +6,7 @@ mod check;
 mod config;
 mod data;
 mod dataset;
+mod detect_eval;
 mod detector;
 mod eval;
 mod export;
@@ -146,6 +147,19 @@ struct EvalArgs {
     /// With `--run`: the backend to run the model on.
     #[arg(long, value_enum, default_value = "wgpu")]
     backend: train::BackendKind,
+    /// Score the shipped `detect` on reviewed documents in this JSONL file, one case per line,
+    /// with `--baseline` and each `--predictions` file beside it.
+    #[arg(long)]
+    gold: Option<PathBuf>,
+    /// With `--gold`: an external system's predictions by case name (repeatable).
+    #[arg(long)]
+    predictions: Vec<PathBuf>,
+    /// The bundle `detect` loads for `--gold` and for a detector run's split.
+    #[arg(long, default_value = "models/tessera-v1.safetensors")]
+    bundle: PathBuf,
+    /// With `--gold` or a detector run: write the report tables here as Markdown.
+    #[arg(long)]
+    report: Option<PathBuf>,
 }
 
 fn main() -> anyhow::Result<()> {

@@ -45,7 +45,9 @@
     const { createTessera } = await import("/tessera/pkg/index.js");
     const options = cfg.mode === "detect"
       ? { kinds: ["email", "phone"], worker: cfg.worker }
-      : { kinds: ["address"], modelUrl: cfg.modelUrl, integrity: cfg.integrity, worker: cfg.worker };
+      : cfg.mode === "detect_model"
+        ? { modelUrl: cfg.modelUrl, integrity: cfg.integrity, worker: cfg.worker }
+        : { kinds: ["address"], modelUrl: cfg.modelUrl, integrity: cfg.integrity, worker: cfg.worker };
     const t0 = now();
     const tessera = await createTessera(options);
     out.init = now() - t0;
@@ -55,6 +57,9 @@
     } else if (cfg.mode === "parse") {
       const r = await timed(cfg.runs, cfg.addresses, (a) => tessera.parseAddress(a));
       Object.assign(out, { times: r.times, total: r.total, components: r.results.reduce((n, e) => n + e.components.length, 0) });
+    } else if (cfg.mode === "detect_model") {
+      const r = await timed(cfg.modelRuns, [cfg.longText], (t) => tessera.detect(t, { countryHint: cfg.countryHint }));
+      Object.assign(out, { times: r.times, total: r.total, entities: r.results[0].length });
     } else {
       const r = await timed(cfg.runs, [cfg.text], (t) => tessera.detect(t, { countryHint: cfg.countryHint }));
       Object.assign(out, { times: r.times, total: r.total, entities: r.results[0].length });

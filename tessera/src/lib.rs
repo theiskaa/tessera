@@ -87,9 +87,10 @@ use std::ops::BitOr;
 /// Entity kinds the library can detect.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Kind {
-    /// A person's name.
+    /// A person's name. Experimental: the detector finds people reliably only in documents
+    /// shaped like its training templates; see the evaluation report before relying on it.
     Person,
-    /// An organization's name.
+    /// An organization's name. Experimental, like [`Kind::Person`].
     Org,
     /// A postal address.
     Address,

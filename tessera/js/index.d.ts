@@ -1,3 +1,4 @@
+/** "person" and "org" are experimental: reliable only on documents shaped like the detector's training data. */
 export type Kind = "person" | "org" | "address" | "email" | "phone";
 
 export type Source = "model" | "rules";
