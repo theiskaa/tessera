@@ -18,6 +18,7 @@ mod group_eval;
 mod model_eval;
 mod names;
 mod net;
+mod pool_filter;
 mod quantize;
 mod report;
 mod templates;

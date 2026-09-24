@@ -6,7 +6,7 @@
 //! fiction. Names and organizations are real (Wikidata and GLEIF), so generated text is
 //! training data only and never enters a versioned fixture.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs::File;
 use std::path::{Path, PathBuf};
 
@@ -23,6 +23,7 @@ use unicode_normalization::UnicodeNormalization;
 use crate::config::{self, Config, GenerateConfig};
 use crate::data::{LabelledExample, Split, read_shard};
 use crate::filler;
+use crate::pool_filter;
 use crate::templates::{self, Template};
 
 /// Where a template's documents come from.
@@ -298,7 +299,7 @@ impl PoolAddress {
             .find(|s| s.label == AddressLabel::City)
             .map(|s| e.text[s.start as usize..s.end as usize].to_string());
         PoolAddress {
-            text: e.text.trim().to_string(),
+            text: pool_filter::with_local_country(e, &pool_filter::without_venue_lines(e)),
             city,
         }
     }
@@ -508,7 +509,8 @@ impl<'a> Ctx<'a> {
         if self.plain {
             return Ok(name);
         }
-        if rng.random_bool(0.3) && name.chars().any(char::is_alphabetic) && !has_lowercase(&name) {
+        // Registers store names in capitals; documents mostly do not, but some still print them.
+        if rng.random_bool(0.65) && name.chars().any(char::is_alphabetic) && !has_lowercase(&name) {
             name = title_case(&name);
         }
         if rng.random_bool(0.2)
@@ -1126,6 +1128,18 @@ fn load_pools(
         &["name", "country", "script", "split"],
     )?;
     for row in people {
+        let not_a_person = [
+            "disappearance of",
+            "assassination of",
+            "murder of",
+            "death of",
+        ]
+        .iter()
+        .any(|p| row[0].to_lowercase().starts_with(p))
+            || row[0].contains(['@', '$']);
+        if not_a_person {
+            continue;
+        }
         if let Some(p) = pool_mut(&mut pools, &row[1], &row[3]) {
             p.people.push(PoolPerson {
                 name: row[0].clone(),
@@ -1135,12 +1149,31 @@ fn load_pools(
     }
     let orgs = read_table(
         &names.join("orgs.parquet"),
-        &["name", "country", "legal_form_abbr", "split"],
+        &["name", "country", "legal_form_abbr", "split", "source"],
     )?;
     for row in orgs {
+        let name = if row[4] == "wikidata" {
+            pool_filter::without_disambiguator(&row[0])
+        } else {
+            row[0].clone()
+        };
+        // Private trusts, pension schemes, and street-named property companies fill the
+        // registers but rarely documents: a few stay, never one that embeds a person's name.
+        let keep = if pool_filter::names_a_person(&name) {
+            false
+        } else if pool_filter::private_arrangement(&name) {
+            pool_filter::keep_some(&name, 50)
+        } else if pool_filter::address_like(&name) {
+            pool_filter::keep_some(&name, 5)
+        } else {
+            true
+        };
+        if !keep {
+            continue;
+        }
         if let Some(p) = pool_mut(&mut pools, &row[1], &row[3]) {
             p.orgs.push(PoolOrg {
-                name: row[0].clone(),
+                name,
                 legal_form: row[2].clone(),
             });
         }
@@ -1148,8 +1181,19 @@ fn load_pools(
     for split in Split::ALL {
         let path = addresses.join(format!("{}.parquet", split.name()));
         for e in read_shard(&path, split)? {
-            if e.augmented {
+            if e.augmented
+                || pool_filter::hydrant(&e.text)
+                || (e.country == "GE" && pool_filter::unusable_ge_address(&e))
+            {
                 continue;
+            }
+            // A bare place is not an address; a few with a region or country stay, since a
+            // sender's "Mainz, Germany" reads like one.
+            if pool_filter::locality_only(&e) {
+                let parts: BTreeSet<_> = e.spans.iter().map(|s| s.label as u8).collect();
+                if parts.len() < 2 || !pool_filter::keep_some(&e.text, 200) {
+                    continue;
+                }
             }
             if let Some(p) = pool_mut(&mut pools, &e.country, split.name()) {
                 p.addresses.push(PoolAddress::from_example(&e));
@@ -1158,9 +1202,15 @@ fn load_pools(
     }
     for split in Split::ALL {
         for &c in countries {
-            let need = min_org_pool(split).saturating_sub(pools[&(split, c)].orgs.len());
+            let native = pools[&(split, c)].orgs.len();
+            let mut need = min_org_pool(split).saturating_sub(native);
             if need == 0 || c != "GE" {
                 continue;
+            }
+            // At most as many borrowed names as native ones where the native pool allows it:
+            // a Georgian org should mostly be a Georgian name.
+            if split == Split::Train {
+                need = need.min(native);
             }
             let mut donors: Vec<PoolOrg> = countries
                 .iter()
@@ -1171,6 +1221,16 @@ fn load_pools(
                         .chars()
                         .filter(|ch| ch.is_alphabetic())
                         .all(|ch| ch.is_ascii())
+                        && !pool_filter::private_arrangement(&o.name)
+                        && !pool_filter::address_like(&o.name)
+                        && !pool_filter::institution(&o.name)
+                })
+                // A donor keeping a second legal form would still read as a foreign company.
+                .filter_map(|o| {
+                    pool_filter::without_legal_form(&o.name).map(|base| PoolOrg {
+                        name: base,
+                        legal_form: String::new(),
+                    })
                 })
                 .collect();
             let mut rng = ChaCha8Rng::seed_from_u64(seed ^ fnv1a(c.as_bytes(), 0) ^ split as u64);
@@ -1179,7 +1239,7 @@ fn load_pools(
                 .into_iter()
                 .take(need)
                 .map(|o| {
-                    let base = strip_legal_form(&o.name, &o.legal_form).unwrap_or(o.name);
+                    let base = o.name;
                     let &(form, before) = pick(templates::GE_LEGAL_FORMS, &mut rng);
                     let name = if before {
                         format!("{form} {base}")
