@@ -216,6 +216,9 @@ fn train_parser<B: AutodiffBackend>(
     Ok(())
 }
 
+/// The longest silver piece in content tokens: the synthetic documents' limit.
+const SILVER_MAX_TOKENS: usize = 900;
+
 /// Trains the detector on the synthetic corpus of phase 4.2 with the configured class
 /// weights, validating on exact span F1 macro-averaged over person, org, and address.
 fn train_detector<B: AutodiffBackend>(
@@ -236,7 +239,18 @@ fn train_detector<B: AutodiffBackend>(
     let (train_docs, train_counts) = detector::load_split(&dir, Split::Train, &fc)?;
     let (valid_docs, valid_counts) = detector::load_split(&dir, Split::Valid, &fc)?;
     eprintln!("train {train_counts:?}, valid {valid_counts:?}");
-    let train_items: Vec<Encoded> = train_docs.into_iter().map(|d| d.enc).collect();
+    let mut train_items: Vec<Encoded> = train_docs.into_iter().map(|d| d.enc).collect();
+    let (silver_docs, silver_counts) =
+        detector::load_silver(&detector_cfg.silver, &fc, SILVER_MAX_TOKENS)?;
+    if !silver_docs.is_empty() {
+        eprintln!(
+            "silver {silver_counts:?}, each piece repeated {} times",
+            detector_cfg.silver_repeat
+        );
+        for _ in 0..detector_cfg.silver_repeat {
+            train_items.extend(silver_docs.iter().map(|d| d.enc.clone()));
+        }
+    }
     let valid_gold: Vec<Vec<KindSpan>> = valid_docs.iter().map(|d| d.gold.clone()).collect();
     let mut model = cfg.detector_net_config().init::<B>(device);
     if let Some(run) = &cfg.net.ngram_from {
@@ -273,6 +287,8 @@ fn train_detector<B: AutodiffBackend>(
         "wall_clock_seconds": fit.seconds,
         "train": train_counts,
         "valid": valid_counts,
+        "silver": silver_counts,
+        "silver_repeat": detector_cfg.silver_repeat,
         "epochs": cfg.train.epochs,
         "steps": fit.steps,
         "dense_parameters": fit.dense,

@@ -187,6 +187,144 @@ pub fn load_split(
     Ok((docs, counts))
 }
 
+#[derive(Deserialize)]
+struct SilverJson {
+    text: String,
+    country: String,
+    entities: Vec<GoldJson>,
+}
+
+/// What loading the silver documents kept and dropped.
+#[derive(Debug, Default, Clone, Serialize)]
+pub struct SilverCounts {
+    pub documents: usize,
+    pub pieces: usize,
+    pub spans: usize,
+    /// Spans no BIO tagging can produce: inside a token (`EPA` in `EPA's`) or over a rule
+    /// email or phone. Their tokens stay `O`, which is the cost of keeping the document.
+    pub unreachable_spans: usize,
+}
+
+/// Reads silver-labelled real documents and encodes them. A document longer than
+/// `max_tokens` content tokens is cut at paragraph breaks that no span crosses, as the
+/// synthetic documents are never longer.
+pub fn load_silver(
+    paths: &[String],
+    fc: &FeatureConfig,
+    max_tokens: usize,
+) -> anyhow::Result<(Vec<DetectorDoc>, SilverCounts)> {
+    let mut docs = Vec::new();
+    let mut counts = SilverCounts::default();
+    for path in paths {
+        let text = std::fs::read_to_string(path).with_context(|| format!("reading {path}"))?;
+        for line in text.lines().filter(|l| !l.trim().is_empty()) {
+            let doc: SilverJson =
+                serde_json::from_str(line).with_context(|| format!("a line of {path}"))?;
+            counts.documents += 1;
+            let gold: Vec<KindSpan> = doc
+                .entities
+                .iter()
+                .filter_map(|g| {
+                    Some(KindSpan {
+                        kind: kind_index(Kind::from_str_label(&g.kind)?)?,
+                        start: g.start,
+                        end: g.end,
+                    })
+                })
+                .collect();
+            for (start, end) in pieces(&doc.text, &gold, max_tokens) {
+                let piece = &doc.text[start..end];
+                let rebased: Vec<KindSpan> = gold
+                    .iter()
+                    .filter(|g| g.start as usize >= start && g.end as usize <= end)
+                    .map(|g| KindSpan {
+                        kind: g.kind,
+                        start: g.start - start as u32,
+                        end: g.end - start as u32,
+                    })
+                    .collect();
+                let reachable = reachable_spans(piece, &rebased);
+                counts.spans += reachable.len();
+                counts.unreachable_spans += rebased.len() - reachable.len();
+                let mut enc = encode_document(piece, &reachable, fc)
+                    .map_err(|e| anyhow::anyhow!("{path}: {e}"))?;
+                enc.country = doc.country.clone();
+                docs.push(DetectorDoc {
+                    enc,
+                    gold: reachable,
+                    breaks: breaks_of(piece),
+                });
+                counts.pieces += 1;
+            }
+        }
+    }
+    Ok((docs, counts))
+}
+
+/// The byte ranges `text` is cut into: whole paragraphs, at most `max_tokens` content tokens
+/// each unless one paragraph alone is longer, never cutting through a span.
+fn pieces(text: &str, gold: &[KindSpan], max_tokens: usize) -> Vec<(usize, usize)> {
+    let tokens = tokenize(text);
+    let content = |s: usize, e: usize| {
+        tokens
+            .iter()
+            .filter(|t| t.start >= s && t.end <= e && is_content(t))
+            .count()
+    };
+    let mut cuts: Vec<usize> = text
+        .match_indices("\n\n")
+        .map(|(i, _)| i + 2)
+        .filter(|&c| {
+            !gold
+                .iter()
+                .any(|g| (g.start as usize) < c && c < g.end as usize)
+        })
+        .collect();
+    cuts.push(text.len());
+    let mut out = Vec::new();
+    let (mut start, mut last) = (0, 0);
+    for c in cuts {
+        if last > start && content(start, c) > max_tokens {
+            out.push((start, last));
+            start = last;
+        }
+        last = c;
+    }
+    if last > start {
+        out.push((start, last));
+    }
+    out
+}
+
+/// The spans of `gold` a tagger can produce on `text`: on token boundaries, within one
+/// paragraph (the decoder closes every span at a blank line), and clear of the rules layer's
+/// emails and phones.
+fn reachable_spans(text: &str, gold: &[KindSpan]) -> Vec<KindSpan> {
+    let tokens = tokenize(text);
+    let rules: Vec<(usize, usize)> = scan_rules(text, &[])
+        .iter()
+        .map(|e| (e.start, e.end))
+        .collect();
+    gold.iter()
+        .filter(|g| {
+            let (s, e) = (g.start as usize, g.end as usize);
+            tokens.iter().any(|t| t.start == s)
+                && tokens.iter().any(|t| t.end == e)
+                && !has_blank_line(&text[s..e])
+                && !rules.iter().any(|&(rs, re)| s < re && rs < e)
+        })
+        .copied()
+        .collect()
+}
+
+fn has_blank_line(s: &str) -> bool {
+    let lines: Vec<&str> = s.split('\n').collect();
+    lines.len() > 2
+        && lines[1..lines.len() - 1]
+            .iter()
+            .any(|l| l.trim().is_empty())
+}
+
 /// Whether a paragraph break comes before each retained token of `text`, as the library's
 /// decoder reads them.
 pub fn breaks_of(text: &str) -> Vec<bool> {
@@ -378,6 +516,39 @@ mod tests {
             encode_document(text, &gold, &FeatureConfig::default()),
             Err(DetectorEncodeError::PartialToken(_))
         ));
+    }
+
+    #[test]
+    fn silver_pieces_cut_at_paragraphs_outside_spans() {
+        let text = "one two three\n\nfour five\nsix\n\nseven eight";
+        let whole = [span(0, text, "five\nsix")];
+        assert_eq!(pieces(text, &whole, 100), vec![(0, text.len())]);
+        let p = pieces(text, &whole, 3);
+        assert_eq!(p, vec![(0, 15), (15, 30), (30, text.len())]);
+        let across = [KindSpan {
+            kind: 0,
+            start: 4,
+            end: 21,
+        }];
+        assert_eq!(pieces(text, &across, 3), vec![(0, 30), (30, text.len())]);
+    }
+
+    #[test]
+    fn silver_spans_inside_tokens_or_over_rules_are_unreachable() {
+        let text = "the EPA's office, EPA staff, mail epa@epa.example";
+        let gold = [
+            span(1, text, "EPA's"),
+            KindSpan {
+                kind: 1,
+                start: 4,
+                end: 7,
+            },
+            span(1, text, "EPA staff"),
+            span(1, text, "epa@epa.example"),
+        ];
+        assert_eq!(reachable_spans(text, &gold), vec![gold[0], gold[2]]);
+        let broken = "7290 Investment Drive, South\n\n[[Page 7]]\n\nCarolina 29418";
+        assert!(reachable_spans(broken, &[span(2, broken, broken)]).is_empty());
     }
 
     #[test]

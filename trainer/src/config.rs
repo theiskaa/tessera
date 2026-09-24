@@ -103,6 +103,17 @@ pub struct DetectorConfig {
     /// Loss weight per label, in `O, B-PERSON, I-PERSON, B-ORG, I-ORG, B-ADDRESS, I-ADDRESS`
     /// order; most positions are `O`, and `B-` labels fix boundaries.
     pub class_weights: Vec<f32>,
+    /// Silver-labelled real documents added to the train split, as JSONL with `text`,
+    /// `country`, and byte-offset `entities` (see `bench/silver/agent_label.py`).
+    #[serde(default)]
+    pub silver: Vec<String>,
+    /// How many times each silver document is repeated in an epoch.
+    #[serde(default = "default_silver_repeat")]
+    pub silver_repeat: usize,
+}
+
+fn default_silver_repeat() -> usize {
+    1
 }
 
 /// Name sampling for `trainer names`.
