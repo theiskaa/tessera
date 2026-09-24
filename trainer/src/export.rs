@@ -386,7 +386,7 @@ pub fn run(parser_run: &Path, detector_run: &Path, out: &Path, date: &str) -> an
         &PathBuf::from(&parser.cfg.data.processed).join("test.parquet"),
         Split::Test,
     )?;
-    let shipped = crate::model_eval::score_shipped(&bytes, &checksum, &test)?;
+    let shipped = crate::model_eval::score_shipped(&bytes, Some(&checksum), &test)?;
     let eval_dir = parser.dir.join("eval");
     std::fs::create_dir_all(&eval_dir)?;
     std::fs::write(

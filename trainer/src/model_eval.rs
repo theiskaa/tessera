@@ -312,22 +312,31 @@ fn baseline_spans(ex: &LabelledExample) -> Vec<Span> {
 /// `unknown` count as not predicted.
 pub fn score_shipped(
     bundle: &[u8],
-    checksum: &str,
+    checksum: Option<&str>,
     examples: &[LabelledExample],
 ) -> anyhow::Result<ParserScores> {
+    let originals: Vec<&LabelledExample> = examples.iter().filter(|e| !e.augmented).collect();
+    let preds = shipped_spans(bundle, checksum, &originals)?;
+    Ok(score(&originals, &preds))
+}
+
+fn shipped_spans(
+    bundle: &[u8],
+    checksum: Option<&str>,
+    examples: &[&LabelledExample],
+) -> anyhow::Result<Vec<Vec<Span>>> {
     let tessera = tessera::Tessera::load(
         bundle,
         tessera::Config {
             kinds: tessera::Kind::Address.into(),
-            expected_checksum: Some(checksum),
+            expected_checksum: checksum,
         },
     )?;
     let query = tessera::Query {
         country_hint: &[],
         ..tessera::Query::default()
     };
-    let originals: Vec<&LabelledExample> = examples.iter().filter(|e| !e.augmented).collect();
-    let preds = originals
+    examples
         .iter()
         .map(|ex| {
             let entity = tessera.parse_address(&ex.text, &query)?;
@@ -342,8 +351,100 @@ pub fn score_shipped(
                 })
                 .collect())
         })
-        .collect::<anyhow::Result<Vec<Vec<Span>>>>()?;
-    Ok(score(&originals, &preds))
+        .collect()
+}
+
+/// `trainer eval --addresses`: the bundle's `parse_address` on reviewed real addresses, parser
+/// fixture files in `dir`, scored per country and label. With `report`, every address whose
+/// parse is not exact is written there as JSON lines for error analysis.
+pub fn run_addresses(dir: &Path, bundle: &Path, report: Option<&Path>) -> anyhow::Result<()> {
+    let bytes = std::fs::read(bundle).with_context(|| format!("reading {}", bundle.display()))?;
+    let fixtures: Vec<(String, crate::fixtures::ParserFixture)> = crate::fixtures::load_dir(dir)?;
+    let examples = fixtures
+        .iter()
+        .flat_map(|(_, f)| &f.cases)
+        .enumerate()
+        .map(|(i, case)| {
+            let spans = case
+                .components
+                .iter()
+                .map(|c| {
+                    Ok(Span {
+                        label: AddressLabel::from_str_label(&c.label)
+                            .with_context(|| format!("{}: label {}", case.name, c.label))?,
+                        start: u32::try_from(c.start)?,
+                        end: u32::try_from(c.end)?,
+                    })
+                })
+                .collect::<anyhow::Result<Vec<Span>>>()?;
+            Ok(LabelledExample {
+                id: i as u64,
+                group_id: i as u64,
+                country: case.country.clone(),
+                language: String::new(),
+                text: case.input.clone(),
+                spans,
+                split: Split::Test,
+                augmented: false,
+            })
+        })
+        .collect::<anyhow::Result<Vec<LabelledExample>>>()?;
+    let refs: Vec<&LabelledExample> = examples.iter().collect();
+    let preds = shipped_spans(&bytes, None, &refs)?;
+    let scores = score(&refs, &preds);
+
+    println!(
+        "{:<8} {:>6} {:>8} {:>8}",
+        "country", "rows", "comp-F1", "exact"
+    );
+    for (country, counts) in &scores.per_country {
+        let (exact, rows) = scores
+            .exact_per_country
+            .get(country)
+            .copied()
+            .unwrap_or_default();
+        println!(
+            "{country:<8} {rows:>6} {:>8.4} {:>8.4}",
+            counts.f1(),
+            exact as f64 / rows.max(1) as f64
+        );
+    }
+    println!(
+        "{:<8} {:>6} {:>8.4} {:>8.4}",
+        "all",
+        scores.rows,
+        scores.overall.f1(),
+        scores.exact_rate()
+    );
+    for (label, counts) in &scores.per_label {
+        println!("  {label:<13} F1 {:.4}  gold {}", counts.f1(), counts.gold);
+    }
+
+    if let Some(path) = report {
+        let names = fixtures.iter().flat_map(|(_, f)| &f.cases).map(|c| &c.name);
+        let mut out = String::new();
+        for ((ex, pred), name) in examples.iter().zip(&preds).zip(names) {
+            if *pred == ex.spans {
+                continue;
+            }
+            let parts = |spans: &[Span]| -> Vec<Value> {
+                spans
+                    .iter()
+                    .map(|s| json!([s.label.as_str(), &ex.text[s.start as usize..s.end as usize]]))
+                    .collect()
+            };
+            let line = json!({
+                "name": name,
+                "country": ex.country,
+                "input": ex.text,
+                "gold": parts(&ex.spans),
+                "pred": parts(pred),
+            });
+            writeln!(out, "{line}")?;
+        }
+        std::fs::write(path, out).with_context(|| format!("writing {}", path.display()))?;
+    }
+    Ok(())
 }
 
 /// `trainer eval --run`: scores the run's best checkpoint and the baseline on one split,

@@ -114,6 +114,9 @@ pub fn run(args: EvalArgs) -> anyhow::Result<()> {
     if let Some(dir) = &args.grouper {
         return crate::group_eval::run(&args, dir);
     }
+    if let Some(dir) = &args.addresses {
+        return crate::model_eval::run_addresses(dir, &args.bundle, args.report.as_deref());
+    }
     if args.gold.is_some() {
         return crate::detect_eval::run_gold(&args);
     }

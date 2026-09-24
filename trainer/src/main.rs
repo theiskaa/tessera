@@ -183,6 +183,10 @@ struct EvalArgs {
     /// With `--grouper`: a directory of known-hard grouper cases, scored but never gating.
     #[arg(long)]
     grouper_hard: Option<PathBuf>,
+    /// Score the `--bundle`'s address parser on reviewed real addresses: parser fixture files
+    /// in this directory. `--report` receives the addresses it parses wrong, as JSON lines.
+    #[arg(long)]
+    addresses: Option<PathBuf>,
 }
 
 fn main() -> anyhow::Result<()> {
