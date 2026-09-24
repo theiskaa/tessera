@@ -128,8 +128,10 @@ fn read_quantized(path: &Path) -> anyhow::Result<(Vec<QTensor>, Vec<F32Tensor>)>
     let bytes = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
     let st = SafeTensors::deserialize(&bytes)?;
     let f32s = |data: &[u8]| -> Vec<f32> {
-        data.chunks_exact(4)
-            .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+        data.as_chunks::<4>()
+            .0
+            .iter()
+            .map(|c| f32::from_le_bytes(*c))
             .collect()
     };
     let mut q = Vec::new();

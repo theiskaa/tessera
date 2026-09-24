@@ -1,4 +1,6 @@
 [toolchain]
-channel = "stable"
+# The workspace's rust-version: newer releases add lints the code was not checked against,
+# so CI and every machine build with this one, and moving it is a deliberate commit.
+channel = "1.96"
 targets = ["wasm32-unknown-unknown"]
 components = ["rustfmt", "clippy"]

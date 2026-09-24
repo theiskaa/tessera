@@ -258,7 +258,7 @@ fn hostile_float_weights_do_not_panic() {
     for value in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, f32::MAX] {
         let mut hostile = bytes.to_vec();
         for &(begin, end) in &ranges {
-            for chunk in hostile[8 + n + begin..8 + n + end].chunks_exact_mut(4) {
+            for chunk in hostile[8 + n + begin..8 + n + end].as_chunks_mut::<4>().0 {
                 chunk.copy_from_slice(&value.to_le_bytes());
             }
         }

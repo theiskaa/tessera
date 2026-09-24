@@ -15,10 +15,10 @@ const H0: [u32; 8] = [
     0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
 ];
 
-fn compress(h: &mut [u32; 8], block: &[u8]) {
+fn compress(h: &mut [u32; 8], block: &[u8; 64]) {
     let mut w = [0u32; 64];
-    for (i, word) in block.chunks_exact(4).enumerate() {
-        w[i] = u32::from_be_bytes([word[0], word[1], word[2], word[3]]);
+    for (i, word) in block.as_chunks::<4>().0.iter().enumerate() {
+        w[i] = u32::from_be_bytes(*word);
     }
     for i in 16..64 {
         let s0 = w[i - 15].rotate_right(7) ^ w[i - 15].rotate_right(18) ^ (w[i - 15] >> 3);
@@ -56,11 +56,10 @@ fn compress(h: &mut [u32; 8], block: &[u8]) {
 
 pub(crate) fn digest(data: &[u8]) -> [u8; 32] {
     let mut h = H0;
-    let mut blocks = data.chunks_exact(64);
-    for block in &mut blocks {
+    let (blocks, rest) = data.as_chunks::<64>();
+    for block in blocks {
         compress(&mut h, block);
     }
-    let rest = blocks.remainder();
     let bit_len = (data.len() as u64).wrapping_mul(8);
     let mut tail = [0u8; 128];
     tail[..rest.len()].copy_from_slice(rest);
@@ -68,12 +67,12 @@ pub(crate) fn digest(data: &[u8]) -> [u8; 32] {
     // One extra block when the length no longer fits after the padding byte.
     let tail_len = if rest.len() < 56 { 64 } else { 128 };
     tail[tail_len - 8..tail_len].copy_from_slice(&bit_len.to_be_bytes());
-    for block in tail[..tail_len].chunks_exact(64) {
+    for block in tail[..tail_len].as_chunks::<64>().0 {
         compress(&mut h, block);
     }
     let mut out = [0u8; 32];
-    for (chunk, word) in out.chunks_exact_mut(4).zip(h) {
-        chunk.copy_from_slice(&word.to_be_bytes());
+    for (chunk, word) in out.as_chunks_mut::<4>().0.iter_mut().zip(h) {
+        *chunk = word.to_be_bytes();
     }
     out
 }

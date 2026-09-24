@@ -149,8 +149,10 @@ impl<'a> Bundle<'a> {
     pub(crate) fn take_f32(&self, name: &str, len: usize) -> Result<Vec<f32>, Error> {
         let e = self.entry(name, Dtype::F32, &[len])?;
         Ok(self.data[e.begin..e.end]
-            .chunks_exact(4)
-            .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|c| f32::from_le_bytes(*c))
             .collect())
     }
 }
