@@ -66,3 +66,50 @@ fn help_succeeds_and_prints_usage() {
     assert_eq!(code, 0);
     assert!(stdout.starts_with("usage: tessera"));
 }
+
+#[test]
+fn unknown_format_is_usage_error() {
+    let (code, _, stderr) = run(&["--format", "html"], "");
+    assert_eq!(code, 2);
+    assert!(stderr.contains("unknown format `html`"), "{stderr}");
+}
+
+#[test]
+fn markdown_flags_require_markdown_format() {
+    for flag in ["--include-code", "--include-html", "--no-gfm-tables"] {
+        let (code, _, stderr) = run(&[flag], "");
+        assert_eq!(code, 2, "{flag}");
+        assert!(
+            stderr.contains(&format!("{flag} requires --format markdown")),
+            "{stderr}"
+        );
+    }
+}
+
+#[cfg(feature = "markdown")]
+#[test]
+fn markdown_link_text_carries_the_destination() {
+    let input =
+        "[Nino](mailto:nino@kavkaz-freight.example)\n\n```\nhidden@kavkaz-freight.example\n```\n";
+    let (code, stdout, _) = run(&["--format", "markdown"], input);
+    assert_eq!(code, 0);
+    let v: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let ents = v["entities"].as_array().unwrap();
+    assert_eq!(ents.len(), 1, "{stdout}");
+    assert_eq!(ents[0]["text"], "Nino");
+    assert_eq!(ents[0]["normalized"], "nino@kavkaz-freight.example");
+    let (_, stdout, _) = run(&["--format", "markdown", "--include-code"], input);
+    let v: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(v["entities"].as_array().unwrap().len(), 2, "{stdout}");
+}
+
+#[cfg(not(feature = "markdown"))]
+#[test]
+fn markdown_format_without_the_feature_is_usage_error() {
+    let (code, _, stderr) = run(&["--format", "markdown"], "");
+    assert_eq!(code, 2);
+    assert!(
+        stderr.contains("--format markdown requires the `markdown` feature"),
+        "{stderr}"
+    );
+}

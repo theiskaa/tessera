@@ -6,10 +6,12 @@ mod common;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen_test::wasm_bindgen_test as test;
 
+#[cfg(feature = "phone-metadata")]
 use tessera::{Entity, Query};
 
 /// Why a case fails, or `None` when every expected entity is found at its exact offsets and no
 /// forbidden entity is present.
+#[cfg(feature = "phone-metadata")]
 fn failure(case: &common::DetectorCase, got: &[Entity]) -> Option<String> {
     let found: Vec<(&str, usize, usize)> = got
         .iter()
@@ -39,6 +41,9 @@ fn failure(case: &common::DetectorCase, got: &[Entity]) -> Option<String> {
     Some(format!("{}; got [{}]", problems.join(", "), got.join(", ")))
 }
 
+/// The fixtures describe the default build: without the phone tables no number is scanned, and
+/// the missing rule spans change the detector's input features as well.
+#[cfg(feature = "phone-metadata")]
 #[test]
 fn detector_fixtures() {
     let tessera = common::load_all();

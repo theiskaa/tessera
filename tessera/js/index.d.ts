@@ -120,8 +120,9 @@ export interface QueryOptions {
   includeUncertain?: boolean;
   /**
    * Default "text". "markdown" scans only prose and reads `mailto:` and `tel:` link destinations;
-   * offsets still index the Markdown source. A build without Markdown support rejects it with
-   * `UNSUPPORTED_FORMAT`. Ignored by `parseAddress`.
+   * offsets still index the Markdown source. It needs a build with the `markdown` feature; the
+   * default package is built without it and rejects "markdown" with `UNSUPPORTED_FORMAT`.
+   * Ignored by `parseAddress`.
    */
   format?: "text" | "markdown";
   /** How "markdown" input is selected; ignored for "text". */

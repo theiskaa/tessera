@@ -64,8 +64,17 @@ pub(crate) fn from_links(links: &[LinkTarget], country_hint: &[&str]) -> Vec<Ent
 
 /// Scanned entities plus link entities, sorted by start. A link entity wins over any scanned
 /// entity it overlaps: the destination is where a click goes.
-pub(crate) fn merge_links(mut scanned: Vec<Entity>, linked: Vec<Entity>) -> Vec<Entity> {
-    scanned.retain(|e| !linked.iter().any(|l| e.start < l.end && l.start < e.end));
+pub(crate) fn merge_links(mut scanned: Vec<Entity>, mut linked: Vec<Entity>) -> Vec<Entity> {
+    if linked.is_empty() {
+        return scanned;
+    }
+    // Link texts never overlap, so sorted by start their ends ascend too, and the only link an
+    // entity can overlap first is the first one ending after the entity starts.
+    linked.sort_by_key(|l| l.start);
+    scanned.retain(|e| {
+        let i = linked.partition_point(|l| l.end <= e.start);
+        linked.get(i).is_none_or(|l| l.start >= e.end)
+    });
     scanned.extend(linked);
     scanned.sort_by_key(|e| (e.start, e.end));
     scanned
@@ -188,6 +197,28 @@ mod link_tests {
         assert_eq!(
             merged[0].normalized.as_deref(),
             Some("new@kavkaz-freight.example")
+        );
+    }
+
+    #[test]
+    fn only_scanned_entities_overlapping_a_link_are_dropped() {
+        let scanned = vec![
+            email_at(0, 5, "a@b.example"),
+            email_at(8, 12, "c@d.example"),
+            email_at(20, 30, "e@f.example"),
+            email_at(40, 45, "g@h.example"),
+        ];
+        let linked = from_links(
+            &[
+                link("mailto:x@y.example", 25, 35),
+                link("mailto:z@y.example", 5, 9),
+            ],
+            &[],
+        );
+        let merged = merge_links(scanned, linked);
+        assert_eq!(
+            merged.iter().map(|e| (e.start, e.end)).collect::<Vec<_>>(),
+            [(0, 5), (5, 9), (25, 35), (40, 45)]
         );
     }
 

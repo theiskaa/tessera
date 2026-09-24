@@ -39,7 +39,6 @@ impl Tessera {
             outside_mask,
         } = detector_inputs(text, rule_entities, model, mask);
         let breaks = chunk::paragraph_breaks(&tokens, &retained);
-        let n = retained.len();
         let mut candidates = Vec::new();
         for w in chunk::windows(
             &tokens,
@@ -53,8 +52,7 @@ impl Tessera {
             model::kernels::softmax_rows(&mut probs, detector.labels());
             for s in model::bio::decode_detector(&probs, &masked[range.clone()], &breaks[range]) {
                 let (first, last) = (w.tok_start + s.first, w.tok_start + s.last);
-                if chunk::trusted(&w, n, first, last) && s.confidence >= policy::detect_min(s.kind)
-                {
+                if chunk::trusted(&w, first, last) && s.confidence >= policy::detect_min(s.kind) {
                     candidates.extend(span_entity(
                         text,
                         &tokens,
@@ -330,6 +328,8 @@ mod tests {
                 let rules: Vec<&Entity> =
                     found.iter().filter(|e| e.source == Source::Rules).collect();
                 assert!(rules.iter().any(|e| e.kind == Kind::Email));
+                // Without the phone tables a number with no country code is not scanned.
+                #[cfg(feature = "phone-metadata")]
                 assert!(rules.iter().any(|e| e.kind == Kind::Phone));
                 for m in found.iter().filter(|e| e.source == Source::Model) {
                     assert!(rules.iter().all(|r| m.end <= r.start || r.end <= m.start));

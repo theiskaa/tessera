@@ -60,6 +60,13 @@ for (const c of JSON.parse(await read("fixtures/rules/documents.json")).cases) {
   assert.deepEqual(found.map(shape), c.expected.map(shape), c.name);
   for (const e of found) assertSlices(c.input, e, c.name);
 }
+// The package is built without the `markdown` feature.
+await assert.rejects(rules.detect("[a](mailto:a@b.example)", { format: "markdown" }), {
+  name: "TesseraError",
+  code: "UNSUPPORTED_FORMAT",
+});
+await assert.rejects(rules.detect("x", { format: "html" }), TypeError);
+assert.equal((await rules.detect("a@b.example", { format: "text" })).length, 1);
 rules.dispose();
 
 const runtime = typeof Bun === "undefined" ? `node ${process.version}` : `bun ${Bun.version}`;

@@ -42,7 +42,7 @@ pub struct Mask {
 
 /// A masked run of at least this many retained positions is cut out of windowing altogether;
 /// shorter ones (inline code, a link destination) stay as context inside a window.
-pub(crate) const SKIP_SPLIT_TOKENS: usize = 32;
+const SKIP_SPLIT_TOKENS: usize = 32;
 
 impl Mask {
     /// `scan` minus `skip`: both sorted, `scan` disjoint. The result is sorted, disjoint, and
@@ -89,19 +89,23 @@ impl Mask {
     }
 
     /// The ranges, sorted and disjoint.
+    #[cfg(test)]
     pub fn ranges(&self) -> &[(usize, usize)] {
         &self.ranges
     }
 }
 
 /// A window over the retained tokens `tok_start..tok_end`, whose text is the byte range
-/// `start..end` of the document.
+/// `start..end` of the document, inside the windowed piece `piece_start..piece_end` of
+/// retained positions (the whole document without a mask).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Window {
     pub start: usize,
     pub end: usize,
     pub tok_start: usize,
     pub tok_end: usize,
+    pub piece_start: usize,
+    pub piece_end: usize,
 }
 
 /// What separates a retained position from the previous one.
@@ -226,11 +230,11 @@ fn window_piece(
     loop {
         let target = start + window;
         if target >= to {
-            out.push(make(tokens, retained, start, to));
+            out.push(make(tokens, retained, start, to, (from, to)));
             return;
         }
         let cut = outside_masked_run(masked, start, find_cut(breaks, start, target));
-        out.push(make(tokens, retained, start, cut));
+        out.push(make(tokens, retained, start, cut, (from, to)));
         let mut next = cut.saturating_sub(overlap).max(start + 1);
         // Snap back to a whitespace boundary so a window never opens mid-word; moving back
         // only lengthens the overlap.
@@ -289,26 +293,35 @@ fn check_unbroken(breaks: &[Break]) -> Result<(), Error> {
     Ok(())
 }
 
-fn make(tokens: &[Token], retained: &[usize], a: usize, b: usize) -> Window {
+fn make(
+    tokens: &[Token],
+    retained: &[usize],
+    a: usize,
+    b: usize,
+    (piece_start, piece_end): (usize, usize),
+) -> Window {
     Window {
         start: tokens[retained[a]].start,
         end: tokens[retained[b - 1]].end,
         tok_start: a,
         tok_end: b,
+        piece_start,
+        piece_end,
     }
 }
 
-/// Whether window `w` trusts a prediction over retained positions `first..=last` of a
-/// document with `n` retained positions: it must sit at least `CONTEXT_MARGIN_TOKENS` from
-/// every edge of `w` that is not a document edge.
+/// Whether window `w` trusts a prediction over retained positions `first..=last`: it must sit
+/// at least `CONTEXT_MARGIN_TOKENS` from every edge of `w` that is not an edge of its piece. A
+/// piece edge is where the document or a long masked run begins or ends, so no other window
+/// covers the positions beyond it and no context is lost there.
 ///
 /// Coverage: a span of `L <= MAX_ENTITY_TOKENS` positions untrusted in window A (its end
 /// within the margin of A's end) and in the next window B (its start within the margin of B's
 /// start) needs `L > OVERLAP_TOKENS - 2 * CONTEXT_MARGIN_TOKENS = MAX_ENTITY_TOKENS`, a
 /// contradiction; so every such span is trusted in at least one window.
-pub(crate) fn trusted(w: &Window, n: usize, first: usize, last: usize) -> bool {
-    (w.tok_start == 0 || first >= w.tok_start + CONTEXT_MARGIN_TOKENS)
-        && (w.tok_end == n || last + CONTEXT_MARGIN_TOKENS < w.tok_end)
+pub(crate) fn trusted(w: &Window, first: usize, last: usize) -> bool {
+    (w.tok_start == w.piece_start || first >= w.tok_start + CONTEXT_MARGIN_TOKENS)
+        && (w.tok_end == w.piece_end || last + CONTEXT_MARGIN_TOKENS < w.tok_end)
 }
 
 /// Deduplicates predictions from overlapping windows and resolves overlaps: exact duplicates
@@ -442,8 +455,8 @@ mod tests {
 
     #[test]
     fn a_span_across_a_naive_cut_is_trusted_somewhere() {
-        let (w, n) = cover(&text_with(2500, |i| if i % 40 == 0 { "\n" } else { " " }));
-        assert!(w.iter().any(|w| trusted(w, n, 1000, 1039)));
+        let (w, _) = cover(&text_with(2500, |i| if i % 40 == 0 { "\n" } else { " " }));
+        assert!(w.iter().any(|w| trusted(w, 1000, 1039)));
     }
 
     #[test]
@@ -453,7 +466,7 @@ mod tests {
             for first in (0..n - len).step_by(7) {
                 let last = first + len - 1;
                 assert!(
-                    w.iter().any(|w| trusted(w, n, first, last)),
+                    w.iter().any(|w| trusted(w, first, last)),
                     "span {first}..={last}"
                 );
             }
@@ -589,6 +602,21 @@ mod tests {
         for win in &w {
             assert!((win.tok_start..win.tok_end).all(|i| !masked[i]));
         }
+    }
+
+    #[test]
+    fn spans_beside_a_long_masked_run_are_trusted() {
+        let text = format!("a b c ```\n{}```\n p q r", "code ".repeat(40));
+        let tokens = tokenize(&text);
+        let r = retained(&tokens);
+        let code_start = text.find("```").unwrap_or(0);
+        let code_end = text.rfind("```").map_or(0, |i| i + 3);
+        let mask = Mask::new(&[(0, text.len())], &[(code_start, code_end)]);
+        let masked: Vec<bool> = r.iter().map(|&i| !mask.covers(&tokens[i])).collect();
+        let w = super::windows(&tokens, &r, WINDOW_TOKENS, OVERLAP_TOKENS, Some(&masked)).unwrap();
+        let n = r.len();
+        assert!(w.iter().any(|w| trusted(w, 0, 2)), "before the run");
+        assert!(w.iter().any(|w| trusted(w, n - 3, n - 1)), "after the run");
     }
 
     #[test]

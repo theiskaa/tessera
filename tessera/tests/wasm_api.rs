@@ -463,6 +463,10 @@ async fn bad_options_are_type_errors() {
         r#"{"countryHint":"GB"}"#,
         r#"{"countryHint":["GB",7]}"#,
         r#"{"includeUncertain":"yes"}"#,
+        r#"{"format":"html"}"#,
+        r#"{"format":5}"#,
+        r#"{"format":"markdown","markdown":true}"#,
+        r#"{"format":"markdown","markdown":{"includeCode":"yes"}}"#,
         "42",
     ] {
         assert_type_error(
@@ -646,6 +650,101 @@ async fn unserved_operation_rejects_with_a_stage() {
     assert_eq!(string(&err, "stage"), "parse");
 }
 
+#[cfg(feature = "markdown")]
+const MARKDOWN_DOC: &str = include_str!("../../fixtures/markdown/international.md");
+const CODE_DOC: &str = "Write to [Nino](mailto:nino@kavkaz-freight.example).\n\n```\nhidden@kavkaz-freight.example\n```\n";
+
+/// `detect` through the binding with `options` against native `detect` with `format`: the same
+/// entities, whose UTF-16 offsets slice the JavaScript string to their text.
+#[cfg(feature = "markdown")]
+async fn assert_markdown_matches(
+    tessera: &JsTessera,
+    input: &str,
+    opts: &str,
+    format: tessera::Format,
+) {
+    let native = tessera::Tessera::load(
+        &[],
+        tessera::Config {
+            kinds: tessera::Kind::Email | tessera::Kind::Phone,
+            expected_checksum: None,
+        },
+    )
+    .unwrap()
+    .detect(
+        input,
+        &Query {
+            format,
+            ..Query::default()
+        },
+    )
+    .unwrap();
+    let source = JsString::from(input);
+    let got: Array = resolved(tessera.detect(&source, Some(options(opts))))
+        .await
+        .dyn_into()
+        .unwrap();
+    assert_eq!(got.length() as usize, native.len(), "{opts}");
+    for (js, e) in got.iter().zip(&native) {
+        assert_entity(&js, e, input, opts);
+        let sliced: String = source
+            .slice(number(&js, "start") as u32, number(&js, "end") as u32)
+            .into();
+        assert_eq!(sliced, string(&js, "text"), "{opts}");
+    }
+}
+
+#[cfg(feature = "markdown")]
+#[test]
+async fn markdown_format_through_the_binding() {
+    use tessera::{Format, MarkdownOptions};
+    let t = rules_tessera();
+    let markdown = Format::Markdown(MarkdownOptions::default());
+    assert_markdown_matches(
+        &t,
+        MARKDOWN_DOC,
+        r#"{"format":"markdown"}"#,
+        markdown.clone(),
+    )
+    .await;
+    assert_markdown_matches(&t, CODE_DOC, r#"{"format":"markdown"}"#, markdown).await;
+    assert_markdown_matches(&t, CODE_DOC, r#"{"format":"text"}"#, Format::Text).await;
+    let with_code = Format::Markdown(MarkdownOptions {
+        include_code: true,
+        ..MarkdownOptions::default()
+    });
+    let opts = r#"{"format":"markdown","markdown":{"includeCode":true}}"#;
+    assert_markdown_matches(&t, CODE_DOC, opts, with_code).await;
+}
+
+#[cfg(feature = "markdown")]
+#[test]
+async fn worker_and_inline_read_markdown_identically() {
+    let kinds = r#"{"kinds":["email","phone"]}"#;
+    let (opts, _inline_worker) = in_worker(kinds, false);
+    let inline = create_instance(opts).await.unwrap();
+    let (opts, _worker) = in_worker(kinds, true);
+    let worker = create_instance(opts).await.unwrap();
+    for input in [MARKDOWN_DOC, CODE_DOC] {
+        for opts in [
+            r#"{"format":"markdown"}"#,
+            r#"{"format":"markdown","markdown":{"includeCode":true,"includeHtml":true,"gfmTables":false}}"#,
+        ] {
+            let want = resolved(inline.detect(&text(input), Some(options(opts)))).await;
+            let got = resolved(worker.detect(&text(input), Some(options(opts)))).await;
+            assert_eq!(json(&got), json(&want), "{opts}");
+        }
+    }
+}
+
+#[cfg(not(feature = "markdown"))]
+#[test]
+async fn markdown_format_without_the_feature_rejects() {
+    let t = rules_tessera();
+    let err = rejected(t.detect(&text(CODE_DOC), Some(options(r#"{"format":"markdown"}"#)))).await;
+    assert_tessera_error(&err, "UNSUPPORTED_FORMAT");
+}
+
 #[test]
 fn every_error_has_a_stable_code() {
     for (err, code) in [
@@ -653,6 +752,7 @@ fn every_error_has_a_stable_code() {
         (Error::ChecksumMismatch, "CHECKSUM_MISMATCH"),
         (Error::UnsupportedVersion, "UNSUPPORTED_VERSION"),
         (Error::InputTooLarge, "INPUT_TOO_LARGE"),
+        (Error::UnsupportedFormat, "UNSUPPORTED_FORMAT"),
         (Error::Inference { stage: "group" }, "INFERENCE"),
     ] {
         let message = err.to_string();

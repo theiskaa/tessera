@@ -9,12 +9,12 @@
 //!
 //! pulldown-cmark builds a block tree for its whole input, about nine times the
 //! input's size, so the pipeline parses a document in [`segments`] of about
-//! [`SEGMENT_BYTES`] cut at blank lines before unindented lines, outside fenced
-//! code, raw HTML blocks that may hold blank lines, and front matter. Reference
-//! links whose definition lies in another piece resolve through a prescan of
-//! every `[label]: destination` line. Labels there are matched lowercased rather
-//! than Unicode case folded, so a label differing from its definition only in a
-//! character such as `ẞ`, with the definition in another piece, stays unresolved.
+//! [`SEGMENT_BYTES`], cut where the parser itself reports a top-level block
+//! starting after a blank line. Reference links whose definition lies in another
+//! piece resolve through the definitions the parser found while planning the
+//! cuts. Labels there are matched lowercased rather than Unicode case folded, so
+//! a label differing from its definition only in a character such as `ẞ`, with
+//! the definition in another piece, stays unresolved.
 
 use std::collections::HashMap;
 use std::ops::Range;
@@ -29,11 +29,13 @@ use crate::chunk::Mask;
 pub struct LinkTarget {
     /// The destination as written, with `mailto:` prefixed for autolinked emails.
     pub dest: String,
-    /// The whole link, markers included.
+    /// Byte offset where the whole link, markers included, begins.
     pub start: usize,
+    /// Byte offset after the whole link, exclusive.
     pub end: usize,
-    /// The visible link text.
+    /// Byte offset where the visible link text begins.
     pub text_start: usize,
+    /// Byte offset after the visible link text, exclusive.
     pub text_end: usize,
 }
 
@@ -51,7 +53,9 @@ pub struct Selection {
 }
 
 impl Selection {
-    /// The bytes entities may lie in: scan minus skip.
+    /// The bytes entities may lie in: scan minus skip. For the trainer, which featurizes
+    /// Markdown the way the pipeline does; `Mask` is not a stable type.
+    #[doc(hidden)]
     pub fn mask(&self) -> Mask {
         Mask::new(&self.scan, &self.skip)
     }
@@ -76,24 +80,39 @@ struct LinkFrame {
 struct Builder {
     selection: Selection,
     run: Option<(usize, usize)>,
-    /// Depth inside a code block, HTML block, or metadata block being skipped whole.
+    /// Depth inside a code block or HTML block being skipped whole.
     opaque: usize,
     /// Depth inside an image, whose alt text is never scanned.
     image: usize,
     links: Vec<LinkFrame>,
 }
 
-/// Parser options shared by every parse in this module.
-pub(crate) fn parser_options(options: &MarkdownOptions) -> Options {
-    let mut parser_options = Options::ENABLE_STRIKETHROUGH
-        | Options::ENABLE_TASKLISTS
-        | Options::ENABLE_FOOTNOTES
-        | Options::ENABLE_YAML_STYLE_METADATA_BLOCKS
-        | Options::ENABLE_PLUSES_DELIMITED_METADATA_BLOCKS;
+/// Parser options shared by every parse in this module. Metadata blocks are off: pulldown-cmark
+/// recognises them anywhere, which would hide a contact written between two `---` lines, so
+/// front matter is found by [`front_matter`] at the document's start only.
+fn parser_options(options: &MarkdownOptions) -> Options {
+    let mut parser_options =
+        Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS | Options::ENABLE_FOOTNOTES;
     if options.gfm_tables {
         parser_options |= Options::ENABLE_TABLES;
     }
     parser_options
+}
+
+/// The YAML (`---`) or TOML (`+++`) front matter opening `text`, closing within its first
+/// [`SEGMENT_BYTES`]; longer front matter is read as ordinary Markdown.
+fn front_matter(text: &str, options: &MarkdownOptions) -> Option<Range<usize>> {
+    if !(text.starts_with("---") || text.starts_with("+++")) {
+        return None;
+    }
+    let prefix = &text[..line_end(text, SEGMENT_BYTES)];
+    let metadata = parser_options(options)
+        | Options::ENABLE_YAML_STYLE_METADATA_BLOCKS
+        | Options::ENABLE_PLUSES_DELIMITED_METADATA_BLOCKS;
+    match Parser::new_ext(prefix, metadata).into_offset_iter().next() {
+        Some((Event::Start(Tag::MetadataBlock(_)), range)) if range.start == 0 => Some(range),
+        _ => None,
+    }
 }
 
 /// Select the scannable ranges of `text` in one parse. For large documents the pipeline uses
@@ -102,9 +121,30 @@ pub fn select(text: &str, options: &MarkdownOptions) -> Selection {
     select_in(text, options, &HashMap::new(), 0)
 }
 
-/// Parse one piece of a document. `defs` resolves reference links whose definitions live in
-/// other pieces; `base` shifts every offset so the result indexes the whole document.
+/// Parse the piece of a document that starts at `base`, skipping the document's front matter
+/// when the piece is its start. `defs` resolves reference links whose definitions live in other
+/// pieces, and every offset is shifted by `base` so the result indexes the whole document.
 fn select_in(
+    text: &str,
+    options: &MarkdownOptions,
+    defs: &HashMap<String, String>,
+    base: usize,
+) -> Selection {
+    let front = if base == 0 {
+        front_matter(text, options)
+    } else {
+        None
+    };
+    let Some(front) = front else {
+        return parse_piece(text, options, defs, base);
+    };
+    let mut selection = parse_piece(&text[front.end..], options, defs, front.end);
+    selection.skip.insert(0, (front.start, front.end));
+    selection
+}
+
+/// [`select_in`] without the front matter check.
+fn parse_piece(
     text: &str,
     options: &MarkdownOptions,
     defs: &HashMap<String, String>,
@@ -136,155 +176,130 @@ fn select_in(
     selection
 }
 
-/// Whitespace collapsed, trimmed, lowercased: how link labels are matched.
+/// Whitespace collapsed and lowercased: how link labels are matched across pieces.
 fn normalize_label(label: &str) -> String {
-    label
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .to_lowercase()
-}
-
-/// `[label]: destination` lines anywhere in the document, the first definition of a label
-/// winning as in CommonMark.
-fn reference_definitions(text: &str) -> HashMap<String, String> {
-    let mut defs = HashMap::new();
-    for line in text.lines() {
-        let trimmed = line.trim_start_matches(' ');
-        if line.len() - trimmed.len() > 3 || !trimmed.starts_with('[') {
-            continue;
+    let mut out = String::with_capacity(label.len());
+    for word in label.split_whitespace() {
+        if !out.is_empty() {
+            out.push(' ');
         }
-        let Some(close) = trimmed.find("]:") else {
-            continue;
-        };
-        let label = &trimmed[1..close];
-        if label.trim().is_empty() || label.contains('[') {
-            continue;
-        }
-        let dest = trimmed[close + 2..].split_whitespace().next().unwrap_or("");
-        let dest = dest.trim_start_matches('<').trim_end_matches('>');
-        if dest.is_empty() {
-            continue;
-        }
-        defs.entry(normalize_label(label))
-            .or_insert_with(|| dest.to_string());
+        out.extend(word.chars().flat_map(char::to_lowercase));
     }
-    defs
+    out
 }
 
 /// Target size of one parsed piece. Measured on pulldown-cmark 0.13.4: a 64 KiB piece parses
 /// in about 0.6 MB.
 pub const SEGMENT_BYTES: usize = 64 * 1024;
 
-enum CutState {
-    Normal,
-    Fence { marker: u8, len: usize },
-    RawHtml(&'static str),
-    FrontMatter(&'static str),
+/// How far past its target a planning window first reaches for a cut; a window that finds
+/// none doubles its reach.
+const PLAN_SLACK_BYTES: usize = SEGMENT_BYTES / 4;
+
+/// Where a document is cut into pieces, and the reference definitions pieces resolve through.
+#[derive(Default)]
+struct Plan {
+    cuts: Vec<usize>,
+    defs: HashMap<String, String>,
 }
 
-/// Raw HTML block kinds 1 to 5, which may contain blank lines: start condition, end condition.
-const RAW_HTML: [(&str, &str); 7] = [
-    ("<script", "</script>"),
-    ("<pre", "</pre>"),
-    ("<style", "</style>"),
-    ("<textarea", "</textarea>"),
-    ("<!--", "-->"),
-    ("<?", "?>"),
-    ("<![cdata[", "]]>"),
-];
-
-/// Byte offsets where the document may be cut without changing inline runs: the start of an
-/// unindented non-blank line after a blank line, outside fenced code, raw HTML blocks, and
-/// front matter, each at least `target_bytes` after the previous cut.
+/// Plans the cuts by parsing the document one bounded window at a time.
 ///
-/// An indented line is never a cut: after a blank line it may continue a list item, and on its
-/// own it would parse as an indented code block.
-fn split_points(text: &str, target_bytes: usize) -> Vec<usize> {
-    let mut state = CutState::Normal;
-    let mut points = Vec::new();
-    let mut last_cut = 0;
-    let mut offset = 0;
-    let mut previous_blank = false;
-    for (i, line) in text.split_inclusive('\n').enumerate() {
-        let start = offset;
-        offset += line.len();
-        let content = line.trim_end_matches(['\n', '\r']);
-        let stripped = content.trim_start_matches(' ');
-        let indent = content.len() - stripped.len();
-        let blank = content.trim().is_empty();
-        match &state {
-            CutState::Normal => {}
-            CutState::FrontMatter(close) => {
-                if content == *close {
-                    state = CutState::Normal;
+/// A cut is the start of a top-level block, as pulldown-cmark reports it, at the start of an
+/// unindented line after a blank line, at least `target_bytes` after the previous cut. Whether
+/// a block starts there is decided by what precedes it, so the window's verdict holds for the
+/// whole document, and the blocks before the cut are complete. Definitions are the parser's
+/// own, kept from a window only when they precede its cut, the first of a label winning. A
+/// document with no cut has no definitions to share: its one piece resolves its own.
+fn plan(text: &str, options: &MarkdownOptions, target_bytes: usize) -> Plan {
+    let mut plan = Plan::default();
+    let mut start = front_matter(text, options).map_or(0, |r| r.end);
+    let mut reach = target_bytes.saturating_add(PLAN_SLACK_BYTES);
+    while start.saturating_add(target_bytes) < text.len() {
+        let end = line_end(text, start.saturating_add(reach));
+        let parser = Parser::new_ext(&text[start..end], parser_options(options));
+        let mut events = parser.into_offset_iter();
+        let mut depth = 0usize;
+        let mut cut = None;
+        for (event, range) in events.by_ref() {
+            match event {
+                Event::Start(_) => {
+                    let at = start + range.start;
+                    if depth == 0 && at > start && at >= start + target_bytes && is_cut(text, at) {
+                        cut = Some(at);
+                        break;
+                    }
+                    depth += 1;
                 }
-                continue;
-            }
-            CutState::Fence { marker, len } => {
-                let run = stripped.bytes().take_while(|b| b == marker).count();
-                if indent <= 3 && run >= *len && stripped[run..].trim().is_empty() {
-                    state = CutState::Normal;
-                }
-                previous_blank = false;
-                continue;
-            }
-            CutState::RawHtml(close) => {
-                if content.to_ascii_lowercase().contains(close) {
-                    state = CutState::Normal;
-                }
-                previous_blank = false;
-                continue;
+                Event::End(_) => depth = depth.saturating_sub(1),
+                _ => {}
             }
         }
-        if i == 0 && (content == "---" || content == "+++") {
-            state = CutState::FrontMatter(if content == "---" { "---" } else { "+++" });
-            continue;
-        }
-        if previous_blank && !blank && indent == 0 && start >= last_cut + target_bytes {
-            points.push(start);
-            last_cut = start;
-        }
-        previous_blank = blank;
-        if indent > 3 {
-            continue;
-        }
-        let backticks = stripped.bytes().take_while(|b| *b == b'`').count();
-        if backticks >= 3 && !stripped[backticks..].contains('`') {
-            state = CutState::Fence {
-                marker: b'`',
-                len: backticks,
-            };
-            continue;
-        }
-        let tildes = stripped.bytes().take_while(|b| *b == b'~').count();
-        if tildes >= 3 {
-            state = CutState::Fence {
-                marker: b'~',
-                len: tildes,
-            };
-            continue;
-        }
-        let lower = stripped.to_ascii_lowercase();
-        for (open, close) in RAW_HTML {
-            let bare = open.starts_with("<!") || open == "<?";
-            let delimited = lower.len() == open.len()
-                || matches!(lower.as_bytes().get(open.len()), Some(b' ' | b'>' | b'\t'));
-            if lower.starts_with(open) && (bare || delimited) {
-                if !lower[open.len()..].contains(close) {
-                    state = CutState::RawHtml(close);
+        let limit = cut.unwrap_or(end);
+        if cut.is_some() || end == text.len() {
+            for (label, def) in events.reference_definitions().iter() {
+                if start + def.span.start < limit {
+                    plan.defs
+                        .entry(normalize_label(label))
+                        .or_insert_with(|| def.dest.to_string());
                 }
-                break;
             }
+        }
+        match cut {
+            Some(at) => {
+                plan.cuts.push(at);
+                start = at;
+                reach = target_bytes.saturating_add(PLAN_SLACK_BYTES);
+            }
+            None if end == text.len() => return plan,
+            None => reach = reach.saturating_mul(2),
         }
     }
-    points
+    if !plan.cuts.is_empty() {
+        let parser = Parser::new_ext(&text[start..], parser_options(options));
+        for (label, def) in parser.reference_definitions().iter() {
+            plan.defs
+                .entry(normalize_label(label))
+                .or_insert_with(|| def.dest.to_string());
+        }
+    }
+    plan
 }
 
-/// One piece of a document, as byte offsets into it.
+/// Whether `at` starts an unindented line whose previous line is blank.
+fn is_cut(text: &str, at: usize) -> bool {
+    let bytes = text.as_bytes();
+    if at == 0 || bytes[at - 1] != b'\n' || matches!(bytes.get(at), Some(b' ' | b'\t') | None) {
+        return false;
+    }
+    let before = &bytes[..at - 1];
+    let line_start = before
+        .iter()
+        .rposition(|&b| b == b'\n')
+        .map_or(0, |i| i + 1);
+    before[line_start..]
+        .iter()
+        .all(|b| matches!(b, b' ' | b'\t' | b'\r'))
+}
+
+/// The end of the line holding byte `at`, past its newline; the text's end when `at` is
+/// beyond it or no newline follows.
+fn line_end(text: &str, at: usize) -> usize {
+    if at >= text.len() {
+        return text.len();
+    }
+    text.as_bytes()[at..]
+        .iter()
+        .position(|&b| b == b'\n')
+        .map_or(text.len(), |i| at + i + 1)
+}
+
+/// One piece of a document.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Segment {
+    /// Byte offset of the piece's first byte in the document.
     pub start: usize,
+    /// Byte offset after the piece's last byte, exclusive.
     pub end: usize,
 }
 
@@ -317,8 +332,11 @@ impl Iterator for Segments<'_> {
     }
 }
 
-/// Pieces of about [`SEGMENT_BYTES`], parsed lazily. Their selections, joined in order with
-/// `skip` re-sorted, equal [`select`] on the whole document.
+/// Pieces of about [`SEGMENT_BYTES`], parsed lazily after one planning pass over bounded
+/// windows. A top-level block longer than a piece, such as a long table or a paragraph without
+/// blank lines, is kept whole, so memory is bounded by the larger of the two. Joined in order
+/// with `skip` re-sorted, the selections equal [`select`] on the whole document, except that a
+/// label defined twice in different pieces resolves to the definition in its own piece.
 pub fn segments<'a>(text: &'a str, options: &'a MarkdownOptions) -> Segments<'a> {
     segments_with(text, options, SEGMENT_BYTES)
 }
@@ -328,12 +346,12 @@ fn segments_with<'a>(
     options: &'a MarkdownOptions,
     target_bytes: usize,
 ) -> Segments<'a> {
-    let mut cuts = split_points(text, target_bytes);
+    let Plan { mut cuts, defs } = plan(text, options, target_bytes);
     cuts.push(text.len());
     Segments {
         text,
         options,
-        defs: reference_definitions(text),
+        defs,
         cuts: cuts.into_iter(),
         start: 0,
     }
@@ -343,12 +361,8 @@ impl Builder {
     fn event(&mut self, event: Event<'_>, range: Range<usize>, options: &MarkdownOptions) {
         if self.opaque > 0 {
             match event {
-                Event::Start(Tag::CodeBlock(_) | Tag::HtmlBlock | Tag::MetadataBlock(_)) => {
-                    self.opaque += 1
-                }
-                Event::End(TagEnd::CodeBlock | TagEnd::HtmlBlock | TagEnd::MetadataBlock(_)) => {
-                    self.opaque -= 1
-                }
+                Event::Start(Tag::CodeBlock(_) | Tag::HtmlBlock) => self.opaque += 1,
+                Event::End(TagEnd::CodeBlock | TagEnd::HtmlBlock) => self.opaque -= 1,
                 _ => {}
             }
             return;
@@ -364,7 +378,6 @@ impl Builder {
         match event {
             Event::Start(Tag::CodeBlock(_)) if !options.include_code => self.opaque_block(range),
             Event::Start(Tag::HtmlBlock) if !options.include_html => self.opaque_block(range),
-            Event::Start(Tag::MetadataBlock(_)) => self.opaque_block(range),
             Event::Start(Tag::Image { .. }) => {
                 self.extend(&range);
                 self.selection.skip.push((range.start, range.end));
@@ -625,6 +638,20 @@ mod tests {
     }
 
     #[test]
+    fn dashes_after_the_start_are_not_front_matter() {
+        let text = "Text\n\n---\nNino Beridze\nnino@x.example\n---\n\nMore\n";
+        let s = sel(text);
+        assert!(s.skip.is_empty());
+        assert!(
+            s.scan
+                .iter()
+                .any(|&(a, b)| text[a..b].contains("nino@x.example"))
+        );
+        let late = "\n---\ntitle: t\n---\n";
+        assert!(sel(late).skip.is_empty());
+    }
+
+    #[test]
     fn front_matter_is_skipped() {
         let yaml = "---\ntitle: Contacts\nemail: fm@kavkaz-freight.example\n---\n\nBody nino@kavkaz-freight.example\n";
         let s = sel(yaml);
@@ -738,49 +765,73 @@ mod tests {
             .collect()
     }
 
+    fn cuts(text: &str) -> Vec<String> {
+        first_lines(text, &plan(text, &MarkdownOptions::default(), 1).cuts)
+    }
+
     #[test]
-    fn split_points_respect_fences_html_and_front_matter() {
-        let text = "---\ntitle: t\n\n---\n\nPara one [x][r].\n\n```\ncode\n\nmore code a@b.example\n```\n\n<script>\nvar a;\n\nvar b;\n</script>\n\n~~~~\ntilde\n\n~~~\nstill code\n~~~~\n\n<!--\n\ncomment@x.example\n\n-->\n\nLast para y@z.example.\n\n[r]: mailto:ref@x.example\n";
+    fn cuts_fall_between_top_level_blocks_only() {
+        let text = "---\ntitle: t\n---\n\nPara one [x][r].\n\n```\ncode\n\nmore code a@b.example\n```\n\n<script>\nvar a;\n\nvar b;\n</script>\n\n~~~~\ntilde\n\n~~~\nstill code\n~~~~\n\n<!--\n\ncomment@x.example\n\n-->\n\n<!DOCTYPE note\n\nstill html\n\n>\n\n<div>\n```\n</div>\n\nLast para y@z.example.\n\n[r]: mailto:ref@x.example\n";
         assert_eq!(
-            first_lines(text, &split_points(text, 1)),
+            cuts(text),
             [
                 "Para one [x][r].",
                 "```",
                 "<script>",
                 "~~~~",
                 "<!--",
-                "Last para y@z.example.",
-                "[r]: mailto:ref@x.example"
+                "<!DOCTYPE note",
+                "<div>",
+                "Last para y@z.example."
             ]
         );
     }
 
     #[test]
-    fn split_points_skip_indented_lines_and_respect_the_target() {
-        let text =
-            "- item\n\n    continued in the item\n\n  still the item\n\nTop level.\n\nNext.\n";
+    fn indented_and_tab_indented_lines_are_never_cuts() {
+        let text = "- item\n\n    continued in the item\n\n\tstill the item\n\n  and this\n\nTop level.\n\nNext.\n";
+        assert_eq!(cuts(text), ["Top level.", "Next."]);
+        let options = MarkdownOptions::default();
         assert_eq!(
-            first_lines(text, &split_points(text, 1)),
-            ["Top level.", "Next."]
+            first_lines(text, &plan(text, &options, 60).cuts),
+            ["Top level."]
         );
-        assert_eq!(first_lines(text, &split_points(text, 50)), ["Top level."]);
-        assert!(split_points(text, text.len()).is_empty());
+        assert!(plan(text, &options, text.len()).cuts.is_empty());
     }
 
     #[test]
-    fn reference_definitions_are_collected_and_normalized() {
-        let defs = reference_definitions(
-            "x\n\n  [ Billing  Team ]: <mailto:billing@x.example> \"t\"\n[b]: mailto:b@x.example\n[B]: mailto:ignored@x.example\n    [indented]: mailto:code@x.example\n",
-        );
+    fn definitions_are_the_parsers_own() {
+        let text = "Intro.\n\n  [ Billing  Team ]: <mailto:billing@x.example> \"t\"\n\n[b]: mailto:b@x.example\n[B]: mailto:ignored@x.example\n\n[multi]:\n  mailto:multi@x.example\n\n> [quoted]: mailto:q@x.example\n\n```\n[fenced]: mailto:code@x.example\n```\n\nA paragraph\n[continued]: mailto:not@x.example\n\nEnd.\n";
+        let defs = plan(text, &MarkdownOptions::default(), 1).defs;
+        let get = |k: &str| defs.get(k).map(String::as_str);
+        assert_eq!(get("billing team"), Some("mailto:billing@x.example"));
+        assert_eq!(get("b"), Some("mailto:b@x.example"));
+        assert_eq!(get("multi"), Some("mailto:multi@x.example"));
+        assert_eq!(get("quoted"), Some("mailto:q@x.example"));
+        assert_eq!(get("fenced"), None);
+        assert_eq!(get("continued"), None);
+    }
+
+    #[test]
+    fn a_document_without_cuts_shares_no_definitions() {
+        let text = "See the note below.\n[b]: tel:+995322123456\n\n[b]\n";
+        let p = plan(text, &MarkdownOptions::default(), SEGMENT_BYTES);
+        assert!(p.cuts.is_empty() && p.defs.is_empty());
         assert_eq!(
-            defs.get("billing team").map(String::as_str),
-            Some("mailto:billing@x.example")
+            join(segments(text, &MarkdownOptions::default())),
+            select(text, &MarkdownOptions::default())
         );
-        assert_eq!(
-            defs.get("b").map(String::as_str),
-            Some("mailto:b@x.example")
+    }
+
+    #[test]
+    fn a_block_longer_than_the_window_is_kept_whole() {
+        let row = "| a | b@x.example |\n";
+        let text = format!(
+            "Intro.\n\n| h | e |\n| --- | --- |\n{}\nAfter.\n",
+            row.repeat(4000)
         );
-        assert!(!defs.contains_key("indented"));
+        let p = plan(&text, &MarkdownOptions::default(), 1);
+        assert_eq!(first_lines(&text, &p.cuts), ["| h | e |", "After."]);
     }
 
     #[test]
@@ -790,7 +841,7 @@ mod tests {
             + "[b]: mailto:billing@x.example\n";
         let options = MarkdownOptions::default();
         let segmented = segments_with(&text, &options, 1);
-        assert_eq!(segmented.cuts.len(), 6);
+        assert_eq!(segmented.cuts.len(), 5);
         let joined = join(segmented);
         assert_eq!(joined, select(&text, &options));
         assert_eq!(joined.links.len(), 1);
@@ -833,6 +884,17 @@ mod tests {
             include_str!("../../fixtures/markdown/international.md").to_string(),
             MarkdownOptions::default(),
         ));
+        for text in [
+            "- item\n\n\tcontinued nino@kavkaz-freight.example\n\nTop.\n",
+            "<!DOCTYPE note\n\nhidden nino@kavkaz-freight.example\n\n>\n\nAfter.\n",
+            "<div>\n```\n</div>\n\nProse.\n\n```\ncode\n\nhidden@kavkaz-freight.example\n```\n\nEnd.\n",
+            "Intro.\n\n---\ntitle: not front matter\n---\n\nEnd.\n",
+            "Call [Nino][ops] today.\n\n```\n[ops]: mailto:ops@x.example\n```\n\nEnd.\n",
+            "See the note below.\n[b]: tel:+995322123456\n\n[b] here.\n",
+            "Write to [ops].\n\nFiller.\n\n[ops]:\n  mailto:ops@x.example\n\n> [q]: mailto:q@x.example\n\n[q] too.\n",
+        ] {
+            inputs.push((text.to_string(), MarkdownOptions::default()));
+        }
         inputs.push((
             "- item\n\n    continued para a@x.example\n\n  ```\n  fenced\n\n  in item\n  ```\n\nTop.\n".into(),
             MarkdownOptions {

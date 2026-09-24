@@ -57,7 +57,12 @@ fn parse_args() -> Result<Option<Args>, String> {
             "--format" => {
                 args.format = match it.next().ok_or("--format needs a value")?.as_str() {
                     "text" => Format::Text,
-                    "markdown" => Format::Markdown(MarkdownOptions::default()),
+                    "markdown" if cfg!(feature = "markdown") => {
+                        Format::Markdown(MarkdownOptions::default())
+                    }
+                    "markdown" => {
+                        return Err("--format markdown requires the `markdown` feature".into());
+                    }
                     v => return Err(format!("unknown format `{v}`")),
                 }
             }

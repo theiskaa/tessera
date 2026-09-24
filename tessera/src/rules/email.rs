@@ -100,7 +100,6 @@ pub fn scan(text: &str) -> Vec<Entity> {
     out
 }
 
-/// `Some(confidence)` when local and domain satisfy the accepted grammar.
 /// `candidate` as one email address, as the scanner would read it in running text: the entity
 /// when the scan finds exactly one and it covers the whole string.
 #[cfg(feature = "markdown")]
@@ -112,6 +111,7 @@ pub(crate) fn whole(candidate: &str) -> Option<Entity> {
     }
 }
 
+/// `Some(confidence)` when local and domain satisfy the accepted grammar.
 fn validate(local: &[u8], domain: &[u8]) -> Option<f32> {
     if local.is_empty()
         || local.len() > MAX_LOCAL

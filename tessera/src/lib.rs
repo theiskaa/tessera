@@ -453,8 +453,9 @@ pub enum Format {
     #[default]
     Text,
     /// Markdown. Only prose ranges are scanned, and link destinations stand for their link
-    /// text; see [`MarkdownOptions`]. Offsets still index the Markdown source. Requires the
-    /// `markdown` feature, otherwise [`Error::UnsupportedFormat`].
+    /// text; see [`MarkdownOptions`]. Offsets still index the Markdown source. `detect` and
+    /// `extract_contacts` require the `markdown` feature for it, otherwise
+    /// [`Error::UnsupportedFormat`]; `parse_address` ignores the format.
     Markdown(MarkdownOptions),
 }
 
@@ -550,7 +551,9 @@ impl Tessera {
     /// Emails and phones come from the rules; people, organizations, and addresses from the
     /// detector, run over windows of a long document. A detected address is then parsed into
     /// components and kept only if the parser finds at least two distinct labels in it, unless
-    /// `include_uncertain`, which keeps it as uncertain.
+    /// `include_uncertain`, which keeps it as uncertain. With `query.format` Markdown, only prose
+    /// is scanned and offsets index the Markdown source; a build without the `markdown` feature
+    /// returns [`Error::UnsupportedFormat`] for it.
     pub fn detect(&self, text: &str, query: &Query<'_>) -> Result<Vec<Entity>, Error> {
         match &query.format {
             Format::Text => self.detect_masked(text, query, None, Vec::new()),
@@ -589,7 +592,7 @@ impl Tessera {
 
     /// `detect` where only the bytes in `mask` may hold entities (`None` is plain text), with
     /// `linked` rule entities from link destinations winning over scanned ones they overlap.
-    pub(crate) fn detect_masked(
+    fn detect_masked(
         &self,
         text: &str,
         query: &Query<'_>,
@@ -618,10 +621,10 @@ impl Tessera {
 
     /// Entities grouped into contacts, plus everything that could not be assigned.
     ///
-    /// Runs [`Tessera::detect`] with the same query, then the deterministic grouper. A
-    /// contact's confidence is the minimum over its anchor and its assignments; contacts below
-    /// the medium band are dissolved into `unassigned` unless `query.include_uncertain` is set.
-    /// A wrong assignment is treated as worse than an unassigned entity, so ties go to
+    /// Runs [`Tessera::detect`] with the same query, format included, then the deterministic
+    /// grouper. A contact's confidence is the minimum over its anchor and its assignments;
+    /// contacts below the medium band are dissolved into `unassigned` unless
+    /// `query.include_uncertain` is set. A wrong assignment is treated as worse than an unassigned entity, so ties go to
     /// `unassigned`. An instance without people or organizations has no anchors: its contacts
     /// are empty and every entity is unassigned.
     pub fn extract_contacts(&self, text: &str, query: &Query<'_>) -> Result<Extraction, Error> {

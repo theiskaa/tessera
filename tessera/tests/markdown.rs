@@ -1,5 +1,5 @@
-//! Fixture-driven tests for `fixtures/markdown/`, natively and in wasm: the selection, the
-//! rules-only detection path, and in wasm the UTF-16 slicing of a real JavaScript string.
+//! Fixture-driven tests for `fixtures/markdown/`, natively and in wasm: the selection and the
+//! detection path. UTF-16 offsets through the bindings are checked in `wasm_api.rs`.
 
 #![cfg(feature = "markdown")]
 
@@ -96,6 +96,9 @@ struct MustNot {
     text: String,
 }
 
+/// Without the phone tables no number is scanned, so phone expectations are skipped.
+const PHONES: bool = cfg!(feature = "phone-metadata");
+
 fn cases() -> impl Iterator<Item = (&'static str, Case)> {
     FIXTURES.iter().flat_map(|(file, json)| {
         let parsed: File = serde_json::from_str(json).unwrap_or_else(|e| panic!("{file}: {e}"));
@@ -167,12 +170,13 @@ fn rules_only_detect_matches_fixture() {
         let got = t
             .detect(&case.input, &query(&case))
             .unwrap_or_else(|e| panic!("{label}: {e}"));
-        assert_eq!(
-            got.len(),
-            case.expected.len(),
-            "{label}: count; got {got:?}"
-        );
-        for (e, want) in got.iter().zip(&case.expected) {
+        let expected: Vec<&Expected> = case
+            .expected
+            .iter()
+            .filter(|e| PHONES || e.kind != "phone")
+            .collect();
+        assert_eq!(got.len(), expected.len(), "{label}: count; got {got:?}");
+        for (e, want) in got.iter().zip(expected) {
             assert_eq!(
                 e.kind.as_str(),
                 want.kind,
@@ -224,35 +228,6 @@ fn rules_only_detect_matches_fixture() {
     }
 }
 
-#[cfg(target_arch = "wasm32")]
-#[test]
-fn utf16_offsets_slice_the_js_string() {
-    let t = rules_only();
-    let international = (
-        "international",
-        INTERNATIONAL_MD.to_string(),
-        MarkdownOptions::default(),
-    );
-    let inputs = cases()
-        .map(|(file, case)| (file, case.input, options(&case.options)))
-        .chain([international]);
-    for (file, input, opts) in inputs {
-        let query = Query {
-            format: Format::Markdown(opts),
-            ..Query::default()
-        };
-        let got = t.detect(&input, &query).unwrap();
-        assert!(!got.is_empty(), "{file}");
-        let js = js_sys::JsString::from(input.as_str());
-        for e in &got {
-            let a = input[..e.start].encode_utf16().count() as u32;
-            let b = input[..e.end].encode_utf16().count() as u32;
-            let sliced: String = js.slice(a, b).into();
-            assert_eq!(sliced, e.text(&input), "{file}: utf-16 slice");
-        }
-    }
-}
-
 /// With `SEGMENT_BYTES` every fixture is one segment, so this proves the public plumbing; the
 /// markdown module's unit tests cut the same fixtures at every blank line.
 #[test]
@@ -281,6 +256,7 @@ fn every_markdown_fixture_is_listed() {
     common::assert_lists_every_fixture("markdown", &listed);
 }
 
+#[cfg_attr(not(feature = "phone-metadata"), allow(dead_code))]
 #[derive(Deserialize)]
 struct Document {
     options: Options,
@@ -306,6 +282,7 @@ struct GoldEntity {
     region: Option<String>,
 }
 
+#[cfg_attr(not(feature = "phone-metadata"), allow(dead_code))]
 #[derive(Deserialize)]
 struct GoldContact {
     person: Option<usize>,
@@ -352,7 +329,7 @@ fn international_selection_and_rules() {
     let want: Vec<&GoldEntity> = doc
         .entities
         .iter()
-        .filter(|e| e.kind == "email" || e.kind == "phone")
+        .filter(|e| e.kind == "email" || (PHONES && e.kind == "phone"))
         .collect();
     assert_eq!(got.len(), want.len(), "rule entities: {got:?}");
     for (e, w) in got.iter().zip(&want) {
@@ -372,6 +349,7 @@ fn international_selection_and_rules() {
     }
 }
 
+#[cfg_attr(not(feature = "phone-metadata"), allow(dead_code))]
 /// Every way the model's output departs from the gold document, as readable lines. Extra
 /// entities outside every gold span are reported, not listed: they are quality findings.
 fn model_departures(doc: &Document, out: &tessera::Extraction) -> Vec<String> {
@@ -475,6 +453,7 @@ fn model_departures(doc: &Document, out: &tessera::Extraction) -> Vec<String> {
 /// The gold document stays as a person would label it; `known_failures` lists the model's
 /// current departures from it, so a regression and an improvement both fail until the list is
 /// updated in the same change.
+#[cfg(feature = "phone-metadata")]
 #[test]
 fn international_contacts_with_model() {
     let doc = international();

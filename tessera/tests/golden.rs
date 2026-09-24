@@ -146,6 +146,9 @@ fn parser_golden_vectors() {
     common::report!("golden parser: {checked} cases, max logit difference {worst:e}");
 }
 
+/// The vectors were exported from the default build, whose phone rule spans are detector
+/// input features.
+#[cfg(feature = "phone-metadata")]
 #[test]
 fn detector_golden_vectors() {
     let tessera = common::load_all();
