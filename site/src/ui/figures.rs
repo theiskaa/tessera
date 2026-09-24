@@ -346,8 +346,8 @@ fn TrainingData() -> impl IntoView {
 fn Sizes() -> impl IntoView {
     let largest = stats::BUNDLE_GZIP.max(1) as f64;
     let bars = [
-        ("address model, int8", stats::BUNDLE_GZIP),
-        ("library wasm, rules and parser", stats::WASM_GZIP),
+        ("detector and parser, int8", stats::BUNDLE_GZIP),
+        ("library wasm", stats::WASM_GZIP),
         ("of which phone tables", stats::PHONE_TABLES_GZIP),
     ]
     .into_iter()
@@ -364,7 +364,7 @@ fn Sizes() -> impl IntoView {
             {chart("wide-label", None, bars)}
             <p class="note">
                 {format!(
-                    "The phone tables cover {} regions, generated from {}, in place of the phonenumber crate ({} gzip). The library wasm includes the parser's forward pass; its SIMD build is {}. This page's own wasm is larger because it includes the interface.",
+                    "The phone tables cover {} regions, generated from {}, in place of the phonenumber crate ({} gzip). The library wasm holds the rules and both networks' forward passes; its SIMD build is {}. This page's own wasm is larger because it includes the interface.",
                     stats::PHONE_REGIONS,
                     stats::PHONE_SOURCE,
                     bytes(stats::PHONE_METADATA_GZIP),

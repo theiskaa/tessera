@@ -6,16 +6,14 @@ use serde::{Deserialize, Serialize};
 /// What the page asks the worker.
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Request {
-    /// Detect emails and phones in `text`, and parse each address span.
-    Analyze {
+    /// Detect every kind in `text`.
+    Detect {
         /// Echoed in the answer, so the page can drop answers to text it no longer shows.
         id: u64,
         /// The document.
         text: String,
         /// Regions for phone numbers written without a country code.
         country_hint: Vec<String>,
-        /// Byte ranges of `text` known to hold one address each.
-        addresses: Vec<(usize, usize)>,
     },
     /// Split `text`, known to be one address, into its parts.
     ParseAddress {
@@ -31,11 +29,11 @@ pub enum Request {
 pub enum Response {
     /// The bundle could not be fetched, verified, or loaded, so no request can be served.
     LoadFailed(String),
-    /// The answer to `Request::Analyze` with the same `id`.
-    Analyzed {
+    /// The answer to `Request::Detect` with the same `id`.
+    Detected {
         /// The request's `id`.
         id: u64,
-        /// Emails, phones, and parsed addresses, in document order, or the library's error.
+        /// Every entity `detect` returned, in document order, or the library's error.
         result: Result<Vec<Found>, String>,
     },
     /// The answer to `Request::ParseAddress` with the same `id`.
@@ -47,15 +45,19 @@ pub enum Response {
     },
 }
 
-/// The kinds the page shows.
+/// The kinds the page shows, mirroring `tessera::Kind`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FoundKind {
+    /// Found by the detector.
+    Person,
+    /// Found by the detector.
+    Org,
+    /// Found by the detector and split by the parser.
+    Address,
     /// Found by the email rules.
     Email,
     /// Found by the phone rules.
     Phone,
-    /// A given address span, split by the parser.
-    Address,
 }
 
 /// One entity the library returned.
@@ -95,19 +97,19 @@ pub struct Part {
 }
 
 impl Found {
-    /// Mirrors `entity`, whose offsets are relative to a span starting `offset` bytes into the
-    /// document. `None` for kinds other than the ones the page shows.
-    pub fn from_entity(entity: &tessera::Entity, offset: usize) -> Option<Found> {
+    /// Mirrors `entity`, whose offsets are into the document.
+    pub fn from_entity(entity: &tessera::Entity) -> Found {
         let kind = match entity.kind {
+            tessera::Kind::Person => FoundKind::Person,
+            tessera::Kind::Org => FoundKind::Org,
+            tessera::Kind::Address => FoundKind::Address,
             tessera::Kind::Email => FoundKind::Email,
             tessera::Kind::Phone => FoundKind::Phone,
-            tessera::Kind::Address => FoundKind::Address,
-            tessera::Kind::Person | tessera::Kind::Org => return None,
         };
-        Some(Found {
+        Found {
             kind,
-            start: offset + entity.start,
-            end: offset + entity.end,
+            start: entity.start,
+            end: entity.end,
             confidence: entity.confidence,
             review_recommended: entity.review_recommended,
             source: entity.source.as_str().to_string(),
@@ -118,11 +120,11 @@ impl Found {
                 .iter()
                 .map(|c| Part {
                     label: c.label.as_str().to_string(),
-                    start: offset + c.start,
-                    end: offset + c.end,
+                    start: c.start,
+                    end: c.end,
                     confidence: c.confidence,
                 })
                 .collect(),
-        })
+        }
     }
 }

@@ -6,7 +6,6 @@ mod figures;
 mod format;
 mod highlight;
 mod json;
-mod marks;
 mod output;
 mod parse;
 mod stream;
@@ -18,6 +17,7 @@ use leptos::task::spawn_local;
 use wasm_bindgen::{JsCast, JsValue};
 
 use crate::inference::Inference;
+use crate::protocol::FoundKind;
 use crate::samples::SAMPLES;
 use crate::stats;
 use demo::{Demo, DemoState, Failure};
@@ -31,19 +31,28 @@ const SOURCE_URL: &str = "https://github.com/theiskaa/tessera";
 
 /// The JavaScript API as `tessera/js/index.d.ts` declares it. The import path is only an example
 /// of a relative import: this page runs the Rust crate in its own worker and does not serve the
-/// package. An instance that loads the parser rejects `detect`, so the snippet uses two. The field
-/// comments name the main fields, not all of them.
+/// package. The field comments name the main fields, not all of them.
 const SNIPPET: &str = "import { createTessera } from './tessera/index.js'
 
-const rules = await createTessera({ kinds: ['email', 'phone'] })
-const found = await rules.detect(text)
-// [{ kind: 'email' | 'phone', text, start, end, confidence, ... }]
+const tessera = await createTessera({ modelUrl, integrity })
+const found = await tessera.detect(text, { countryHint: ['GB'] })
+// [{ kind: 'person' | 'org' | 'address' | 'email' | 'phone',
+//    text, start, end, confidence, source, ... }]
+// addresses also carry components: [{ label, text, start, end, confidence }]
 
-const parser = await createTessera({ kinds: ['address'], modelUrl, integrity })
-const address = await parser.parseAddress('Flat 4, 221B Baker Street, London NW1 6XE')
-// { kind: 'address', text, start, end, confidence, ...,
-//   components: [{ label, text, start, end, confidence }] }
+const address = await tessera.parseAddress('Flat 4, 221B Baker Street, London NW1 6XE')
 // offsets are UTF-16 code units";
+
+/// How the headline names each kind.
+fn plural(kind: FoundKind) -> &'static str {
+    match kind {
+        FoundKind::Person => "people",
+        FoundKind::Org => "organizations",
+        FoundKind::Address => "addresses",
+        FoundKind::Phone => "phones",
+        FoundKind::Email => "emails",
+    }
+}
 
 /// The whole page. Spawns the worker and sends it the first document; the worker answers once
 /// its bundle is loaded.
@@ -149,15 +158,37 @@ fn Header() -> impl IntoView {
 
 #[component]
 fn Intro() -> impl IntoView {
+    let last = demo::KINDS.len() - 1;
+    let kinds = demo::KINDS
+        .iter()
+        .enumerate()
+        .map(|(i, &kind)| {
+            let joint = match i {
+                0 => "",
+                i if i == last => " and ",
+                _ => ", ",
+            };
+            view! {
+                {joint}
+                <span
+                    class=format!("hit k-{}", json::kind_name(kind))
+                    data-anim=""
+                    style=format!("--i: {i}")
+                >
+                    {plural(kind)}
+                </span>
+            }
+        })
+        .collect_view();
     view! {
         <section class="intro">
             <div>
-                <h1>"Contact details in the browser"</h1>
-                <p class="subtitle">"emails, phone numbers and addresses, with exact spans"</p>
+                <h1>"Find " {kinds} " in text"</h1>
+                <p class="subtitle">"in the browser, with exact spans"</p>
             </div>
             <pre class="code">{highlight::render(highlight::javascript(SNIPPET))}</pre>
             <p>
-                "Finds emails and phone numbers with validating rules and splits addresses into parts with an int8 network, in WebAssembly. Offsets are UTF-8 bytes from Rust and UTF-16 code units from JavaScript."
+                "Emails and phone numbers are found by validating rules, people, organizations and addresses by an int8 network, and each address is split into its parts by a second one, all in WebAssembly. Offsets are UTF-8 bytes from Rust and UTF-16 code units from JavaScript."
             </p>
         </section>
     }

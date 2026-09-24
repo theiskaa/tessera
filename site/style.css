@@ -14,6 +14,8 @@
   --fail: #b42318;
 }
 
+.k-person, .c-person { --fg: #1d4ed8; --bg: rgba(29, 78, 216, 0.11); }
+.k-org, .c-org { --fg: #7e22ce; --bg: rgba(126, 34, 206, 0.11); }
 .k-address, .c-address { --fg: #0f7a4f; --bg: rgba(15, 122, 79, 0.13); }
 .k-phone, .c-phone { --fg: #b45309; --bg: rgba(180, 83, 9, 0.14); }
 .k-email, .c-email { --fg: #be185d; --bg: rgba(190, 24, 93, 0.12); }
@@ -24,8 +26,6 @@
 @keyframes tsDimB { from { color: var(--ink); } }
 @keyframes tsLitA { from { background-color: transparent; box-shadow: inset 0 0 0 transparent; color: var(--ink); } }
 @keyframes tsLitB { from { background-color: transparent; box-shadow: inset 0 0 0 transparent; color: var(--ink); } }
-@keyframes tsMarkA { from { background-color: transparent; background-size: 6px 0; color: var(--ink); } }
-@keyframes tsMarkB { from { background-color: transparent; background-size: 6px 0; color: var(--ink); } }
 @keyframes tsLand { from { opacity: 0; } }
 
 * { box-sizing: border-box; }
@@ -69,7 +69,22 @@ p { margin: 0; }
 .top nav { display: flex; gap: 20px; }
 
 .intro { max-width: 92ch; display: flex; flex-direction: column; gap: 20px; }
-.intro h1 { margin: 0; font-size: 22px; font-weight: 500; color: var(--ink-strong); }
+.intro h1 {
+  margin: 0;
+  font-size: 34px;
+  line-height: 1.3;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  color: var(--ink-strong);
+  text-wrap: balance;
+}
+/* The headline's kind words are drawn as the demo draws what it finds, and light up in turn. */
+.intro h1 .hit {
+  padding: 0 0.1em;
+  background: var(--bg);
+  box-shadow: inset 0 -3px 0 var(--fg);
+  animation: tsLitA 0.5s ease-out calc(0.25s + var(--i, 0) * 0.16s) both;
+}
 .intro .subtitle { margin-top: 4px; color: var(--muted); }
 
 .code {
@@ -237,15 +252,6 @@ p { margin: 0; }
 .doc .hit { color: var(--ink-strong); background: var(--bg); box-shadow: inset 0 -2px 0 var(--fg); }
 .doc .hit.selected { outline: 2px solid var(--fg); outline-offset: 2px; }
 
-/* Address lines are given to the parser, not found, so their underline is dashed. */
-.doc .hit.k-address, .swatch.k-address {
-  box-shadow: none;
-  background-image: linear-gradient(90deg, var(--fg) 4px, transparent 4px);
-  background-size: 6px 2px;
-  background-repeat: repeat-x;
-  background-position: 0 100%;
-}
-
 .scan {
   position: absolute;
   left: -24px;
@@ -266,8 +272,6 @@ p { margin: 0; }
 .panes.scanning.run-b .plain { animation: tsDimB 0.35s ease-out calc(var(--f, 0) * var(--scan, 1.8s)) both; }
 .panes.scanning.run-a .hit { animation: tsLitA 0.3s ease-out calc(var(--f, 0) * var(--scan, 1.8s)) both; }
 .panes.scanning.run-b .hit { animation: tsLitB 0.3s ease-out calc(var(--f, 0) * var(--scan, 1.8s)) both; }
-.panes.scanning.run-a .hit.k-address { animation-name: tsMarkA; }
-.panes.scanning.run-b .hit.k-address { animation-name: tsMarkB; }
 .doc .hit.fresh, .rows .row, .json .piece { animation: tsLand 0.14s ease-out both; }
 
 @media (prefers-reduced-motion: reduce) {
@@ -438,7 +442,7 @@ p { margin: 0; }
   .brand { gap: 8px; }
   .top nav a { display: inline-block; padding: 10px 0; }
   .intro { gap: 14px; }
-  .intro h1 { font-size: 18px; }
+  .intro h1 { font-size: 24px; }
   .code { padding: 14px; font-size: 11.5px; line-height: 1.65; }
   .code .t-com { display: none; }
   .demo { gap: 10px; }

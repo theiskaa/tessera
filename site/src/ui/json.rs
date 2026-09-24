@@ -32,6 +32,8 @@ fn confidence(c: f32) -> String {
 
 pub(crate) fn kind_name(kind: FoundKind) -> &'static str {
     match kind {
+        FoundKind::Person => "person",
+        FoundKind::Org => "org",
         FoundKind::Address => "address",
         FoundKind::Phone => "phone",
         FoundKind::Email => "email",
@@ -154,11 +156,8 @@ mod tests {
             normalized: None,
             region: None,
         };
-        let mut all: Vec<Found> = entities
-            .iter()
-            .filter_map(|e| Found::from_entity(e, 0))
-            .collect();
-        all.extend(Found::from_entity(&address, 0));
+        let mut all: Vec<Found> = entities.iter().map(Found::from_entity).collect();
+        all.push(Found::from_entity(&address));
         let printed = whole(text, &all);
         let ours: serde_json::Value = serde_json::from_str(&printed).unwrap();
         let want: Vec<serde_json::Value> = entities

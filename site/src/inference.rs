@@ -12,21 +12,14 @@ const CHECKSUM: &str = include_str!("../../models/tessera-v1.sha256");
 
 /// The worker's state.
 pub struct Inference {
-    models: Loading,
+    tessera: Loading,
     waiting: Vec<(HandlerId, Request)>,
 }
 
 enum Loading {
     Pending,
-    Ready(Box<Models>),
+    Ready(Box<Tessera>),
     Failed(String),
-}
-
-/// `detect` needs an instance loaded for emails and phones only, so the rules and the parser are
-/// two instances.
-struct Models {
-    rules: Tessera,
-    parser: Tessera,
 }
 
 /// Messages the worker sends itself.
@@ -38,25 +31,17 @@ impl Worker for Inference {
     type Output = Response;
 
     fn create(scope: &WorkerScope<Self>) -> Self {
-        scope.send_future(async { Loaded(load_parser().await) });
+        scope.send_future(async { Loaded(load().await) });
         Inference {
-            models: Loading::Pending,
+            tessera: Loading::Pending,
             waiting: Vec::new(),
         }
     }
 
-    fn update(&mut self, scope: &WorkerScope<Self>, Loaded(parser): Loaded) {
-        let rules = Tessera::load(
-            &[],
-            Config {
-                kinds: Kind::Email | Kind::Phone,
-                expected_checksum: None,
-            },
-        )
-        .map_err(|e| e.to_string());
-        self.models = match (parser, rules) {
-            (Ok(parser), Ok(rules)) => Loading::Ready(Box::new(Models { rules, parser })),
-            (Err(e), _) | (_, Err(e)) => Loading::Failed(e),
+    fn update(&mut self, scope: &WorkerScope<Self>, Loaded(tessera): Loaded) {
+        self.tessera = match tessera {
+            Ok(tessera) => Loading::Ready(Box::new(tessera)),
+            Err(e) => Loading::Failed(e),
         };
         for (id, request) in std::mem::take(&mut self.waiting) {
             self.received(scope, request, id);
@@ -64,75 +49,45 @@ impl Worker for Inference {
     }
 
     fn received(&mut self, scope: &WorkerScope<Self>, request: Request, id: HandlerId) {
-        match &self.models {
+        match &self.tessera {
             Loading::Pending => self.waiting.push((id, request)),
             Loading::Failed(message) => scope.respond(id, Response::LoadFailed(message.clone())),
-            Loading::Ready(models) => scope.respond(id, models.answer(request)),
+            Loading::Ready(tessera) => scope.respond(id, answer(tessera, request)),
         }
     }
 }
 
-impl Models {
-    fn answer(&self, request: Request) -> Response {
-        match request {
-            Request::ParseAddress { id, text } => Response::Parsed {
+fn answer(tessera: &Tessera, request: Request) -> Response {
+    match request {
+        Request::ParseAddress { id, text } => Response::Parsed {
+            id,
+            result: tessera
+                .parse_address(&text, &Query::default())
+                .map(|entity| Found::from_entity(&entity))
+                .map_err(|e| format!("{e:?}: {e}")),
+        },
+        Request::Detect {
+            id,
+            text,
+            country_hint,
+        } => {
+            let hints: Vec<&str> = country_hint.iter().map(String::as_str).collect();
+            let query = Query {
+                country_hint: &hints,
+                ..Query::default()
+            };
+            Response::Detected {
                 id,
-                result: self
-                    .parser
-                    .parse_address(&text, &Query::default())
-                    .map_err(|e| format!("{e:?}: {e}"))
-                    .and_then(|entity| {
-                        Found::from_entity(&entity, 0)
-                            .ok_or_else(|| "the parser returned no address".to_string())
-                    }),
-            },
-            Request::Analyze {
-                id,
-                text,
-                country_hint,
-                addresses,
-            } => Response::Analyzed {
-                id,
-                result: self.analyze(&text, &country_hint, &addresses),
-            },
+                result: tessera
+                    .detect(&text, &query)
+                    .map(|found| found.iter().map(Found::from_entity).collect())
+                    .map_err(|e| format!("{e:?}: {e}")),
+            }
         }
-    }
-
-    fn analyze(
-        &self,
-        text: &str,
-        country_hint: &[String],
-        addresses: &[(usize, usize)],
-    ) -> Result<Vec<Found>, String> {
-        let hints: Vec<&str> = country_hint.iter().map(String::as_str).collect();
-        let query = Query {
-            country_hint: &hints,
-            ..Query::default()
-        };
-        let mut found: Vec<Found> = self
-            .rules
-            .detect(text, &query)
-            .map_err(|e| e.to_string())?
-            .iter()
-            .filter_map(|e| Found::from_entity(e, 0))
-            .collect();
-        // The page sends only spans it located on the text itself, so each one slices it.
-        for (start, span) in addresses
-            .iter()
-            .filter_map(|&(start, end)| Some((start, text.get(start..end)?)))
-        {
-            let entity = self
-                .parser
-                .parse_address(span, &Query::default())
-                .map_err(|e| format!("{e:?}: {e}"))?;
-            found.extend(Found::from_entity(&entity, start));
-        }
-        found.sort_by_key(|f| (f.start, f.end));
-        Ok(found)
     }
 }
 
-async fn load_parser() -> Result<Tessera, String> {
+async fn load() -> Result<Tessera, String> {
     let response = gloo_net::http::Request::get(BUNDLE_URL)
         .send()
         .await
@@ -147,7 +102,7 @@ async fn load_parser() -> Result<Tessera, String> {
     Tessera::load(
         &bytes,
         Config {
-            kinds: Kind::Address.into(),
+            kinds: Kind::all(),
             expected_checksum: Some(CHECKSUM.trim()),
         },
     )

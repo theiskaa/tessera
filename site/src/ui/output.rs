@@ -18,7 +18,9 @@ fn extra(found: &Found) -> String {
             .collect::<Vec<_>>()
             .join(" "),
         FoundKind::Email => format!("{} {:.2}", found.source, found.confidence),
-        FoundKind::Address => format!("{} {:.3}", found.source, found.confidence),
+        FoundKind::Person | FoundKind::Org | FoundKind::Address => {
+            format!("{} {:.3}", found.source, found.confidence)
+        }
     }
 }
 
@@ -75,8 +77,8 @@ pub(crate) fn OutputPane(state: DemoState) -> impl IntoView {
         }
     };
 
-    // What the pane holds, reduced to what changes its layout, so a new answer or an added
-    // address updates the lists in place instead of rebuilding them.
+    // What the pane holds, reduced to what changes its layout, so a new answer updates the lists
+    // in place instead of rebuilding them.
     let content = Memo::new(move |_| match state.failure.get() {
         Some(Failure::Model(message)) => {
             Content::Error(format!("could not load the model: {message}"))
@@ -119,7 +121,7 @@ pub(crate) fn OutputPane(state: DemoState) -> impl IntoView {
         <div class="out-pane">
             <div class="pane-head">
                 <span class="out-title">
-                    <span class="out-name">"detect · parse_address · "</span>
+                    <span class="out-name">"detect · "</span>
                     <select
                         class="hint"
                         aria-label="region for phone numbers without a country code"

@@ -52,52 +52,52 @@ pub(crate) struct Funnel {
 }
 
 /// Exact-parse rate of the shipped int8 bundle through the library.
-pub(crate) const EXACT_TESSERA: f64 = 0.9504;
+pub(crate) const EXACT_TESSERA: f64 = 0.9487;
 /// Exact-parse rate of the rules baseline.
 pub(crate) const EXACT_RULES: f64 = 0.2085;
 
 /// Exact parses per country, the shipped bundle against the rules baseline.
 #[rustfmt::skip]
 pub(crate) const BY_COUNTRY: &[Country] = &[
-    Country { code: "GB", name: "Great Britain", rows: 3000, tessera: 0.955, rules: 0.278 },
-    Country { code: "DE", name: "Germany", rows: 3000, tessera: 0.943, rules: 0.4543 },
-    Country { code: "GE", name: "Georgia", rows: 3000, tessera: 0.9843, rules: 0.144 },
-    Country { code: "US", name: "United States", rows: 3000, tessera: 0.981, rules: 0.1603 },
-    Country { code: "JP", name: "Japan", rows: 2918, tessera: 0.8869, rules: 0.0003 },
+    Country { code: "GB", name: "Great Britain", rows: 3000, tessera: 0.9553, rules: 0.278 },
+    Country { code: "DE", name: "Germany", rows: 3000, tessera: 0.9417, rules: 0.4543 },
+    Country { code: "GE", name: "Georgia", rows: 3000, tessera: 0.9833, rules: 0.144 },
+    Country { code: "US", name: "United States", rows: 3000, tessera: 0.98, rules: 0.1603 },
+    Country { code: "JP", name: "Japan", rows: 2918, tessera: 0.8814, rules: 0.0003 },
 ];
 
 /// Per-label F1 of the trained checkpoint, best first.
 #[rustfmt::skip]
 pub(crate) const BY_LABEL: &[Label] = &[
-    Label { name: "country", f1: 0.9996 },
-    Label { name: "postcode", f1: 0.9992 },
-    Label { name: "unit", f1: 0.9961 },
-    Label { name: "po_box", f1: 0.9945 },
-    Label { name: "region", f1: 0.9942 },
-    Label { name: "house_number", f1: 0.9897 },
-    Label { name: "city", f1: 0.9866 },
-    Label { name: "level", f1: 0.9862 },
-    Label { name: "road", f1: 0.9775 },
-    Label { name: "district", f1: 0.9524 },
-    Label { name: "suburb", f1: 0.9414 },
+    Label { name: "country", f1: 0.9995 },
+    Label { name: "postcode", f1: 0.9987 },
+    Label { name: "unit", f1: 0.9966 },
+    Label { name: "region", f1: 0.9935 },
+    Label { name: "po_box", f1: 0.9932 },
+    Label { name: "house_number", f1: 0.99 },
+    Label { name: "city", f1: 0.9848 },
+    Label { name: "level", f1: 0.9842 },
+    Label { name: "road", f1: 0.9755 },
+    Label { name: "district", f1: 0.9534 },
+    Label { name: "suburb", f1: 0.9413 },
 ];
 
 /// Stated confidence against accuracy of the trained checkpoint's components.
 #[rustfmt::skip]
 pub(crate) const CALIBRATION: &[Bin] = &[
-    Bin { low: 0.0, high: 0.1, confidence: 0.0455, accuracy: 0.1, count: 20 },
-    Bin { low: 0.1, high: 0.2, confidence: 0.1481, accuracy: 0.0, count: 12 },
-    Bin { low: 0.2, high: 0.3, confidence: 0.2446, accuracy: 0.1111, count: 36 },
-    Bin { low: 0.3, high: 0.4, confidence: 0.3602, accuracy: 0.2982, count: 57 },
-    Bin { low: 0.4, high: 0.5, confidence: 0.4557, accuracy: 0.2609, count: 92 },
-    Bin { low: 0.5, high: 0.6, confidence: 0.5546, accuracy: 0.4676, count: 216 },
-    Bin { low: 0.6, high: 0.7, confidence: 0.65, accuracy: 0.5459, count: 218 },
-    Bin { low: 0.7, high: 0.8, confidence: 0.7527, accuracy: 0.6194, count: 310 },
-    Bin { low: 0.8, high: 0.9, confidence: 0.8546, accuracy: 0.7196, count: 510 },
-    Bin { low: 0.9, high: 1.0, confidence: 0.9987, accuracy: 0.9943, count: 57331 },
+    Bin { low: 0.0, high: 0.1, confidence: 0.025, accuracy: 0.0571, count: 35 },
+    Bin { low: 0.1, high: 0.2, confidence: 0.1612, accuracy: 0.0625, count: 16 },
+    Bin { low: 0.2, high: 0.3, confidence: 0.2635, accuracy: 0.0435, count: 23 },
+    Bin { low: 0.3, high: 0.4, confidence: 0.3507, accuracy: 0.1746, count: 63 },
+    Bin { low: 0.4, high: 0.5, confidence: 0.4534, accuracy: 0.3168, count: 101 },
+    Bin { low: 0.5, high: 0.6, confidence: 0.5543, accuracy: 0.4129, count: 201 },
+    Bin { low: 0.6, high: 0.7, confidence: 0.651, accuracy: 0.4473, count: 237 },
+    Bin { low: 0.7, high: 0.8, confidence: 0.7533, accuracy: 0.6125, count: 289 },
+    Bin { low: 0.8, high: 0.9, confidence: 0.8551, accuracy: 0.7212, count: 513 },
+    Bin { low: 0.9, high: 1.0, confidence: 0.9986, accuracy: 0.9943, count: 57329 },
 ];
 /// Expected calibration error over the bins.
-pub(crate) const ECE: f64 = 0.0074;
+pub(crate) const ECE: f64 = 0.0079;
 
 /// The address the pipeline walkthrough follows.
 pub(crate) const EXAMPLE: &str = "Flat 4, 221B Baker Street, London NW1 6XE, UK";
@@ -115,11 +115,11 @@ pub(crate) const PIPELINE: &[Step] = &[
 /// Golden cases holding the library's forward pass to the trainer's.
 pub(crate) const GOLDEN_CASES: u32 = 24;
 /// Largest absolute logit difference across the golden cases.
-pub(crate) const GOLDEN_WORST: f64 = 2.288818359375e-5;
+pub(crate) const GOLDEN_WORST: f64 = 2.6702880859375e-5;
 /// The per-case limit on that difference.
 pub(crate) const GOLDEN_TOLERANCE: f64 = 0.001;
 /// Validation component F1 lost going from f32 to int8 weights.
-pub(crate) const INT8_F1_DROP: f64 = 0.00017618346940684315;
+pub(crate) const INT8_F1_DROP: f64 = 4.263108197499754e-5;
 
 /// Lines of the source read to draw the sample.
 pub(crate) const LINES_READ: u64 = 320115455;
@@ -146,14 +146,14 @@ pub(crate) const SOURCE_BYTES: u64 = 8033490172;
 pub(crate) const AUGMENT_COPIES: u32 = 2;
 
 /// `gzip -9` bytes of `models/tessera-v1.safetensors`.
-pub(crate) const BUNDLE_GZIP: u64 = 1498542;
-/// `gzip -9` bytes of the library's baseline wasm, rules and parser.
-pub(crate) const WASM_GZIP: u64 = 95806;
+pub(crate) const BUNDLE_GZIP: u64 = 3050609;
+/// `gzip -9` bytes of the library's baseline wasm: rules, detector, and parser.
+pub(crate) const WASM_GZIP: u64 = 107172;
 /// `gzip -9` bytes of the same library built with simd128.
-pub(crate) const WASM_SIMD_GZIP: u64 = 95573;
+pub(crate) const WASM_SIMD_GZIP: u64 = 106914;
 /// `gzip -9` bytes the generated phone tables add to the wasm: the baseline with them, less the
-/// baseline without them (79,701), as `just wasm-size` prints both.
-pub(crate) const PHONE_TABLES_GZIP: u64 = 16105;
+/// baseline without them (92,332), as `just wasm-size` prints both.
+pub(crate) const PHONE_TABLES_GZIP: u64 = 14840;
 /// `gzip -9` bytes libphonenumber's metadata cost before the tables replaced it.
 pub(crate) const PHONE_METADATA_GZIP: u64 = 508357;
 /// Regions the generated phone tables cover.

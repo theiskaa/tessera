@@ -1,7 +1,7 @@
-//! The live demo: a document whose emails, phone numbers, and addresses light up as a scan line
-//! passes over it, while the list or JSON of what the library returned is written beside it on
-//! the same clock. The reader can edit the document and change the phone region. Offsets are UTF-8
-//! bytes into the document.
+//! The live demo: a document whose people, organizations, addresses, emails, and phone numbers
+//! light up as a scan line passes over it, while the list or JSON of what the library returned
+//! is written beside it on the same clock. The reader can edit the document and change the phone
+//! region. Offsets are UTF-8 bytes into the document.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -15,7 +15,6 @@ use web_sys::{
 
 use super::document::DocumentPane;
 use super::json::kind_name;
-use super::marks::{self, Mark};
 use super::output::OutputPane;
 use super::parse::ParseState;
 use super::stream::{self, Step};
@@ -82,7 +81,6 @@ pub(crate) struct DemoState {
     pub(crate) output: NodeRef<Div>,
     /// The "parse an address" box, whose answers come through the same worker.
     pub(crate) parse: ParseState,
-    marks: StoredValue<Vec<Mark>>,
     /// Id and text of the newest analysis; answers to older ones are dropped.
     latest: StoredValue<(u64, Arc<str>)>,
     /// Seconds of the scan that plays when the newest analysis is answered.
@@ -113,7 +111,6 @@ impl DemoState {
             document: NodeRef::new(),
             output: NodeRef::new(),
             parse: ParseState::new(),
-            marks: StoredValue::new(Vec::new()),
             latest: StoredValue::new((0, Arc::from(""))),
             next_scan: StoredValue::new(stream::SCAN),
             timers: StoredValue::new_local(Vec::new()),
@@ -140,7 +137,7 @@ impl DemoState {
     pub(crate) fn receive(self, response: Response) {
         match response {
             Response::LoadFailed(message) => self.fail(Failure::Model(message)),
-            Response::Analyzed { id, result } => {
+            Response::Detected { id, result } => {
                 let (latest, text) = self.latest.get_value();
                 if id != latest {
                     return;
@@ -174,18 +171,11 @@ impl DemoState {
         self.too_long.set(false);
         self.text.set(Arc::from(sample.text));
         self.hint.set(sample.country_hint.to_string());
-        self.marks.set_value(
-            sample
-                .addresses
-                .iter()
-                .filter_map(|&(start, end)| Mark::at(sample.text, start, end))
-                .collect(),
-        );
         self.answer.set(None);
         self.analyze(stream::SCAN);
     }
 
-    /// Restores the current sample's text, marks, and hint.
+    /// Restores the current sample's text and hint.
     pub(crate) fn reset(self) {
         self.pick(self.sample.get_untracked());
     }
@@ -220,11 +210,8 @@ impl DemoState {
         }
     }
 
-    /// Takes an edit, moving the marks it does not touch, and analyzes it once typing pauses.
+    /// Takes an edit, and analyzes it once typing pauses.
     pub(crate) fn input(self, value: String) {
-        let old = self.text.get_untracked();
-        self.marks
-            .update_value(|marks| *marks = marks::shift(&old, &value, marks));
         self.text.set(Arc::from(value));
         self.cancel_debounce();
         let handle = set_timeout_with_handle(
@@ -264,16 +251,11 @@ impl DemoState {
         if too_long {
             return;
         }
-        let placed = self.marks.with_value(|m| marks::locate(&text, m));
-        let addresses = placed.iter().map(|(_, span)| *span).collect();
-        self.marks
-            .set_value(placed.into_iter().map(|(mark, _)| mark).collect());
         self.next_scan.set_value(scan);
-        self.send(Request::Analyze {
+        self.send(Request::Detect {
             id,
             text: text.to_string(),
             country_hint: vec![self.hint.get_untracked()],
-            addresses,
         });
     }
 
@@ -387,7 +369,13 @@ fn reveal(pane: &HtmlDivElement, start: usize) {
 }
 
 /// Legend order.
-const KINDS: [FoundKind; 3] = [FoundKind::Address, FoundKind::Phone, FoundKind::Email];
+pub(crate) const KINDS: [FoundKind; 5] = [
+    FoundKind::Person,
+    FoundKind::Org,
+    FoundKind::Address,
+    FoundKind::Phone,
+    FoundKind::Email,
+];
 
 /// The demo section.
 #[component]
@@ -489,10 +477,9 @@ pub(crate) fn Demo(state: DemoState) -> impl IntoView {
                 <span>"click a row to find it in the document · offsets are UTF-8 bytes"</span>
             </div>
             <p class="note">
-                "Emails and phones are "<code>"detect"</code>
-                "'s output for the whole document. Address lines, underlined dashed, are marked by hand in each sample, and "
-                <code>"parse_address"</code>
-                " splits each into parts. Both run in a web worker in this browser. Order and invoice numbers, dates, prices, tracking codes and IBANs are not returned."
+                "Everything highlighted is "<code>"detect"</code>
+                "'s output for the whole document, run in a web worker in this browser: emails and phones from validating rules, people, organizations and addresses from an int8 network, and each address split into parts by "
+                <code>"parse_address"</code>"."
             </p>
         </section>
     }
