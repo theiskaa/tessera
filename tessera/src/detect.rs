@@ -227,6 +227,7 @@ fn span_entity(
     const BRACKETS: &[(&str, &str)] = &[
         ("(", ")"),
         ("[", "]"),
+        ("<", ">"),
         ("\u{ff08}", "\u{ff09}"),
         ("\u{300c}", "\u{300d}"),
         ("\u{300e}", "\u{300f}"),
@@ -250,9 +251,16 @@ fn span_entity(
         let closer = BRACKETS.iter().find(|(_, close)| at(last) == *close);
         let period = at(last) == "\u{3002}"
             || (at(last) == "." && (kind == Kind::Person || !abbreviation(last - 1)));
-        if QUOTES.contains(&at(first)) || SEPARATORS.contains(&at(first)) {
+        // A bracket opening at the end or closing at the start encloses nothing of the span.
+        let dangling_open = BRACKETS.iter().any(|(open, _)| at(last) == *open);
+        let dangling_close = BRACKETS.iter().any(|(_, close)| at(first) == *close);
+        if QUOTES.contains(&at(first)) || SEPARATORS.contains(&at(first)) || dangling_close {
             first += 1;
-        } else if QUOTES.contains(&at(last)) || SEPARATORS.contains(&at(last)) || period {
+        } else if QUOTES.contains(&at(last))
+            || SEPARATORS.contains(&at(last))
+            || period
+            || dangling_open
+        {
             last -= 1;
         } else if let Some((_, close)) = opener
             && ((at(last) == *close && !holds(first + 1..=last - 1, close))
@@ -443,6 +451,10 @@ mod tests {
             (Kind::Address, "1 Main St.", Some("1 Main St.")),
             (Kind::Person, "\"", None),
             (Kind::Org, "(", None),
+            (Kind::Person, "Oliver Grant <", Some("Oliver Grant")),
+            (Kind::Person, "<Oliver Grant>", Some("Oliver Grant")),
+            (Kind::Org, "Acme Ltd (", Some("Acme Ltd")),
+            (Kind::Org, ") Acme Ltd", Some("Acme Ltd")),
         ];
         for (kind, text, want) in cases {
             assert_eq!(trimmed(kind, text), want, "{text:?}");
