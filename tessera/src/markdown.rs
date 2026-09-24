@@ -830,6 +830,10 @@ mod tests {
             }
         }
         inputs.push((
+            include_str!("../../fixtures/markdown/international.md").to_string(),
+            MarkdownOptions::default(),
+        ));
+        inputs.push((
             "- item\n\n    continued para a@x.example\n\n  ```\n  fenced\n\n  in item\n  ```\n\nTop.\n".into(),
             MarkdownOptions {
                 include_code: true,

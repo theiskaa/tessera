@@ -1,0 +1,88 @@
+{
+  "name": "international_directory",
+  "options": {"include_code": false, "include_html": false, "gfm_tables": true},
+  "input_file": "international.md",
+  "blocks": [
+    {"start": 2, "end": 34},
+    {"start": 36, "end": 99},
+    {"start": 104, "end": 118},
+    {"start": 120, "end": 287},
+    {"start": 292, "end": 306},
+    {"start": 310, "end": 333},
+    {"start": 336, "end": 363},
+    {"start": 366, "end": 432},
+    {"start": 435, "end": 458},
+    {"start": 461, "end": 495},
+    {"start": 500, "end": 507},
+    {"start": 511, "end": 515},
+    {"start": 518, "end": 530},
+    {"start": 533, "end": 540},
+    {"start": 543, "end": 548},
+    {"start": 551, "end": 556},
+    {"start": 593, "end": 608},
+    {"start": 611, "end": 630},
+    {"start": 633, "end": 679},
+    {"start": 682, "end": 698},
+    {"start": 701, "end": 731},
+    {"start": 738, "end": 743},
+    {"start": 747, "end": 880},
+    {"start": 885, "end": 898},
+    {"start": 900, "end": 920},
+    {"start": 922, "end": 1070},
+    {"start": 1143, "end": 1217}
+  ],
+  "skip": [
+    {"start": 222, "end": 223},
+    {"start": 250, "end": 287},
+    {"start": 1072, "end": 1136}
+  ],
+  "links": [
+    {"target": "mailto:nino@kavkaz-freight.example", "start": 222, "end": 287, "text_start": 223, "text_end": 250}
+  ],
+  "entities": [
+    {"kind": "person", "text": "Nino Beridze", "start": 122, "end": 134},
+    {"kind": "org", "text": "Kavkaz Freight LLC", "start": 156, "end": 174},
+    {"kind": "address", "text": "14 Rustaveli Avenue, Tbilisi 0108, Georgia", "start": 177, "end": 219},
+    {"kind": "email", "text": "nino@kavkaz-freight.example", "start": 223, "end": 250, "normalized": "nino@kavkaz-freight.example"},
+    {"kind": "person", "text": "Oliver Hartley", "start": 319, "end": 333},
+    {"kind": "org", "text": "Hartley & Sons Ltd", "start": 345, "end": 363},
+    {"kind": "address", "text": "Flat 4, 221B Baker Street, London NW1 6XE, United Kingdom", "start": 375, "end": 432},
+    {"kind": "phone", "text": "+44 20 7946 0958", "start": 442, "end": 458, "normalized": "+442079460958", "region": "GB"},
+    {"kind": "email", "text": "oliver@hartley-sons.example", "start": 468, "end": 495, "normalized": "oliver@hartley-sons.example"},
+    {"kind": "person", "text": "Katharina Vogel", "start": 593, "end": 608},
+    {"kind": "org", "text": "Vogel Logistik GmbH", "start": 611, "end": 630},
+    {"kind": "address", "text": "Friedrichstraße 43, 10117 Berlin, Deutschland", "start": 633, "end": 679},
+    {"kind": "phone", "text": "+49 30 23125 480", "start": 682, "end": 698, "normalized": "+493023125480", "region": "DE"},
+    {"kind": "email", "text": "k.vogel@vogel-logistik.example", "start": 701, "end": 731, "normalized": "k.vogel@vogel-logistik.example"},
+    {"kind": "person", "text": "山田 太郎", "start": 747, "end": 760},
+    {"kind": "org", "text": "株式会社ヤマダ運輸", "start": 765, "end": 792},
+    {"kind": "address", "text": "〒100-0005 東京都千代田区丸の内1-9-1", "start": 797, "end": 844},
+    {"kind": "email", "text": "taro.yamada@yamada-unyu.example", "start": 849, "end": 880, "normalized": "taro.yamada@yamada-unyu.example"},
+    {"kind": "person", "text": "Maria Alvarez", "start": 922, "end": 935},
+    {"kind": "org", "text": "Alvarez Customs Brokerage Inc.", "start": 938, "end": 968},
+    {"kind": "address", "text": "742 Evergreen Terrace, Springfield, IL 62704, USA", "start": 971, "end": 1020},
+    {"kind": "phone", "text": "+1 202 555 0143", "start": 1023, "end": 1038, "normalized": "+12025550143", "region": "US"},
+    {"kind": "email", "text": "maria@alvarez-customs.example", "start": 1041, "end": 1070, "normalized": "maria@alvarez-customs.example"},
+    {"kind": "person", "text": "Ana Kapanadze", "start": 1154, "end": 1167},
+    {"kind": "org", "text": "Kavkaz Freight LLC", "start": 1170, "end": 1188},
+    {"kind": "email", "text": "ana@kavkaz-freight.example", "start": 1191, "end": 1217, "normalized": "ana@kavkaz-freight.example"}
+  ],
+  "contacts": [
+    {"person": 0, "org": 1, "addresses": [2], "emails": [3], "phones": []},
+    {"person": 4, "org": 5, "addresses": [6], "emails": [8], "phones": [7]},
+    {"person": 9, "org": 10, "addresses": [11], "emails": [13], "phones": [12]},
+    {"person": 14, "org": 15, "addresses": [16], "emails": [17], "phones": []},
+    {"person": 18, "org": 19, "addresses": [20], "emails": [22], "phones": [21]},
+    {"person": 23, "org": 24, "addresses": [], "emails": [25], "phones": []}
+  ],
+  "unassigned": [],
+  "must_not": [
+    {"kind": "email", "text": "build@ci.example"}
+  ],
+  "known_failures": [
+    "missing org \"Hartley & Sons Ltd\" at 345..363",
+    "missing org \"Vogel Logistik GmbH\" at 611..630",
+    "contact 1: org Some(\"Company\"), expected \"Hartley & Sons Ltd\"",
+    "contact 2: org None, expected \"Vogel Logistik GmbH\""
+  ]
+}
