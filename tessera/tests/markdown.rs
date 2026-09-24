@@ -244,3 +244,20 @@ fn utf16_offsets_slice_the_js_string() {
         }
     }
 }
+
+/// With `SEGMENT_BYTES` every fixture is one segment, so this proves the public plumbing; the
+/// markdown module's unit tests cut the same fixtures at every blank line.
+#[test]
+fn segmented_selection_equals_whole_selection() {
+    for (file, case) in cases() {
+        let opts = options(&case.options);
+        let mut joined = Selection::default();
+        for (_, s) in tessera::markdown::segments(&case.input, &opts) {
+            joined.scan.extend(s.scan);
+            joined.skip.extend(s.skip);
+            joined.links.extend(s.links);
+        }
+        joined.skip.sort_unstable();
+        assert_eq!(joined, select(&case.input, &opts), "{file}/{}", case.name);
+    }
+}

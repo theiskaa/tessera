@@ -8,7 +8,7 @@ use std::collections::BTreeSet;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen_test::wasm_bindgen_test as test;
 
-use tessera::internal::{group, tokenize};
+use tessera::internal::group;
 use tessera::{Entity, Extraction, Kind, Source};
 
 type Triple = (&'static str, usize, usize);
@@ -99,7 +99,7 @@ fn grouper_fixtures() {
         for case in &fixture.cases {
             cases += 1;
             let gold = gold_entities(case);
-            let out = group(&case.input, &tokenize(&case.input), gold.clone());
+            let out = group(&case.input, gold.clone());
             let expected = expected_shape(case, &gold);
             let predicted = predicted_shape(&out);
             assert_eq!(

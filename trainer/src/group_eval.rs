@@ -177,8 +177,7 @@ pub fn eval_grouper(dir: &Path, tessera: &Tessera) -> anyhow::Result<GrouperRepo
         let mut e2e_counts = GrouperCounts::default();
         for case in &fixture.cases {
             let gold = gold_case(case)?;
-            let tokens = tessera::internal::tokenize(&gold.text);
-            let predicted = tessera::internal::group(&gold.text, &tokens, gold.entities.clone());
+            let predicted = tessera::internal::group(&gold.text, gold.entities.clone());
             score(&gold, &predicted, &mut gold_counts);
             let predicted = tessera
                 .extract_contacts(&gold.text, &Query::default())

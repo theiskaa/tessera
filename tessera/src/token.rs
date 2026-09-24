@@ -92,9 +92,15 @@ enum CharKind {
     Other,
 }
 
+/// Whether `c` ends a line: LF, CR, NEL, and the Unicode line and paragraph separators. A CR
+/// directly before an LF ends the same line.
+pub(crate) fn is_newline(c: char) -> bool {
+    matches!(c, '\n' | '\r' | '\u{85}' | '\u{2028}' | '\u{2029}')
+}
+
 fn classify(c: char) -> CharKind {
     let u = c as u32;
-    if c == '\n' || c == '\r' || u == 0x85 || u == 0x2028 || u == 0x2029 {
+    if is_newline(c) {
         return CharKind::Newline;
     }
     if c == ' '

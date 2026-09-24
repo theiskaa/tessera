@@ -1,13 +1,13 @@
 //! Stage 4: block splitting and the deterministic contact grouper.
 //!
-//! A document is cut into lines at the tokenizer's newline tokens and the lines are grouped
-//! into blocks. Blocks are the unit of locality for every grouping rule: details attach to an
-//! anchor in the same block, and only a narrow set of rules crosses a block boundary.
+//! A document is cut into lines where the tokenizer cuts newline tokens and the lines are
+//! grouped into blocks. Blocks are the unit of locality for every grouping rule: details attach
+//! to an anchor in the same block, and only a narrow set of rules crosses a block boundary.
 //! Limitations: two-column tab-separated rows are not detected as table rows, and chat turns
 //! are only recognised when a line starts with a timestamp.
 
 use crate::policy::MEDIUM;
-use crate::token::{Token, TokenClass};
+use crate::token::is_newline;
 use crate::{Contact, Entity, Extraction, Kind};
 
 /// What one line is, judged from its text alone.
@@ -65,14 +65,22 @@ struct Block {
 const SHORT_LINE_CHARS: usize = 64;
 const MIN_SIGNATURE_LINES: usize = 2;
 
-/// The lines of `text`, cut at the tokenizer's newline tokens; a newline belongs to no line,
-/// and a last line without one is kept when it is not empty.
-fn lines(text: &str, tokens: &[Token]) -> Vec<Line> {
+/// The lines of `text`, cut where the tokenizer cuts newline tokens (a CRLF is one newline); a
+/// newline belongs to no line, and a last line without one is kept when it is not empty. No
+/// token vector is built, so a whole document costs one pass and the lines.
+fn lines(text: &str) -> Vec<Line> {
     let mut out = Vec::new();
     let mut cursor = 0;
-    for token in tokens.iter().filter(|t| t.class == TokenClass::Newline) {
-        out.push(make_line(text, cursor, token.start));
-        cursor = token.end;
+    let mut chars = text.char_indices().peekable();
+    while let Some((i, c)) = chars.next() {
+        if !is_newline(c) {
+            continue;
+        }
+        out.push(make_line(text, cursor, i));
+        cursor = i + c.len_utf8();
+        if c == '\r' && chars.next_if(|&(_, n)| n == '\n').is_some() {
+            cursor += 1;
+        }
     }
     if cursor < text.len() {
         out.push(make_line(text, cursor, text.len()));
@@ -205,13 +213,13 @@ fn is_closing(t: &str) -> bool {
 /// separators and table rows are blocks of their own; consecutive header lines, quoted lines,
 /// and a chat turn with the text lines after it each form one block; everything else is a
 /// paragraph, reported as a signature when its lines are short.
-fn split_blocks(text: &str, tokens: &[Token]) -> Vec<Block> {
+fn split_blocks(text: &str) -> Vec<Block> {
     let mut blocks = Vec::new();
     let mut current: Vec<Line> = Vec::new();
     let mut current_kind = BlockKind::Paragraph;
     let mut gap = 0;
 
-    for line in lines(text, tokens) {
+    for line in lines(text) {
         match line.kind {
             LineKind::Blank | LineKind::QuotedBlank => {
                 flush(&mut blocks, &mut current, current_kind, &mut gap);
@@ -773,8 +781,8 @@ fn keeps_lone_anchor(block: &Block) -> bool {
 /// block with no person, with details attached by the rules above. A contact's confidence is
 /// the minimum of its anchor's and its assignments'. Everything left over is `unassigned`.
 /// No confidence policy is applied here.
-pub fn group(text: &str, tokens: &[Token], entities: Vec<Entity>) -> Extraction {
-    let blocks = split_blocks(text, tokens);
+pub fn group(text: &str, entities: Vec<Entity>) -> Extraction {
+    let blocks = split_blocks(text);
     let placed = place(&blocks, &entities);
     let mut build = anchors(&blocks, &entities, &placed);
     attach_orgs(&mut build, &entities, &placed);
@@ -836,11 +844,26 @@ pub fn group(text: &str, tokens: &[Token], entities: Vec<Entity>) -> Extraction 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::token::tokenize;
+    use crate::token::{TokenClass, tokenize};
+
+    #[test]
+    fn lines_cut_where_the_tokenizer_cuts_newlines() {
+        let text = "a\r\nb\rc\u{85}d\u{2028}e\u{2029}f\n\n\r\ng\r\n";
+        let mut want = Vec::new();
+        let mut cursor = 0;
+        for t in tokenize(text)
+            .iter()
+            .filter(|t| t.class == TokenClass::Newline)
+        {
+            want.push((cursor, t.start));
+            cursor = t.end;
+        }
+        let got: Vec<(usize, usize)> = lines(text).iter().map(|l| (l.start, l.end)).collect();
+        assert_eq!(got, want);
+    }
 
     fn kinds(text: &str) -> Vec<(BlockKind, usize, usize, bool, usize)> {
-        let tokens = tokenize(text);
-        split_blocks(text, &tokens)
+        split_blocks(text)
             .into_iter()
             .map(|b| (b.kind, b.start, b.end, b.short_lines, b.gap_lines))
             .collect()
@@ -1011,7 +1034,7 @@ mod tests {
     }
 
     fn run(text: &str, spec: &[(Kind, &str)]) -> Extraction {
-        group(text, &tokenize(text), gold(text, spec))
+        group(text, gold(text, spec))
     }
 
     /// Each contact as its person or org text, then the texts of its details.
@@ -1216,7 +1239,7 @@ mod tests {
             ],
         );
         entities[2].confidence = 0.5;
-        let x = group(&text, &tokenize(&text), entities);
+        let x = group(&text, entities);
         assert_eq!(unassigned(&text, &x), vec!["+995 32 212 3456"]);
     }
 
@@ -1224,7 +1247,7 @@ mod tests {
     fn contact_confidence_is_minimum_not_average() {
         let mut entities = gold(SPEC, SPEC_ENTITIES);
         entities[4].confidence = 0.6;
-        let x = group(SPEC, &tokenize(SPEC), entities);
+        let x = group(SPEC, entities);
         assert_eq!(x.contacts.len(), 1);
         assert!((x.contacts[0].confidence - 0.6).abs() < 1e-6);
     }
@@ -1301,7 +1324,7 @@ mod tests {
             ],
         );
         entities[1].confidence = 0.6;
-        let x = group(text, &tokenize(text), entities);
+        let x = group(text, entities);
         assert_eq!(unassigned(text, &x), vec!["+44 20 7946 0123"]);
     }
 

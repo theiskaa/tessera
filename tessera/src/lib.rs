@@ -336,6 +336,20 @@ impl Entity {
     pub fn text<'a>(&self, source: &'a str) -> &'a str {
         &source[self.start..self.end]
     }
+
+    /// The entity with every offset moved from a string starting at `from` in the document to
+    /// one starting at `to`.
+    #[cfg(feature = "markdown")]
+    fn rebased(mut self, from: usize, to: usize) -> Entity {
+        let move_to = |offset: usize| offset - from + to;
+        self.start = move_to(self.start);
+        self.end = move_to(self.end);
+        for c in &mut self.components {
+            c.start = move_to(c.start);
+            c.end = move_to(c.end);
+        }
+        self
+    }
 }
 
 /// A person or organization with the details that belong to them.
@@ -466,35 +480,6 @@ impl Default for MarkdownOptions {
     }
 }
 
-/// The scan mask and the link-destination entities `query.format` asks for.
-#[cfg(feature = "markdown")]
-fn format_inputs(
-    text: &str,
-    query: &Query<'_>,
-) -> Result<(Option<chunk::Mask>, Vec<Entity>), Error> {
-    Ok(match &query.format {
-        Format::Text => (None, Vec::new()),
-        Format::Markdown(options) => {
-            let selection = markdown::select(text, options);
-            let linked = rules::from_links(&selection.links, query.country_hint);
-            (Some(selection.mask()), linked)
-        }
-    })
-}
-
-/// Without the `markdown` feature, Markdown is refused rather than scanned as text, which would
-/// return entities from code blocks and link destinations.
-#[cfg(not(feature = "markdown"))]
-fn format_inputs(
-    _text: &str,
-    query: &Query<'_>,
-) -> Result<(Option<chunk::Mask>, Vec<Entity>), Error> {
-    match query.format {
-        Format::Text => Ok((None, Vec::new())),
-        Format::Markdown(_) => Err(Error::UnsupportedFormat),
-    }
-}
-
 /// A loaded extractor. Immutable after load; one instance serves many calls and threads.
 #[derive(Debug)]
 pub struct Tessera {
@@ -567,8 +552,39 @@ impl Tessera {
     /// components and kept only if the parser finds at least two distinct labels in it, unless
     /// `include_uncertain`, which keeps it as uncertain.
     pub fn detect(&self, text: &str, query: &Query<'_>) -> Result<Vec<Entity>, Error> {
-        let (mask, linked) = format_inputs(text, query)?;
-        self.detect_masked(text, query, mask.as_ref(), linked)
+        match &query.format {
+            Format::Text => self.detect_masked(text, query, None, Vec::new()),
+            #[cfg(feature = "markdown")]
+            Format::Markdown(options) => self.detect_markdown(text, query, options),
+            // Scanning Markdown as text would return entities from code blocks and link
+            // destinations, with offsets that still slice correctly, so nothing would look wrong.
+            #[cfg(not(feature = "markdown"))]
+            Format::Markdown(_) => Err(Error::UnsupportedFormat),
+        }
+    }
+
+    /// `detect` over a Markdown document one segment at a time, so parser memory is bounded
+    /// by the segment size rather than the document's. Segments do not overlap and come in
+    /// order, so their entities concatenate without a merge.
+    #[cfg(feature = "markdown")]
+    fn detect_markdown(
+        &self,
+        text: &str,
+        query: &Query<'_>,
+        options: &MarkdownOptions,
+    ) -> Result<Vec<Entity>, Error> {
+        let mut out = Vec::new();
+        for (segment, selection) in markdown::segments(text, options) {
+            let linked = rules::from_links(&selection.links, query.country_hint)
+                .into_iter()
+                .map(|e| e.rebased(segment.start, 0))
+                .collect();
+            let piece = &text[segment.start..segment.end];
+            let mask = selection.mask_from(segment.start);
+            let found = self.detect_masked(piece, query, Some(&mask), linked)?;
+            out.extend(found.into_iter().map(|e| e.rebased(0, segment.start)));
+        }
+        Ok(out)
     }
 
     /// `detect` where only the bytes in `mask` may hold entities (`None` is plain text), with
@@ -610,8 +626,7 @@ impl Tessera {
     /// are empty and every entity is unassigned.
     pub fn extract_contacts(&self, text: &str, query: &Query<'_>) -> Result<Extraction, Error> {
         let entities = self.detect(text, query)?;
-        let tokens = token::tokenize(text);
-        let grouped = group::group(text, &tokens, entities);
+        let grouped = group::group(text, entities);
         Ok(policy::apply_contacts(grouped, query.include_uncertain))
     }
 
