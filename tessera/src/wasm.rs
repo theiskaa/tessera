@@ -16,7 +16,7 @@ use wasm_bindgen_futures::JsFuture;
 use web_sys::{MessageEvent, Response, Worker, WorkerOptions, WorkerType};
 
 use crate::policy::display_confidence;
-use crate::{Config, Entity, Error, Kind, KindSet, Query, Tessera, token};
+use crate::{Config, Contact, Entity, Error, Extraction, Kind, KindSet, Query, Tessera, token};
 
 /// The JavaScript `Tessera` class: a loaded extractor reporting UTF-16 offsets.
 ///
@@ -94,6 +94,27 @@ impl JsTessera {
     ) -> Promise {
         self.call("detect", text, options, |t, text, source, opts| {
             Ok(entity_objects(text, source, &opts.run(|q| t.detect(text, q))?).into())
+        })
+    }
+
+    /// `extractContacts(text, options?)`: the entities of [`detect`](Self::detect) grouped into
+    /// contacts, with everything that could not be assigned in `unassigned`.
+    ///
+    /// Takes the same options as `detect`. A contact has `start`, `end`, `confidence`,
+    /// `reviewRecommended`, `person` and `org` when present, and `addresses`, `emails`, and
+    /// `phones` arrays; every offset is in UTF-16 code units.
+    #[wasm_bindgen(js_name = extractContacts)]
+    pub fn extract_contacts(
+        &self,
+        #[wasm_bindgen(unchecked_param_type = "string")] text: &JsValue,
+        options: Option<JsValue>,
+    ) -> Promise {
+        self.call("extractContacts", text, options, |t, text, source, opts| {
+            Ok(extraction_object(
+                text,
+                source,
+                &opts.run(|q| t.extract_contacts(text, q))?,
+            ))
         })
     }
 
@@ -590,23 +611,91 @@ fn kind_labels(set: KindSet) -> Array {
         .collect()
 }
 
+/// The byte offsets `entity_object` reads, in the order it reads them: the entity's start and
+/// end, then each component's pair.
+fn entity_bytes(e: &Entity) -> impl Iterator<Item = usize> + '_ {
+    [e.start, e.end]
+        .into_iter()
+        .chain(e.components.iter().flat_map(|c| [c.start, c.end]))
+}
+
 /// The entities as JS objects, with every offset converted in one pass over `text`, the decoded
 /// `source`, and each `text` field sliced from `source` so it keeps any lone surrogate.
 fn entity_objects(text: &str, source: &JsString, entities: &[Entity]) -> Array {
     // A byte-to-unit table for the whole text would cost four bytes per input byte, and wasm
     // memory never shrinks; only the offsets the results carry are converted.
-    let bytes = entities.iter().flat_map(|e| {
-        [e.start, e.end]
-            .into_iter()
-            .chain(e.components.iter().flat_map(|c| [c.start, c.end]))
-    });
-    // Consumed in the order gathered: an entity's start and end, then its components' pairs.
-    let mut units = token::utf16_at(text, bytes).into_iter();
+    let mut units = token::utf16_at(text, entities.iter().flat_map(entity_bytes)).into_iter();
     let mut next = move || units.next().unwrap_or_default();
     entities
         .iter()
         .map(|e| entity_object(source, e, &mut next))
         .collect()
+}
+
+/// A contact's entities in the order `contact_object` reads them.
+fn contact_members(c: &Contact) -> impl Iterator<Item = &Entity> {
+    c.person
+        .iter()
+        .chain(&c.org)
+        .chain(&c.addresses)
+        .chain(&c.emails)
+        .chain(&c.phones)
+}
+
+/// `{ contacts, unassigned }` as JS objects, every offset converted in one pass over `text`.
+fn extraction_object(text: &str, source: &JsString, x: &Extraction) -> JsValue {
+    let bytes = x
+        .contacts
+        .iter()
+        .flat_map(|c| {
+            [c.start, c.end]
+                .into_iter()
+                .chain(contact_members(c).flat_map(entity_bytes))
+        })
+        .chain(x.unassigned.iter().flat_map(entity_bytes));
+    let mut units = token::utf16_at(text, bytes).into_iter();
+    let mut next = move || units.next().unwrap_or_default();
+    let contacts: Array = x
+        .contacts
+        .iter()
+        .map(|c| contact_object(source, c, &mut next))
+        .collect();
+    let unassigned: Array = x
+        .unassigned
+        .iter()
+        .map(|e| entity_object(source, e, &mut next))
+        .collect();
+    let obj = Object::new();
+    set(&obj, "contacts", contacts);
+    set(&obj, "unassigned", unassigned);
+    obj.into()
+}
+
+fn contact_object(source: &JsString, c: &Contact, next: &mut impl FnMut() -> u32) -> JsValue {
+    let obj = Object::new();
+    set(&obj, "start", next());
+    set(&obj, "end", next());
+    set(&obj, "confidence", display_confidence(c.confidence));
+    set(&obj, "reviewRecommended", c.review_recommended);
+    // Absent rather than null, so `if (contact.person)` reads naturally.
+    if let Some(p) = &c.person {
+        set(&obj, "person", entity_object(source, p, next));
+    }
+    if let Some(o) = &c.org {
+        set(&obj, "org", entity_object(source, o, next));
+    }
+    for (key, list) in [
+        ("addresses", &c.addresses),
+        ("emails", &c.emails),
+        ("phones", &c.phones),
+    ] {
+        let arr: Array = list
+            .iter()
+            .map(|e| entity_object(source, e, next))
+            .collect();
+        set(&obj, key, arr);
+    }
+    obj.into()
 }
 
 fn entity_object(source: &JsString, e: &Entity, next: &mut impl FnMut() -> u32) -> JsValue {

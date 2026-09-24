@@ -50,10 +50,13 @@ wasm-size: wasm
 wasm-test +browsers="chrome firefox":
     WASM_BINDGEN_TEST_TIMEOUT=120 wasm-pack test --headless {{prepend("--", browsers)}} tessera --features wasm
 
-# The built package in Node and Bun: loading from disk, UTF-16 offsets, and typed errors.
+# The built package in Node and Bun: loading from disk, UTF-16 offsets, typed errors, and
+# extractContacts on the spec's worked example.
 js-test: wasm
     node tessera/js/test/smoke.mjs
     bun tessera/js/test/smoke.mjs
+    node tessera/js/test/contacts.mjs
+    bun tessera/js/test/contacts.mjs
 
 # The showcase site in site/dist: the page, the inference worker, and the bundle. It takes
 # `size_env` but not strip: stripping drops the target-features section and Trunk's wasm-opt

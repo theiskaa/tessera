@@ -306,6 +306,81 @@ async fn detector_fixtures_match_native_with_utf16_offsets() {
     }
 }
 
+/// One JS entity against its native twin: kind, text, and offsets converted to UTF-16.
+fn assert_entity(js: &JsValue, native: &tessera::Entity, input: &str, label: &str) {
+    assert_eq!(string(js, "kind"), native.kind.as_str(), "{label}");
+    assert_eq!(string(js, "text"), native.text(input), "{label}");
+    assert_eq!(
+        number(js, "start"),
+        utf16_len(&input[..native.start]),
+        "{label}"
+    );
+    assert_eq!(
+        number(js, "end"),
+        utf16_len(&input[..native.end]),
+        "{label}"
+    );
+}
+
+#[test]
+async fn extract_contacts_matches_native_with_utf16_offsets() {
+    let native = common::load_all();
+    let js = load(
+        common::BUNDLE,
+        &format!(r#"{{"integrity":"{}"}}"#, common::bundle_checksum()),
+    )
+    .unwrap();
+    let query = Query {
+        country_hint: &["GE"],
+        ..Query::default()
+    };
+    for input in [
+        "Thanks, see you on Monday.\n\nNino Beridze\nKavkaz Freight LLC\n14 Rustaveli Avenue, Tbilisi 0108, Georgia\n+995 32 212 3456\nnino@kavkaz-freight.example",
+        "მადლობა, ორშაბათს შევხვდებით.\n\nნინო ბერიძე\nშპს კავკაზ ფრეითი\nრუსთაველის გამზირი 14, თბილისი 0108, საქართველო\n+995 32 212 3456\nnino@kavkaz-freight.example",
+    ] {
+        let want = native.extract_contacts(input, &query).unwrap();
+        let got =
+            resolved(js.extract_contacts(&text(input), Some(options(r#"{"countryHint":["GE"]}"#))))
+                .await;
+        let contacts: Array = prop(&got, "contacts").dyn_into().unwrap();
+        assert_eq!(contacts.length() as usize, want.contacts.len(), "{input}");
+        for (c, w) in contacts.iter().zip(&want.contacts) {
+            assert_eq!(number(&c, "start"), utf16_len(&input[..w.start]), "{input}");
+            assert_eq!(number(&c, "end"), utf16_len(&input[..w.end]), "{input}");
+            assert_eq!(
+                prop(&c, "reviewRecommended").as_bool(),
+                Some(w.review_recommended)
+            );
+            for (key, one) in [("person", &w.person), ("org", &w.org)] {
+                match one {
+                    Some(e) => assert_entity(&prop(&c, key), e, input, key),
+                    None => assert!(!has(&c, key), "{input}: {key} should be absent"),
+                }
+            }
+            for (key, list) in [
+                ("addresses", &w.addresses),
+                ("emails", &w.emails),
+                ("phones", &w.phones),
+            ] {
+                let arr: Array = prop(&c, key).dyn_into().unwrap();
+                assert_eq!(arr.length() as usize, list.len(), "{input}: {key}");
+                for (e, n) in arr.iter().zip(list) {
+                    assert_entity(&e, n, input, key);
+                }
+            }
+        }
+        let unassigned: Array = prop(&got, "unassigned").dyn_into().unwrap();
+        assert_eq!(
+            unassigned.length() as usize,
+            want.unassigned.len(),
+            "{input}"
+        );
+        for (e, n) in unassigned.iter().zip(&want.unassigned) {
+            assert_entity(&e, n, input, "unassigned");
+        }
+    }
+}
+
 #[test]
 async fn rules_only_needs_no_bundle() {
     let tessera = rules_tessera();

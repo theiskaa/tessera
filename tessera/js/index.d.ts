@@ -42,6 +42,31 @@ export interface Entity {
   region?: string;
 }
 
+/** Entities that belong to one person or organization. Offsets are UTF-16 code units. */
+export interface Contact {
+  /** First unit of any of the contact's entities. */
+  start: number;
+  /** End of the last of them, exclusive. */
+  end: number;
+  /** The weakest assignment's confidence, never an average. */
+  confidence: number;
+  reviewRecommended: boolean;
+  /** The anchor, when the contact is a person's. */
+  person?: Entity;
+  /** The anchor when there is no person, else the person's organization. */
+  org?: Entity;
+  addresses: Entity[];
+  emails: Entity[];
+  phones: Entity[];
+}
+
+export interface Extraction {
+  /** Contacts in document order. */
+  contacts: Contact[];
+  /** Entities no contact could take with confidence, in document order. */
+  unassigned: Entity[];
+}
+
 export type ErrorCode =
   | "BUNDLE_INVALID"
   | "CHECKSUM_MISMATCH"
@@ -94,6 +119,11 @@ export interface Tessera {
   readonly kinds: Kind[];
   /** Every supported entity in `text`, in document order. */
   detect(text: string, options?: QueryOptions): Promise<Entity[]>;
+  /**
+   * The entities of `detect`, grouped into contacts. A wrong assignment is worse than none, so
+   * whatever no rule places confidently is in `unassigned`.
+   */
+  extractContacts(text: string, options?: QueryOptions): Promise<Extraction>;
   /** Split `text`, known to be one address, into components. */
   parseAddress(text: string, options?: QueryOptions): Promise<Entity>;
   /**
