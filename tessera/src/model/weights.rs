@@ -114,6 +114,11 @@ impl<'a> Bundle<'a> {
         self.manifest.nets.iter().any(|n| n == net)
     }
 
+    /// Whether the bundle holds a tensor named `name`.
+    pub(crate) fn has(&self, name: &str) -> bool {
+        self.entries.iter().any(|e| e.name == name)
+    }
+
     fn entry(&self, name: &str, dtype: Dtype, shape: &[usize]) -> Result<&Entry, Error> {
         self.entries
             .iter()

@@ -560,7 +560,7 @@ impl Tessera {
             .any(|&k| config.kinds.contains(k))
             && bundle.has_net("detector")
         {
-            Some(model::Tagger::detector(&bundle)?)
+            Some(model::Tagger::detector(&bundle, parser.as_ref())?)
         } else {
             None
         };

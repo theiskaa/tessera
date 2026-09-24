@@ -32,6 +32,8 @@ pub const PARSER_LABELS: usize = 23;
 /// `O`, then a `B` and an `I` label for person, org, and address.
 pub const DETECTOR_LABELS: usize = 7;
 
+use std::sync::Arc;
+
 use crate::Error;
 use crate::features::TokenFeatures;
 use weights::{Bundle, QTensor};
@@ -58,10 +60,19 @@ const HIDDEN: usize = 96;
 /// Width of one token's input to the projection.
 const INPUT_DIM: usize = NGRAM_DIM + SCRIPT_DIM + SHAPE_DIM + FLAG_BITS;
 
+/// The int8 n-gram table `<net>.embed.ngram`: one row per hash bucket plus the padding row.
+fn ngram_table(bundle: &Bundle<'_>, net: &str) -> Result<QTensor, Error> {
+    let rows = (bundle.manifest.feature_config.hash_buckets as usize)
+        .checked_add(1)
+        .ok_or(Error::BundleInvalid)?;
+    bundle.take_i8(&format!("{net}.embed.ngram"), &[rows, NGRAM_DIM], 1)
+}
+
 /// A tagger network with its weights, validated once so the kernels can trust every shape.
 #[derive(Debug)]
 pub(crate) struct Tagger {
-    ngram: QTensor,
+    /// Shared with the parser when the bundle gives the detector no table of its own.
+    ngram: Arc<QTensor>,
     script: QTensor,
     shape: QTensor,
     proj: kernels::Dense,
@@ -76,27 +87,42 @@ impl Tagger {
         if bundle.manifest.parser_labels != bio::parser_label_strings() {
             return Err(Error::BundleInvalid);
         }
-        Tagger::load(bundle, "parser", &PARSER_DILATIONS, PARSER_LABELS)
+        let ngram = Arc::new(ngram_table(bundle, "parser")?);
+        Tagger::load(bundle, "parser", ngram, &PARSER_DILATIONS, PARSER_LABELS)
     }
 
-    /// The entity detector: `detector.*` tensors, six blocks, `DETECTOR_LABELS` outputs.
-    pub(crate) fn detector(bundle: &Bundle<'_>) -> Result<Tagger, Error> {
+    /// The entity detector: `detector.*` tensors, six blocks, `DETECTOR_LABELS` outputs. A
+    /// bundle without `detector.embed.ngram` trained the detector on the parser's n-gram table,
+    /// which is then shared with `parser` when it is loaded and read from the bundle otherwise.
+    pub(crate) fn detector(bundle: &Bundle<'_>, parser: Option<&Tagger>) -> Result<Tagger, Error> {
         if bundle.manifest.detector_labels != bio::detector_label_strings() {
             return Err(Error::BundleInvalid);
         }
-        Tagger::load(bundle, "detector", &DETECTOR_DILATIONS, DETECTOR_LABELS)
+        let ngram = if bundle.has("detector.embed.ngram") {
+            Arc::new(ngram_table(bundle, "detector")?)
+        } else if let Some(parser) = parser {
+            Arc::clone(&parser.ngram)
+        } else {
+            Arc::new(ngram_table(bundle, "parser")?)
+        };
+        Tagger::load(
+            bundle,
+            "detector",
+            ngram,
+            &DETECTOR_DILATIONS,
+            DETECTOR_LABELS,
+        )
     }
 
-    /// Copies the tensors named `<net>.*` out of `bundle`, checking dtype and shape of each.
+    /// Copies the tensors named `<net>.*` other than the n-gram table out of `bundle`,
+    /// checking dtype and shape of each.
     fn load(
         bundle: &Bundle<'_>,
         net: &str,
+        ngram: Arc<QTensor>,
         dilations: &[usize],
         labels: usize,
     ) -> Result<Tagger, Error> {
-        let rows = (bundle.manifest.feature_config.hash_buckets as usize)
-            .checked_add(1)
-            .ok_or(Error::BundleInvalid)?;
         let mut blocks = Vec::with_capacity(dilations.len());
         for (i, &d) in dilations.iter().enumerate() {
             let w = bundle.take_i8(
@@ -108,7 +134,7 @@ impl Tagger {
             blocks.push((kernels::Dense::new(&w, b), d));
         }
         Ok(Tagger {
-            ngram: bundle.take_i8(&format!("{net}.embed.ngram"), &[rows, NGRAM_DIM], 1)?,
+            ngram,
             script: bundle.take_i8(
                 &format!("{net}.embed.script"),
                 &[SCRIPT_ROWS, SCRIPT_DIM],
@@ -126,6 +152,12 @@ impl Tagger {
             ),
             labels,
         })
+    }
+
+    /// Whether this network reads the n-gram table `other` does.
+    #[cfg(test)]
+    pub(crate) fn shares_ngram_with(&self, other: &Tagger) -> bool {
+        Arc::ptr_eq(&self.ngram, &other.ngram)
     }
 
     /// Output labels per token.

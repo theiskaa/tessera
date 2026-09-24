@@ -64,7 +64,7 @@ fn default_sample_manifest() -> String {
     "data/manifests/parser-sample.json".to_string()
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FeaturesConfig {
     pub ngram_sizes: Vec<u8>,
@@ -86,6 +86,10 @@ pub struct NetConfig {
     /// Budget for the n-gram table, in int8 bytes.
     #[serde(default = "default_max_embedding_bytes")]
     pub max_embedding_bytes: usize,
+    /// A parser run whose n-gram table this network uses, frozen, so the bundle carries the
+    /// table once. The run's feature settings must equal this config's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ngram_from: Option<String>,
 }
 
 fn default_max_embedding_bytes() -> usize {

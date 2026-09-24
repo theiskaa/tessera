@@ -89,6 +89,15 @@ pub(crate) fn parser_bundle() -> Vec<u8> {
 
 /// The parser-only bundle plus a detector with `blocks` random residual blocks.
 pub(crate) fn with_random_detector(seed: u64, blocks: usize) -> Vec<u8> {
+    random_detector(seed, blocks, true)
+}
+
+/// The same, with no `detector.embed.ngram`: a detector trained on the parser's table.
+pub(crate) fn with_random_sharing_detector(seed: u64) -> Vec<u8> {
+    random_detector(seed, 6, false)
+}
+
+fn random_detector(seed: u64, blocks: usize, own_ngram: bool) -> Vec<u8> {
     let mut parts = Parts::read(&parser_bundle());
     let feature_config: Value =
         serde_json::from_str(parts.metadata()["feature_config"].as_str().unwrap()).unwrap();
@@ -110,12 +119,15 @@ pub(crate) fn with_random_detector(seed: u64, blocks: usize) -> Vec<u8> {
             .collect();
         (name, shape.to_vec(), values, scales)
     };
-    let mut tensors = vec![
-        int8(
+    let mut tensors = Vec::new();
+    if own_ngram {
+        tensors.push(int8(
             "detector.embed.ngram".into(),
             &[buckets + 1, NGRAM_DIM],
             NGRAM_DIM,
-        ),
+        ));
+    }
+    tensors.extend([
         int8(
             "detector.embed.script".into(),
             &[SCRIPT_ROWS, SCRIPT_DIM],
@@ -132,7 +144,7 @@ pub(crate) fn with_random_detector(seed: u64, blocks: usize) -> Vec<u8> {
             &[DETECTOR_LABELS, HIDDEN],
             DETECTOR_LABELS,
         ),
-    ];
+    ]);
     for i in 0..blocks {
         tensors.push(int8(
             format!("detector.block{i}.conv.weight"),
@@ -177,17 +189,39 @@ mod tests {
     fn a_detector_with_six_blocks_loads_and_a_missing_block_is_invalid() {
         let bytes = with_random_detector(7, 6);
         let bundle = Bundle::parse(&bytes, None).unwrap();
-        assert!(Tagger::detector(&bundle).is_ok());
+        assert!(Tagger::detector(&bundle, None).is_ok());
         let bytes = with_random_detector(7, 5);
         let bundle = Bundle::parse(&bytes, None).unwrap();
-        assert_eq!(Tagger::detector(&bundle).unwrap_err(), Error::BundleInvalid);
+        assert_eq!(
+            Tagger::detector(&bundle, None).unwrap_err(),
+            Error::BundleInvalid
+        );
+    }
+
+    #[test]
+    fn a_detector_without_its_own_table_shares_the_parsers() {
+        let bytes = with_random_sharing_detector(5);
+        let bundle = Bundle::parse(&bytes, None).unwrap();
+        let parser = Tagger::parser(&bundle).unwrap();
+        let shared = Tagger::detector(&bundle, Some(&parser)).unwrap();
+        assert!(shared.shares_ngram_with(&parser));
+        let alone = Tagger::detector(&bundle, None).unwrap();
+        assert!(!alone.shares_ngram_with(&parser));
+        assert_eq!(
+            (&alone.ngram.data, &alone.ngram.scales),
+            (&shared.ngram.data, &shared.ngram.scales)
+        );
+        let own = with_random_detector(5, 6);
+        let bundle = Bundle::parse(&own, None).unwrap();
+        let detector = Tagger::detector(&bundle, Some(&parser)).unwrap();
+        assert!(!detector.shares_ngram_with(&parser));
     }
 
     #[test]
     fn forward_gives_one_distribution_per_position() {
         let bytes = with_random_detector(11, 6);
         let bundle = Bundle::parse(&bytes, None).unwrap();
-        let detector = Tagger::detector(&bundle).unwrap();
+        let detector = Tagger::detector(&bundle, None).unwrap();
         let text = (0..37)
             .map(|i| format!("w{i}"))
             .collect::<Vec<_>>()

@@ -238,7 +238,10 @@ fn train_detector<B: AutodiffBackend>(
     eprintln!("train {train_counts:?}, valid {valid_counts:?}");
     let train_items: Vec<Encoded> = train_docs.into_iter().map(|d| d.enc).collect();
     let valid_gold: Vec<Vec<KindSpan>> = valid_docs.iter().map(|d| d.gold.clone()).collect();
-    let model = cfg.detector_net_config().init::<B>(device);
+    let mut model = cfg.detector_net_config().init::<B>(device);
+    if let Some(run) = &cfg.net.ngram_from {
+        model.ngram = frozen_ngram::<B>(cfg, Path::new(run), device)?;
+    }
     let batch_size = cfg.train.batch_size.max(1);
     let fit = fit::<B>(
         cfg,
@@ -281,6 +284,29 @@ fn train_detector<B: AutodiffBackend>(
         serde_json::to_string_pretty(&summary)? + "\n",
     )?;
     Ok(())
+}
+
+/// The n-gram table of the parser run in `run`, with gradients off so training leaves it as
+/// it is. Its features must be this config's, or the same ids would mean different n-grams.
+fn frozen_ngram<B: AutodiffBackend>(
+    cfg: &Config,
+    run: &Path,
+    device: &B::Device,
+) -> anyhow::Result<burn::nn::Embedding<B>> {
+    let parser_cfg = crate::config::load(&run.join("config.toml"))?;
+    anyhow::ensure!(
+        parser_cfg.features == cfg.features,
+        "{} has other feature settings than this config",
+        run.display()
+    );
+    let recorder = NamedMpkFileRecorder::<FullPrecisionSettings>::new();
+    let parser = parser_cfg
+        .parser_net_config()
+        .init::<B>(device)
+        .load_file(run.join("best"), &recorder, device)
+        .with_context(|| format!("loading {}", run.join("best.mpk").display()))?;
+    eprintln!("n-gram table from {}, frozen", run.display());
+    Ok(parser.ngram.no_grad())
 }
 
 /// What a finished `fit` reports.

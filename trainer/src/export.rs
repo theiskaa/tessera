@@ -221,6 +221,37 @@ fn load_run(dir: &Path, task: Task) -> anyhow::Result<ShippedRun> {
     })
 }
 
+/// Whether the detector was trained on this parser's n-gram table, frozen, in which case the
+/// bundle carries the table once and the library gives it to both networks. The table must be
+/// the same bytes in both runs, which also proves training left it untouched.
+fn shares_parser_ngram(parser: &ShippedRun, detector: &ShippedRun) -> anyhow::Result<bool> {
+    let Some(from) = &detector.cfg.net.ngram_from else {
+        return Ok(false);
+    };
+    let same_run = std::fs::canonicalize(from).with_context(|| format!("resolving {from}"))?
+        == std::fs::canonicalize(&parser.dir)?;
+    anyhow::ensure!(
+        same_run,
+        "{} was trained on the n-gram table of {from}, not of {}",
+        detector.dir.display(),
+        parser.dir.display()
+    );
+    let table = |run: &ShippedRun, name: &str| {
+        run.q
+            .iter()
+            .find(|t| t.name == name)
+            .map(|t| (t.data.clone(), t.scales.clone()))
+            .with_context(|| format!("{} has no {name}", run.dir.display()))
+    };
+    anyhow::ensure!(
+        table(parser, "parser.embed.ngram")? == table(detector, "detector.embed.ngram")?,
+        "{}'s n-gram table differs from {}'s: it was not frozen",
+        detector.dir.display(),
+        parser.dir.display()
+    );
+    Ok(true)
+}
+
 /// Both networks read features from one computation at inference, so their feature settings
 /// must be the same; the error names the first key that differs.
 fn check_same_features(parser: &Config, detector: &Config) -> anyhow::Result<()> {
@@ -283,7 +314,18 @@ pub fn run(parser_run: &Path, detector_run: &Path, out: &Path, date: &str) -> an
     );
     std::fs::create_dir_all(out)?;
     let bundle = out.join("tessera-v1.safetensors");
-    let q: Vec<QTensor> = parser.q.iter().chain(&detector.q).cloned().collect();
+    let shared = shares_parser_ngram(&parser, &detector)?;
+    let q: Vec<QTensor> = parser
+        .q
+        .iter()
+        .chain(
+            detector
+                .q
+                .iter()
+                .filter(|t| !(shared && t.name == "detector.embed.ngram")),
+        )
+        .cloned()
+        .collect();
     let biases: Vec<F32Tensor> = parser
         .biases
         .iter()
