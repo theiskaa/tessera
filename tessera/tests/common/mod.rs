@@ -23,6 +23,9 @@ macro_rules! report {
 #[allow(unused_imports)]
 pub(crate) use report;
 
+/// The spec's worked example: one signature with all five kinds.
+pub const SPEC_DOC: &str = "Thanks, see you on Monday.\n\nNino Beridze\nKavkaz Freight LLC\n14 Rustaveli Avenue, Tbilisi 0108, Georgia\n+995 32 212 3456\nnino@kavkaz-freight.example";
+
 /// The release bundle, embedded.
 pub const BUNDLE: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),

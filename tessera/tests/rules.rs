@@ -238,7 +238,7 @@ fn rules_only_extract_contacts_returns_unassigned() {
         },
     )
     .unwrap();
-    let text = "Thanks, see you on Monday.\n\nNino Beridze\nKavkaz Freight LLC\n14 Rustaveli Avenue, Tbilisi 0108, Georgia\n+995 32 212 3456\nnino@kavkaz-freight.example";
+    let text = common::SPEC_DOC;
     let x = t
         .extract_contacts(
             text,

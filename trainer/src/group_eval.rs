@@ -17,7 +17,7 @@ use crate::fixtures::{self, GrouperCase, GrouperFixture};
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct GrouperCounts {
     pub cases: usize,
-    /// Gold entities that are not a gold contact's anchor, each owned by a contact or by none.
+    /// Gold entities, each owned by the contact it belongs to (an anchor by its own) or by none.
     pub assignments: usize,
     pub correct: usize,
     /// Given to a contact other than the gold owner, or to any contact when gold leaves it out.
@@ -126,8 +126,8 @@ fn gold_case(case: &GrouperCase) -> anyhow::Result<GoldCase> {
     })
 }
 
-/// Adds one case's counts: every non-anchor gold entity is correct, wrong, or missed, and every
-/// gold contact is exact or not.
+/// Adds one case's counts: every gold entity is correct, wrong, or missed (an anchor attached to
+/// another contact is wrong, one dropped is missed), and every gold contact is exact or not.
 fn score(case: &GoldCase, predicted: &Extraction, counts: &mut GrouperCounts) {
     counts.cases += 1;
     let mut predicted_by_anchor: HashMap<Span, BTreeSet<Span>> = HashMap::new();
@@ -136,15 +136,7 @@ fn score(case: &GoldCase, predicted: &Extraction, counts: &mut GrouperCounts) {
         let Some(anchor) = c.person.as_ref().or(c.org.as_ref()).map(span) else {
             continue;
         };
-        let members: BTreeSet<Span> = c
-            .person
-            .iter()
-            .chain(&c.org)
-            .chain(&c.addresses)
-            .chain(&c.emails)
-            .chain(&c.phones)
-            .map(span)
-            .collect();
+        let members: BTreeSet<Span> = c.entities().map(span).collect();
         for m in &members {
             owner_of.insert(*m, anchor);
         }
@@ -157,9 +149,6 @@ fn score(case: &GoldCase, predicted: &Extraction, counts: &mut GrouperCounts) {
         .collect();
     let gold_anchors: BTreeSet<Span> = case.contacts.iter().map(|(a, _)| *a).collect();
     for s in case.entities.iter().map(span) {
-        if gold_anchors.contains(&s) {
-            continue;
-        }
         counts.assignments += 1;
         match (gold_owner.get(&s), owner_of.get(&s)) {
             (None, None) => counts.correct += 1,
@@ -180,8 +169,8 @@ fn score(case: &GoldCase, predicted: &Extraction, counts: &mut GrouperCounts) {
         .count();
 }
 
-/// Scores every fixture file in `dir`, on gold entities and, with `tessera`, end to end.
-pub fn eval_grouper(dir: &Path, tessera: Option<&Tessera>) -> anyhow::Result<GrouperReport> {
+/// Scores every fixture file in `dir`, on gold entities and end to end through `tessera`.
+pub fn eval_grouper(dir: &Path, tessera: &Tessera) -> anyhow::Result<GrouperReport> {
     let mut report = GrouperReport::default();
     for (family, fixture) in fixtures::load_dir::<GrouperFixture>(dir)? {
         let mut gold_counts = GrouperCounts::default();
@@ -191,12 +180,10 @@ pub fn eval_grouper(dir: &Path, tessera: Option<&Tessera>) -> anyhow::Result<Gro
             let tokens = tessera::internal::tokenize(&gold.text);
             let predicted = tessera::internal::group(&gold.text, &tokens, gold.entities.clone());
             score(&gold, &predicted, &mut gold_counts);
-            if let Some(t) = tessera {
-                let predicted = t
-                    .extract_contacts(&gold.text, &Query::default())
-                    .map_err(|e| anyhow::anyhow!("{family}/{}: {e}", case.name))?;
-                score(&gold, &predicted, &mut e2e_counts);
-            }
+            let predicted = tessera
+                .extract_contacts(&gold.text, &Query::default())
+                .map_err(|e| anyhow::anyhow!("{family}/{}: {e}", case.name))?;
+            score(&gold, &predicted, &mut e2e_counts);
         }
         report.total_gold.add(&gold_counts);
         report.total_end_to_end.add(&e2e_counts);
@@ -273,11 +260,11 @@ pub fn run(args: &EvalArgs, dir: &Path) -> anyhow::Result<()> {
         },
     )
     .map_err(|e| anyhow::anyhow!("loading {}: {e}", args.bundle.display()))?;
-    let report = eval_grouper(dir, Some(&tessera))?;
+    let report = eval_grouper(dir, &tessera)?;
     let hard = args
         .grouper_hard
         .as_deref()
-        .map(|d| eval_grouper(d, Some(&tessera)))
+        .map(|d| eval_grouper(d, &tessera))
         .transpose()?;
     let markdown = render_markdown(&report, hard.as_ref(), &args.bundle.display().to_string());
     print!("{markdown}");
@@ -339,7 +326,7 @@ mod tests {
                 counts.missed,
                 counts.exact_contacts
             ),
-            (0, 1, 1, 0)
+            (1, 1, 1, 0)
         );
     }
 }

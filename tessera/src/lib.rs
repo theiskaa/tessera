@@ -359,6 +359,19 @@ pub struct Contact {
     pub phones: Vec<Entity>,
 }
 
+impl Contact {
+    /// Every entity of the contact: the person, the organization, then its addresses, emails,
+    /// and phones.
+    pub fn entities(&self) -> impl Iterator<Item = &Entity> {
+        self.person
+            .iter()
+            .chain(&self.org)
+            .chain(&self.addresses)
+            .chain(&self.emails)
+            .chain(&self.phones)
+    }
+}
+
 /// Result of [`Tessera::extract_contacts`].
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Extraction {

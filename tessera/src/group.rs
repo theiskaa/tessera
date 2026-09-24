@@ -12,7 +12,7 @@ use crate::{Contact, Entity, Extraction, Kind};
 
 /// What one line is, judged from its text alone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum LineKind {
+enum LineKind {
     Blank,
     Separator,
     Header,
@@ -28,17 +28,17 @@ pub(crate) enum LineKind {
 
 /// One line of the document, without its newline.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Line {
-    pub start: usize,
-    pub end: usize,
-    pub kind: LineKind,
+struct Line {
+    start: usize,
+    end: usize,
+    kind: LineKind,
     /// Characters in the trimmed line, used for the short-line test.
-    pub chars: usize,
+    chars: usize,
 }
 
 /// What a block of lines is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum BlockKind {
+enum BlockKind {
     Paragraph,
     /// A paragraph of short lines, the shape of a signature or letterhead.
     Signature,
@@ -51,15 +51,15 @@ pub(crate) enum BlockKind {
 
 /// Consecutive lines that belong together, with byte offsets into the document.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Block {
-    pub start: usize,
-    pub end: usize,
-    pub kind: BlockKind,
-    pub lines: Vec<Line>,
+struct Block {
+    start: usize,
+    end: usize,
+    kind: BlockKind,
+    lines: Vec<Line>,
     /// At least two content lines, none longer than `SHORT_LINE_CHARS`.
-    pub short_lines: bool,
+    short_lines: bool,
     /// Blank lines between the previous block and this one.
-    pub gap_lines: usize,
+    gap_lines: usize,
 }
 
 const SHORT_LINE_CHARS: usize = 64;
@@ -67,7 +67,7 @@ const MIN_SIGNATURE_LINES: usize = 2;
 
 /// The lines of `text`, cut at the tokenizer's newline tokens; a newline belongs to no line,
 /// and a last line without one is kept when it is not empty.
-pub(crate) fn lines(text: &str, tokens: &[Token]) -> Vec<Line> {
+fn lines(text: &str, tokens: &[Token]) -> Vec<Line> {
     let mut out = Vec::new();
     let mut cursor = 0;
     for token in tokens.iter().filter(|t| t.class == TokenClass::Newline) {
@@ -205,7 +205,7 @@ fn is_closing(t: &str) -> bool {
 /// separators and table rows are blocks of their own; consecutive header lines, quoted lines,
 /// and a chat turn with the text lines after it each form one block; everything else is a
 /// paragraph, reported as a signature when its lines are short.
-pub(crate) fn split_blocks(text: &str, tokens: &[Token]) -> Vec<Block> {
+fn split_blocks(text: &str, tokens: &[Token]) -> Vec<Block> {
     let mut blocks = Vec::new();
     let mut current: Vec<Line> = Vec::new();
     let mut current_kind = BlockKind::Paragraph;
@@ -388,6 +388,13 @@ fn name_parts(person: &str) -> Option<Vec<String>> {
     (!parts.is_empty()).then_some(parts)
 }
 
+/// Mailboxes named for a role, which spell no one even when they equal someone's initials or
+/// given name (`hr@` for Hans Richter).
+const ROLE_LOCALS: &[&str] = &[
+    "admin", "billing", "ceo", "cfo", "contact", "cs", "cto", "hello", "help", "hr", "info", "it",
+    "legal", "mail", "office", "ops", "pr", "press", "qa", "sales", "support", "team",
+];
+
 const HONORIFICS: &[&str] = &[
     "dr", "mr", "mrs", "ms", "mx", "prof", "sir", "herr", "frau", "hr",
 ];
@@ -395,7 +402,7 @@ const HONORIFICS: &[&str] = &[
 /// Whether an email local part spells a person's name: given and family name in either order,
 /// with an initial for either, joined or split by `.` `_` `-`; a lone given or family name of
 /// at least four letters; or the initials of a name with at least two parts.
-pub(crate) fn name_match(local: &str, person: &str) -> bool {
+fn name_match(local: &str, person: &str) -> bool {
     let Some(mut parts) = name_parts(person) else {
         return false;
     };
@@ -412,7 +419,7 @@ pub(crate) fn name_match(local: &str, person: &str) -> bool {
         .filter(|p| !p.is_empty())
         .collect();
     let joined: String = local_parts.concat();
-    if joined.is_empty() {
+    if joined.is_empty() || ROLE_LOCALS.contains(&joined.as_str()) {
         return false;
     }
     let initials: String = parts.iter().filter_map(|p| p.chars().next()).collect();
@@ -512,6 +519,15 @@ fn try_assign(
     true
 }
 
+/// A person an org could attach to: its contact, the line distance, and whether the person
+/// comes before the org.
+#[derive(Clone, Copy)]
+struct Rival {
+    contact: usize,
+    distance: usize,
+    preceding: bool,
+}
+
 /// An org in a block with people goes to the nearest person, preceding on a tie, within three
 /// lines, with no person or org between them and no org of its own yet. Entities are sorted by
 /// start, so "between" is an index range.
@@ -520,8 +536,7 @@ fn attach_orgs(build: &mut Build, entities: &[Entity], placed: &[Option<Placed>]
         if entities[p.entity].kind != Kind::Org || build.assigned[p.entity].is_some() {
             continue;
         }
-        // (contact, line distance, whether the person precedes the org)
-        let mut best: Option<(usize, usize, bool)> = None;
+        let mut best: Option<Rival> = None;
         for (ci, draft) in build.contacts.iter().enumerate() {
             let Some(person) = draft.person else {
                 continue;
@@ -537,26 +552,43 @@ fn attach_orgs(build: &mut Build, entities: &[Entity], placed: &[Option<Placed>]
                 continue;
             }
             let preceding = person < p.entity;
-            let better = match best {
-                None => true,
-                Some((_, bd, bp)) => d < bd || (d == bd && preceding && !bp),
-            };
+            let better = best
+                .is_none_or(|b| d < b.distance || (d == b.distance && preceding && !b.preceding));
             if better {
-                best = Some((ci, d, preceding));
+                best = Some(Rival {
+                    contact: ci,
+                    distance: d,
+                    preceding,
+                });
             }
         }
-        if let Some((ci, d, _)) = best
-            && try_assign(build, entities, p.entity, ci, distance_factor(d))
+        if let Some(b) = best
+            && try_assign(
+                build,
+                entities,
+                p.entity,
+                b.contact,
+                distance_factor(b.distance),
+            )
         {
-            build.contacts[ci].org = Some(p.entity);
+            build.contacts[b.contact].org = Some(p.entity);
         }
     }
 }
 
-/// Each address, email, and phone goes to the first contact these rules name, in order: the one
+/// What the detail rules read about one entity: where it is, and the contacts anchored in its
+/// block with the line of each anchor.
+struct Candidate<'a> {
+    p: &'a Placed,
+    block: &'a Block,
+    anchors: Vec<(usize, usize)>,
+}
+
+/// Each address, email, and phone goes to the contact the first applicable rule names: the one
 /// anchor on its line; for an email, the one person its local part spells; the owner of the
 /// details on the line above; the nearest preceding anchor in the block; in a short-line block,
-/// the nearest anchor at most two lines below.
+/// the nearest anchor at most two lines below. When the named contact would take it below
+/// `MEDIUM`, it stays unassigned rather than falling to a weaker rule.
 fn attach_details(
     build: &mut Build,
     text: &str,
@@ -564,94 +596,126 @@ fn attach_details(
     entities: &[Entity],
     placed: &[Option<Placed>],
 ) {
-    let slice = |i: usize| text.get(entities[i].start..entities[i].end).unwrap_or("");
     for p in placed.iter().flatten() {
-        let e = &entities[p.entity];
-        if !is_attachable(e.kind) || build.assigned[p.entity].is_some() {
+        if !is_attachable(entities[p.entity].kind) || build.assigned[p.entity].is_some() {
             continue;
         }
-        let block = &blocks[p.block];
-        let anchors: Vec<(usize, usize)> = build
-            .contacts
-            .iter()
-            .enumerate()
-            .filter(|(_, d)| d.block == p.block)
-            .map(|(ci, d)| (ci, d.line))
-            .collect();
-
-        let same_line: Vec<usize> = anchors
-            .iter()
-            .filter(|(_, l)| *l == p.line)
-            .map(|(ci, _)| *ci)
-            .collect();
-        if let [only] = same_line[..] {
-            try_assign(build, entities, p.entity, only, 1.0);
-            continue;
-        }
-
-        if e.kind == Kind::Email {
-            let address = e.normalized.as_deref().unwrap_or(slice(p.entity));
-            let local = address.split('@').next().unwrap_or("");
-            let matches: Vec<usize> = anchors
+        let c = Candidate {
+            p,
+            block: &blocks[p.block],
+            anchors: build
+                .contacts
                 .iter()
-                .map(|(ci, _)| *ci)
-                .filter(|ci| {
-                    build.contacts[*ci]
-                        .person
-                        .is_some_and(|person| name_match(local, slice(person)))
-                })
-                .collect();
-            if let [only] = matches[..]
-                && try_assign(build, entities, p.entity, only, 1.0)
-            {
-                continue;
-            }
-        }
-
-        if let Some(prev) = previous_content_line(block, p.line) {
-            let owners: Vec<usize> = placed
-                .iter()
-                .flatten()
-                .filter(|q| {
-                    q.block == p.block && q.line == prev && is_attachable(entities[q.entity].kind)
-                })
-                .filter_map(|q| build.assigned[q.entity])
-                .collect();
-            if let Some(&owner) = owners.first()
-                && owners.iter().all(|c| *c == owner)
-                && try_assign(build, entities, p.entity, owner, 1.0)
-            {
-                continue;
-            }
-        }
-
-        let preceding = anchors
-            .iter()
-            .filter(|(ci, l)| *l <= p.line && entities[build.contacts[*ci].anchor].start <= e.start)
-            .max_by_key(|(ci, l)| (*l, entities[build.contacts[*ci].anchor].start))
-            .copied();
-        if let Some((ci, line)) = preceding
-            && try_assign(
-                build,
-                entities,
-                p.entity,
-                ci,
-                distance_factor(p.line - line),
-            )
-        {
-            continue;
-        }
-
-        if block.short_lines
-            && let Some((ci, _)) = anchors
-                .iter()
-                .filter(|(_, l)| *l > p.line && *l - p.line <= 2)
-                .min_by_key(|(_, l)| *l)
-                .copied()
-        {
-            try_assign(build, entities, p.entity, ci, 0.9);
+                .enumerate()
+                .filter(|(_, d)| d.block == p.block)
+                .map(|(ci, d)| (ci, d.line))
+                .collect(),
+        };
+        let named = same_line_anchor(&c)
+            .or_else(|| email_name_owner(&c, build, text, entities))
+            .or_else(|| previous_line_owner(&c, build, entities, placed))
+            .or_else(|| nearest_preceding(&c, build, entities))
+            .or_else(|| anchor_below(&c));
+        if let Some((contact, factor)) = named {
+            try_assign(build, entities, p.entity, contact, factor);
         }
     }
+}
+
+fn same_line_anchor(c: &Candidate<'_>) -> Option<(usize, f32)> {
+    let on_line: Vec<usize> = c
+        .anchors
+        .iter()
+        .filter(|(_, l)| *l == c.p.line)
+        .map(|(ci, _)| *ci)
+        .collect();
+    match on_line[..] {
+        [only] => Some((only, 1.0)),
+        _ => None,
+    }
+}
+
+fn email_name_owner(
+    c: &Candidate<'_>,
+    build: &Build,
+    text: &str,
+    entities: &[Entity],
+) -> Option<(usize, f32)> {
+    let e = &entities[c.p.entity];
+    if e.kind != Kind::Email {
+        return None;
+    }
+    let slice = |i: usize| text.get(entities[i].start..entities[i].end).unwrap_or("");
+    let address = e.normalized.as_deref().unwrap_or(slice(c.p.entity));
+    let local = address.split('@').next().unwrap_or("");
+    let matches: Vec<usize> = c
+        .anchors
+        .iter()
+        .map(|(ci, _)| *ci)
+        .filter(|ci| {
+            build.contacts[*ci]
+                .person
+                .is_some_and(|person| name_match(local, slice(person)))
+        })
+        .collect();
+    match matches[..] {
+        [only] => Some((only, 1.0)),
+        _ => None,
+    }
+}
+
+/// The owner of every detail on the line above, unless an anchor on this entity's own line comes
+/// before it: `To: Nino <nino@..>, Tom <tom@..>` must not hand Tom's email to the line above.
+fn previous_line_owner(
+    c: &Candidate<'_>,
+    build: &Build,
+    entities: &[Entity],
+    placed: &[Option<Placed>],
+) -> Option<(usize, f32)> {
+    let start = entities[c.p.entity].start;
+    let anchor_before = c
+        .anchors
+        .iter()
+        .any(|(ci, l)| *l == c.p.line && entities[build.contacts[*ci].anchor].start < start);
+    if anchor_before {
+        return None;
+    }
+    let prev = previous_content_line(c.block, c.p.line)?;
+    let owners: Vec<usize> = placed
+        .iter()
+        .flatten()
+        .filter(|q| {
+            q.block == c.p.block && q.line == prev && is_attachable(entities[q.entity].kind)
+        })
+        .filter_map(|q| build.assigned[q.entity])
+        .collect();
+    let owner = *owners.first()?;
+    owners.iter().all(|o| *o == owner).then_some((owner, 1.0))
+}
+
+fn nearest_preceding(
+    c: &Candidate<'_>,
+    build: &Build,
+    entities: &[Entity],
+) -> Option<(usize, f32)> {
+    let start = entities[c.p.entity].start;
+    let anchor_start = |ci: usize| entities[build.contacts[ci].anchor].start;
+    c.anchors
+        .iter()
+        .filter(|(ci, l)| *l <= c.p.line && anchor_start(*ci) <= start)
+        .max_by_key(|(ci, l)| (*l, anchor_start(*ci)))
+        .map(|(ci, l)| (*ci, distance_factor(c.p.line - l)))
+}
+
+fn anchor_below(c: &Candidate<'_>) -> Option<(usize, f32)> {
+    if !c.block.short_lines {
+        return None;
+    }
+    c.anchors
+        .iter()
+        .filter(|(_, l)| *l > c.p.line && *l - c.p.line <= 2)
+        .min_by_key(|(_, l)| *l)
+        .map(|(ci, _)| (*ci, 0.9))
 }
 
 fn previous_content_line(block: &Block, line: usize) -> Option<usize> {
@@ -660,9 +724,10 @@ fn previous_content_line(block: &Block, line: usize) -> Option<usize> {
         .find(|&i| !matches!(block.lines[i].kind, LineKind::Blank | LineKind::QuotedBlank))
 }
 
-/// A short-line block with no anchor, one blank line below a block that holds a contact (and is
-/// not a separator), gives its details to that block's last contact: the signature layout with
-/// a blank line between the name lines and the address lines.
+/// A short-line block with no anchor, one blank line below a signature-shaped block (a short-line
+/// paragraph or quoted reply) that holds a contact, gives its details to that block's last
+/// contact: the signature layout with a blank line between the name lines and the address
+/// lines. A greeting, a prose name, or a header above never adopts.
 fn adopt_orphans(
     build: &mut Build,
     blocks: &[Block],
@@ -670,9 +735,12 @@ fn adopt_orphans(
     placed: &[Option<Placed>],
 ) {
     for (bi, block) in blocks.iter().enumerate().skip(1) {
+        let previous = &blocks[bi - 1];
+        let adopter = previous.short_lines
+            && matches!(previous.kind, BlockKind::Signature | BlockKind::QuotedReply);
         if !block.short_lines
             || block.gap_lines != 1
-            || blocks[bi - 1].kind == BlockKind::Separator
+            || !adopter
             || build.contacts.iter().any(|d| d.block == bi)
         {
             continue;
@@ -950,16 +1018,7 @@ mod tests {
     fn cards<'a>(text: &'a str, x: &Extraction) -> Vec<Vec<&'a str>> {
         x.contacts
             .iter()
-            .map(|c| {
-                c.person
-                    .iter()
-                    .chain(&c.org)
-                    .chain(&c.addresses)
-                    .chain(&c.emails)
-                    .chain(&c.phones)
-                    .map(|e| e.text(text))
-                    .collect()
-            })
+            .map(|c| c.entities().map(|e| e.text(text)).collect())
             .collect()
     }
 
@@ -1189,5 +1248,67 @@ mod tests {
         for (local, person, want) in cases {
             assert_eq!(name_match(local, person), want, "{local} / {person}");
         }
+    }
+
+    #[test]
+    fn an_anchor_before_a_detail_on_its_line_beats_the_line_above() {
+        let text = "From: Amelia Okafor <amelia@northgate.example>\nTo: Nino Beridze <nino@kavkaz.example>, Tom Hart <tom@acme.example>";
+        let x = run(
+            text,
+            &[
+                (Kind::Person, "Amelia Okafor"),
+                (Kind::Email, "amelia@northgate.example"),
+                (Kind::Person, "Nino Beridze"),
+                (Kind::Email, "nino@kavkaz.example"),
+                (Kind::Person, "Tom Hart"),
+                (Kind::Email, "tom@acme.example"),
+            ],
+        );
+        assert_eq!(
+            cards(text, &x),
+            vec![
+                vec!["Amelia Okafor", "amelia@northgate.example"],
+                vec!["Nino Beridze", "nino@kavkaz.example"],
+                vec!["Tom Hart", "tom@acme.example"],
+            ]
+        );
+    }
+
+    #[test]
+    fn a_greeting_never_adopts_a_signature_block() {
+        let text = "Thanks Nino, I will send the contract over tomorrow.\n\n14 Rustaveli Avenue, Tbilisi\n+995 32 212 3456";
+        let x = run(
+            text,
+            &[
+                (Kind::Person, "Nino"),
+                (Kind::Address, "14 Rustaveli Avenue, Tbilisi"),
+                (Kind::Phone, "+995 32 212 3456"),
+            ],
+        );
+        assert!(x.contacts.is_empty());
+        assert_eq!(x.unassigned.len(), 3);
+    }
+
+    #[test]
+    fn a_refused_candidate_does_not_fall_to_a_weaker_rule() {
+        let text = "Amelia Okafor\na\nb\nc\nd\ne\nf\n+44 20 7946 0123\nNino Beridze";
+        let mut entities = gold(
+            text,
+            &[
+                (Kind::Person, "Amelia Okafor"),
+                (Kind::Phone, "+44 20 7946 0123"),
+                (Kind::Person, "Nino Beridze"),
+            ],
+        );
+        entities[1].confidence = 0.6;
+        let x = group(text, &tokenize(text), entities);
+        assert_eq!(unassigned(text, &x), vec!["+44 20 7946 0123"]);
+    }
+
+    #[test]
+    fn role_mailboxes_spell_no_one() {
+        assert!(!name_match("hr", "Hans Richter"));
+        assert!(!name_match("info", "Info Beridze"));
+        assert!(name_match("hri", "Hans Richter Ivanov"));
     }
 }

@@ -632,16 +632,6 @@ fn entity_objects(text: &str, source: &JsString, entities: &[Entity]) -> Array {
         .collect()
 }
 
-/// A contact's entities in the order `contact_object` reads them.
-fn contact_members(c: &Contact) -> impl Iterator<Item = &Entity> {
-    c.person
-        .iter()
-        .chain(&c.org)
-        .chain(&c.addresses)
-        .chain(&c.emails)
-        .chain(&c.phones)
-}
-
 /// `{ contacts, unassigned }` as JS objects, every offset converted in one pass over `text`.
 fn extraction_object(text: &str, source: &JsString, x: &Extraction) -> JsValue {
     let bytes = x
@@ -650,7 +640,7 @@ fn extraction_object(text: &str, source: &JsString, x: &Extraction) -> JsValue {
         .flat_map(|c| {
             [c.start, c.end]
                 .into_iter()
-                .chain(contact_members(c).flat_map(entity_bytes))
+                .chain(c.entities().flat_map(entity_bytes))
         })
         .chain(x.unassigned.iter().flat_map(entity_bytes));
     let mut units = token::utf16_at(text, bytes).into_iter();

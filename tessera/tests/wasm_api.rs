@@ -335,7 +335,7 @@ async fn extract_contacts_matches_native_with_utf16_offsets() {
         ..Query::default()
     };
     for input in [
-        "Thanks, see you on Monday.\n\nNino Beridze\nKavkaz Freight LLC\n14 Rustaveli Avenue, Tbilisi 0108, Georgia\n+995 32 212 3456\nnino@kavkaz-freight.example",
+        common::SPEC_DOC,
         "მადლობა, ორშაბათს შევხვდებით.\n\nნინო ბერიძე\nშპს კავკაზ ფრეითი\nრუსთაველის გამზირი 14, თბილისი 0108, საქართველო\n+995 32 212 3456\nnino@kavkaz-freight.example",
     ] {
         let want = native.extract_contacts(input, &query).unwrap();
