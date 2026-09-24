@@ -1943,6 +1943,7 @@ pub(crate) mod augment {
         (office_unit_us, 0.2),
         (number_range_de, 0.15),
         (postcode_prefix_de, 0.05),
+        (notes_between, 0.15),
         (insert_unit_line, 0.15),
         (ocr_substitute, 0.10),
         (unicode_variant, 0.10),
@@ -2505,6 +2506,8 @@ pub(crate) mod augment {
                         (L::Unit, format!("Flat {n}{letter}")),
                         (L::Unit, format!("Apartment {n}")),
                         (L::Unit, format!("Unit {n}")),
+                        (L::Unit, format!("Bay {n}/{}", floor + 1)),
+                        (L::Unit, format!("Postal Point {floor}.{n:02}")),
                         (L::Level, format!("{} Floor", ordinal(floor))),
                         (L::Level, "Ground Floor".to_string()),
                     ],
@@ -2844,7 +2847,11 @@ pub(crate) mod augment {
             char::from(b'A' + rng.random_range(0..26u8)),
             char::from(b'A' + rng.random_range(0..26u8)),
         );
-        let text = match rng.random_range(0..9) {
+        let text = match rng.random_range(0..10) {
+            9 => format!(
+                "MS: {x}{y}{}/{a}{x}",
+                char::from(b'A' + rng.random_range(0..26u8))
+            ),
             0 => format!("Room {a}{x}-{b:03}"),
             1 => format!("Room {x}{a}-{b}"),
             2 => format!("Suite {x}{y}-{c}"),
@@ -2904,6 +2911,60 @@ pub(crate) mod augment {
         }
         p.items.insert(k, piece(None, "D-"));
         p.seps.insert(k, String::new());
+        true
+    }
+
+    /// Text between components that belongs to none of them, as notices and web pages write
+    /// it: a bracketed note after the number (`52 (Hinterhaus)`), a bullet or bar between the
+    /// street and the town (`Hansastraße 19 • 80686 München`), `in` before a German postcode,
+    /// and a federal building's name after the street (`, West Building,`).
+    pub fn notes_between(country: &str, p: &mut Pieces, rng: &mut ChaCha8Rng) -> bool {
+        let Some(k) = position(p, L::HouseNumber) else {
+            return false;
+        };
+        if k + 1 >= p.items.len() || japanese_script(p) {
+            return false;
+        }
+        let note =
+            |rng: &mut ChaCha8Rng, list: &[&'static str]| list[rng.random_range(0..list.len())];
+        match (country, rng.random_range(0..3)) {
+            ("DE", 0) => {
+                let text = note(
+                    rng,
+                    &[
+                        "(Hinterhaus)",
+                        "(Eingang B)",
+                        "(Innenhof)",
+                        "(Seiteneingang)",
+                        "(2. Hof)",
+                    ],
+                );
+                p.items.insert(k + 1, piece(None, text));
+                p.seps.insert(k, " ".into());
+            }
+            ("DE", 1) => p.seps[k] = " in ".into(),
+            ("US", _) => {
+                let Some(road) = position(p, L::Road) else {
+                    return false;
+                };
+                let text = note(
+                    rng,
+                    &[
+                        "West Building",
+                        "South Building",
+                        "Main Building",
+                        "East Tower",
+                        "Bldg. 51",
+                    ],
+                );
+                p.items.insert(road + 1, piece(None, text));
+                p.seps.insert(road, ", ".into());
+            }
+            _ => {
+                let bar = note(rng, &[" • ", " | ", " · ", " – "]);
+                p.seps[k] = bar.into();
+            }
+        }
         true
     }
 
@@ -3528,6 +3589,30 @@ mod tests {
             spans,
             ..de.clone()
         });
+
+        let mut notes = std::collections::BTreeSet::new();
+        for (country, e) in [("DE", &de), ("US", &us), ("GB", &ge)] {
+            for seed in 0..12 {
+                let mut p = decompose(&e.text, &e.spans);
+                if notes_between(country, &mut p, &mut ChaCha8Rng::seed_from_u64(seed)) {
+                    let (text, spans, parts) = spans_of(&p);
+                    assert_eq!(parts.len(), e.spans.len(), "{text}");
+                    notes.insert(text.clone());
+                    assert_invariant(&LabelledExample {
+                        text,
+                        spans,
+                        ..e.clone()
+                    });
+                }
+            }
+        }
+        assert!(notes.iter().any(|t| t.contains(" in 12679")), "{notes:?}");
+        assert!(
+            notes
+                .iter()
+                .any(|t| t.contains("Building") || t.contains("Bldg.")),
+            "{notes:?}"
+        );
     }
 
     #[test]
