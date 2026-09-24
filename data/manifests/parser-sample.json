@@ -5,7 +5,7 @@
   "license": "ODbL-1.0",
   "attribution": "© OpenStreetMap contributors",
   "downloaded": "2026-09-22",
-  "prepared": "2026-09-23",
+  "prepared": "2026-09-24",
   "filters": {
     "countries": [
       "GB",
@@ -22,31 +22,31 @@
       "train": 30000,
       "valid": 3000,
       "test": 3000,
-      "augmented": 44970
+      "augmented": 44975
     },
     "GE": {
       "train": 30000,
       "valid": 3000,
       "test": 3000,
-      "augmented": 33663
+      "augmented": 36690
     },
     "DE": {
       "train": 30000,
       "valid": 3000,
       "test": 3000,
-      "augmented": 41943
+      "augmented": 44207
     },
     "US": {
       "train": 30000,
       "valid": 3000,
       "test": 3000,
-      "augmented": 37970
+      "augmented": 39881
     },
     "JP": {
-      "train": 29828,
-      "valid": 2927,
-      "test": 2918,
-      "augmented": 45131
+      "train": 27981,
+      "valid": 2743,
+      "test": 2787,
+      "augmented": 45678
     }
   },
   "split_seed": 42,
@@ -67,10 +67,10 @@
     "foreign_country": 218,
     "mislabelled": 12314,
     "invalid_span": 0,
-    "locality_over_cap": 957294,
-    "unencodable_copies": 324,
-    "duplicate": 34930,
-    "same_place": 27682,
+    "locality_over_cap": 959381,
+    "unencodable_copies": 282,
+    "duplicate": 34935,
+    "same_place": 27752,
     "over_quota": 97152930
   },
   "lines_read": 320115455,
@@ -83,7 +83,7 @@
       "orphan_copies": 0,
       "copies_outside_train": 0,
       "components_in_two_splits": 0,
-      "postcode_and_number_shared": 539
+      "postcode_and_number_shared": 556
     }
   }
 }

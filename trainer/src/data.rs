@@ -679,6 +679,25 @@ fn normalize_source(country: &str, p: &mut Pieces) -> Result<(), Rejection> {
                 return Err(Rejection::Mislabelled);
             }
         }
+        "DE" => {
+            // `D-85049`: the old country prefix is printed before the postcode, not part of it.
+            if let Some(k) = p.items.iter().position(|i| i.label == Some(L::Postcode)) {
+                let prefix = ["DE-", "D-"]
+                    .into_iter()
+                    .find(|x| p.items[k].text.starts_with(x));
+                if let Some(prefix) = prefix {
+                    p.items[k].text = p.items[k].text[prefix.len()..].to_string();
+                    p.items.insert(
+                        k,
+                        Piece {
+                            label: None,
+                            text: prefix.to_string(),
+                        },
+                    );
+                    p.seps.insert(k, String::new());
+                }
+            }
+        }
         _ => {}
     }
     if p.items.iter().all(|i| i.label.is_none()) {
@@ -776,6 +795,16 @@ fn normalize_japanese(p: &mut Pieces) {
         if i.label == Some(L::Region) && i.text == "北海" {
             i.text = "北海道".into();
         }
+        // `豊洲豊洲2`: the source writes some towns twice in one piece.
+        if i.label == Some(L::Suburb) {
+            let chars: Vec<char> = i.text.chars().collect();
+            let doubled = (2..=chars.len() / 2)
+                .rev()
+                .find(|&n| chars[..n] == chars[n..2 * n] && chars[..n].iter().all(|&c| is_cjk(c)));
+            if let Some(n) = doubled {
+                i.text = chars[n..].iter().collect();
+            }
+        }
     }
     strip_repeated_prefecture(p);
     strip_prefecture_from_city(p);
@@ -805,7 +834,9 @@ fn normalize_japanese(p: &mut Pieces) {
     let beside_block: Vec<bool> = (0..p.items.len())
         .map(|k| bare_block(k + 1) || (k > 0 && bare_block(k - 1)))
         .collect();
-    for (i, beside_block) in p.items.iter_mut().zip(beside_block) {
+    // Towns relabelled from roads, which follow the source's own town when both are present.
+    let mut from_road = vec![false; p.items.len()];
+    for ((i, beside_block), from_road) in p.items.iter_mut().zip(beside_block).zip(&mut from_road) {
         let lower = i.text.to_lowercase();
         let ward = (i.text.ends_with('区') && !i.text.ends_with("地区"))
             || lower.ends_with("-ku")
@@ -818,13 +849,18 @@ fn normalize_japanese(p: &mut Pieces) {
             i.label = Some(L::City);
         }
         // Japan addresses by town and block, not by street; the source's `road` is mostly
-        // the town (`錦町`, `Maruyama-cho`), the town with its block (`栄三丁目`), or the
-        // town beside a bare block (`栄` with `３丁目`).
+        // the town (`錦町`, `Maruyama-cho`), the town with its block (`栄三丁目`), the town
+        // beside a bare block (`栄` with `３丁目`), or a town or 字 name in Japanese script
+        // (`烏ヶ辻`, `石脇字下長老沼`) that no street word ends.
+        let japanese_name = i.text.chars().all(|c| is_cjk(c) || japanese_numeral(c))
+            && i.text.chars().any(|c| is_cjk(c) && !japanese_numeral(c));
         let town = !is_japanese_street(&i.text)
             && (is_japanese_town(&i.text)
+                || japanese_name
                 || (beside_block && !named_town && i.text.chars().all(is_cjk)));
         if i.label == Some(L::Road) && town {
             i.label = Some(L::Suburb);
+            *from_road = true;
         }
     }
     // A road that only repeated the town is now a second copy of it.
@@ -833,20 +869,57 @@ fn normalize_japanese(p: &mut Pieces) {
         if p.items[k].label == Some(L::Suburb) && p.items[..k].contains(&p.items[k]) {
             p.items.remove(k);
             p.seps.remove(k - 1);
+            from_road.remove(k);
         } else {
             k += 1;
         }
     }
+    // A road that repeated the town with more or less of it (`銀座` and `銀座4`, `南池袋3` and
+    // `南池袋2`) names the same town: the fuller one stays, the source's own when they differ.
+    loop {
+        let suburbs: Vec<usize> = (0..p.items.len())
+            .filter(|&k| p.items[k].label == Some(L::Suburb))
+            .collect();
+        let same_town = suburbs
+            .iter()
+            .flat_map(|&c| suburbs.iter().map(move |&o| (c, o)))
+            .filter(|&(c, o)| c != o && from_road[c])
+            .find_map(|(c, o)| {
+                let (road, town) = (&p.items[c].text, &p.items[o].text);
+                let shared = road
+                    .chars()
+                    .zip(town.chars())
+                    .take_while(|(a, b)| a == b)
+                    .count();
+                if town.starts_with(road.as_str())
+                    || shared >= 2 && !road.starts_with(town.as_str())
+                {
+                    Some(c)
+                } else if road.starts_with(town.as_str()) {
+                    Some(o)
+                } else {
+                    None
+                }
+            });
+        let Some(k) = same_town else {
+            break;
+        };
+        p.items.remove(k);
+        p.seps
+            .remove(k.saturating_sub(1).min(p.seps.len().saturating_sub(1)));
+        from_road.remove(k);
+    }
     if !japanese_script(p) {
         return;
     }
-    let rank = |i: &Piece| match i.label {
+    let rank = |(i, from_road): &(Piece, bool)| match i.label {
         Some(L::Country) => (0, 0),
         Some(L::Postcode) => (1, 0),
         Some(L::Region) => (2, 0),
         Some(L::City) => (3, 0),
         Some(L::District) => (4, 0),
-        Some(L::Suburb) => (5, u8::from(is_bare_chome(&i.text))),
+        Some(L::Suburb) if is_bare_chome(&i.text) => (5, 2),
+        Some(L::Suburb) => (5, u8::from(*from_road)),
         Some(L::Road) => (6, 0),
         Some(L::HouseNumber) => (7, 0),
         Some(L::PoBox) => (8, 0),
@@ -855,7 +928,12 @@ fn normalize_japanese(p: &mut Pieces) {
         Some(L::Level) => (10, 0),
         Some(L::Unit) => (11, 0),
     };
-    p.items.sort_by_key(rank);
+    let mut ranked: Vec<(Piece, bool)> = std::mem::take(&mut p.items)
+        .into_iter()
+        .zip(from_road)
+        .collect();
+    ranked.sort_by_key(rank);
+    p.items = ranked.into_iter().map(|(i, _)| i).collect();
     p.seps = (1..p.items.len())
         .map(|k| japanese_separator(&p.items[k - 1], &p.items[k]).to_string())
         .collect();
@@ -884,9 +962,16 @@ fn is_japanese_street(text: &str) -> bool {
                 && (c == '市' || c == '区')
                 && !matches!(&text[k + c.len_utf8()..], "" | "町" | "村")
         });
+    let route = ["国道", "県道", "府道", "都道", "道道"]
+        .iter()
+        .any(|w| text.starts_with(w))
+        || text
+            .strip_suffix('号')
+            .is_some_and(|t| t.ends_with(japanese_numeral));
     ["通り", "通", "線", "街道", "道", "バイパス", "筋"]
         .iter()
         .any(|w| town.ends_with(w))
+        || route
         || repeats_place
 }
 
@@ -984,23 +1069,25 @@ fn split_ward_from_city(p: &mut Pieces) {
     }
 }
 
-/// A town and its block written together (`栄` `３丁目`) become one suburb, `栄３丁目`, as
-/// they are read.
+/// A town and what follows it written together, its block (`栄` `３丁目`) or a 字 or
+/// district name (`応神町` `中原字宮前`), become one suburb, `栄３丁目`, as they are read. A
+/// town that already carries a number (`飯寺北一丁目`) takes no further name.
 fn merge_town_and_block(p: &mut Pieces) {
     use AddressLabel as L;
     let mut k = 1;
     while k < p.items.len() {
-        let joined = p.items[k - 1].label == Some(L::Suburb)
+        let (prev, next) = (&p.items[k - 1].text, &p.items[k].text);
+        let glued = p.items[k - 1].label == Some(L::Suburb)
             && p.items[k].label == Some(L::Suburb)
             && p.seps[k - 1].is_empty()
-            && is_bare_chome(&p.items[k].text)
-            && !is_bare_chome(&p.items[k - 1].text);
-        if joined {
-            let block = p.items.remove(k);
+            && !is_bare_chome(prev);
+        let block = is_bare_chome(next);
+        if glued && (block || !prev.chars().any(japanese_numeral)) {
+            let next = p.items.remove(k);
             p.seps.remove(k - 1);
             // `栄三丁目` then `４丁目`: two blocks for one town; the second is dropped.
-            if !p.items[k - 1].text.ends_with("丁目") {
-                p.items[k - 1].text.push_str(&block.text);
+            if !(block && p.items[k - 1].text.ends_with("丁目")) {
+                p.items[k - 1].text.push_str(&next.text);
             }
         } else {
             k += 1;
@@ -1810,6 +1897,12 @@ pub(crate) mod augment {
         (casing_lower, 0.10),
         (omit_country, 0.5),
         (omit_region, 0.3),
+        (official_format_ge, 0.35),
+        (floor_room_ge, 0.2),
+        (official_layout_jp, 0.4),
+        (office_unit_us, 0.2),
+        (number_range_de, 0.15),
+        (postcode_prefix_de, 0.05),
         (insert_unit_line, 0.15),
         (ocr_substitute, 0.10),
         (unicode_variant, 0.10),
@@ -2443,6 +2536,306 @@ pub(crate) mod augment {
         true
     }
 
+    fn piece(label: Option<L>, text: impl Into<String>) -> super::Piece {
+        super::Piece {
+            label,
+            text: text.into(),
+        }
+    }
+
+    fn position(p: &Pieces, label: L) -> Option<usize> {
+        p.items.iter().position(|i| i.label == Some(label))
+    }
+
+    fn georgian(text: &str) -> bool {
+        text.chars().any(|c| ('\u{10D0}'..='\u{10FF}').contains(&c))
+    }
+
+    /// The layout Georgian public bodies print: the town first, in Georgian often after `ქ.`
+    /// (city), `დაბა` (small town) or `სოფ.` (village), then the street and its number written
+    /// `№71`, `№ 71`, `N12`, `N 12` or `#5`, then any floor and room: `ქ. ქუთაისი, წერეთლის
+    /// ქ. №15`. Everything else (country, postcode, region, district, suburb, venue) is left
+    /// off. A glued mark is part of the number; a spaced one is not.
+    pub fn official_format_ge(country: &str, p: &mut Pieces, rng: &mut ChaCha8Rng) -> bool {
+        if country != "GE" {
+            return false;
+        }
+        let (Some(city), Some(road), Some(house)) = (
+            position(p, L::City),
+            position(p, L::Road),
+            position(p, L::HouseNumber),
+        ) else {
+            return false;
+        };
+        let number = p.items[house].text.clone();
+        if !number.starts_with(|c: char| c.is_ascii_digit()) {
+            return false;
+        }
+        let native = georgian(&p.items[road].text) && georgian(&p.items[city].text);
+        let mut items = Vec::new();
+        let mut seps = Vec::new();
+        if native && rng.random::<f32>() < 0.5 {
+            let prefix = match rng.random_range(0..10) {
+                0 => "სოფ.",
+                1 => "დაბა",
+                _ => "ქ.",
+            };
+            let glue = if prefix == "ქ." && rng.random::<f32>() < 0.2 {
+                ""
+            } else {
+                " "
+            };
+            items.push(piece(None, prefix));
+            seps.push(glue.to_string());
+        }
+        items.push(p.items[city].clone());
+        seps.push(", ".into());
+        items.push(p.items[road].clone());
+        seps.push(" ".into());
+        match rng.random_range(0..20) {
+            0..=6 => items.push(piece(Some(L::HouseNumber), format!("№{number}"))),
+            7..=9 => {
+                items.push(piece(None, "№"));
+                seps.push(" ".into());
+                items.push(piece(Some(L::HouseNumber), number));
+            }
+            10..=11 => items.push(piece(Some(L::HouseNumber), format!("N{number}"))),
+            12..=13 => {
+                items.push(piece(None, "N"));
+                seps.push(" ".into());
+                items.push(piece(Some(L::HouseNumber), number));
+            }
+            14 => items.push(piece(Some(L::HouseNumber), format!("#{number}"))),
+            _ => items.push(piece(Some(L::HouseNumber), number)),
+        }
+        for i in &p.items {
+            if matches!(i.label, Some(L::Level | L::Unit)) {
+                seps.push(", ".into());
+                items.push(i.clone());
+            }
+        }
+        p.items = items;
+        p.seps = seps;
+        true
+    }
+
+    /// A floor and a room after a Georgian street address, as offices print them:
+    /// `მე-3 სართული`, `III სართული`, `ოთახი №309`, `ოფისი 12`.
+    pub fn floor_room_ge(country: &str, p: &mut Pieces, rng: &mut ChaCha8Rng) -> bool {
+        let has = |l: L| p.items.iter().any(|i| i.label == Some(l));
+        if country != "GE" || has(L::Level) || has(L::Unit) || !has(L::HouseNumber) {
+            return false;
+        }
+        let Some(last) = p
+            .items
+            .iter()
+            .rposition(|i| i.label == Some(L::HouseNumber))
+        else {
+            return false;
+        };
+        if !p
+            .items
+            .iter()
+            .any(|i| i.label == Some(L::Road) && georgian(&i.text))
+        {
+            return false;
+        }
+        const ROMAN: [&str; 9] = ["I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX"];
+        let n = rng.random_range(1..=9usize);
+        let floor = match (n, rng.random_range(0..4)) {
+            (1, 0) => "პირველი სართული".to_string(),
+            (1, 1) => "1-ლი სართული".to_string(),
+            (_, 0 | 1) => format!("მე-{n} სართული"),
+            (_, 2) => format!("{} სართული", ROMAN[n - 1]),
+            _ => format!("სართ. {n}"),
+        };
+        let room = rng.random_range(1..=40) + 100 * n;
+        let room = match rng.random_range(0..3) {
+            0 => format!("ოთახი №{room}"),
+            1 => format!("ოფისი {room}"),
+            _ => format!("ოთ. {room}"),
+        };
+        let mut added = vec![];
+        match rng.random_range(0..3) {
+            0 => added.push(piece(Some(L::Level), floor)),
+            1 => added.push(piece(Some(L::Unit), room)),
+            _ => {
+                added.push(piece(Some(L::Level), floor));
+                added.push(piece(Some(L::Unit), room));
+            }
+        }
+        for (k, item) in added.into_iter().enumerate() {
+            p.items.insert(last + 1 + k, item);
+            p.seps.insert(last + k, ", ".into());
+        }
+        true
+    }
+
+    /// The layout of Japanese public offices' addresses: the postcode without `〒`, often on a
+    /// line of its own, no country, and at times the building with its floor after the lot
+    /// number (`横浜第２合同庁舎3階`, `日進ビル1・2階`, `センタービル10F`).
+    pub fn official_layout_jp(country: &str, p: &mut Pieces, rng: &mut ChaCha8Rng) -> bool {
+        if country != "JP" || !japanese_script(p) {
+            return false;
+        }
+        let mut changed = false;
+        if let Some(c) = position(p, L::Country)
+            && c < p.seps.len()
+        {
+            p.items.remove(c);
+            p.seps.remove(c);
+            changed = true;
+        }
+        if let Some(k) = position(p, L::Postcode) {
+            let text = p.items[k].text.trim_start_matches('〒').to_string();
+            if text != p.items[k].text {
+                p.items[k].text = text;
+                changed = true;
+            }
+            if rng.random::<f32>() < 0.2 {
+                let dash = if rng.random::<f32>() < 0.5 {
+                    "−"
+                } else {
+                    "－"
+                };
+                p.items[k].text = p.items[k].text.replace('-', dash);
+            }
+            if k < p.seps.len() && rng.random::<f32>() < 0.5 {
+                p.seps[k] = "\n".into();
+                changed = true;
+            }
+        }
+        let has = |l: L| p.items.iter().any(|i| i.label == Some(l));
+        let Some(lot) = position(p, L::HouseNumber) else {
+            return changed;
+        };
+        if has(L::Level) || has(L::Unit) || rng.random::<f32>() < 0.5 {
+            return changed;
+        }
+        let place: String = p
+            .items
+            .iter()
+            .find(|i| i.label == Some(L::City))
+            .map(|i| {
+                i.text
+                    .trim_end_matches(['市', '町', '村', '区'])
+                    .to_string()
+            })
+            .filter(|t| !t.is_empty() && t.chars().all(super::is_cjk))
+            .unwrap_or_else(|| "中央".to_string());
+        let n = rng.random_range(1..=12);
+        let building = match rng.random_range(0..5) {
+            0 => format!("{place}合同庁舎"),
+            1 => format!("{place}第2合同庁舎"),
+            2 => format!("中央合同庁舎{}号館", rng.random_range(1..=8)),
+            3 => format!("{place}センタービル"),
+            _ => format!("{place}ビル"),
+        };
+        let level = match rng.random_range(0..4) {
+            0 => format!("{n}F"),
+            1 => format!("{n}・{}階", n + 1),
+            _ => format!("{n}階"),
+        };
+        let sep = match rng.random_range(0..3) {
+            0 => "\n",
+            1 => "\u{3000}",
+            _ => " ",
+        };
+        p.items.insert(lot + 1, piece(None, building));
+        p.seps.insert(lot, sep.into());
+        if rng.random::<f32>() < 0.8 {
+            p.items.insert(lot + 2, piece(Some(L::Level), level));
+            p.seps.insert(lot + 1, String::new());
+        }
+        true
+    }
+
+    /// A US federal office's room, suite, or mail stop, before the street or after it:
+    /// `Room 6D-033`, `Suite CC-5610`, `Mail Stop H21-8`, `Mail Code 28221T`.
+    pub fn office_unit_us(country: &str, p: &mut Pieces, rng: &mut ChaCha8Rng) -> bool {
+        let has = |l: L| p.items.iter().any(|i| i.label == Some(l));
+        if country != "US" || has(L::Unit) || has(L::Level) || has(L::PoBox) {
+            return false;
+        }
+        let street = |i: &super::Piece| matches!(i.label, Some(L::Road | L::HouseNumber));
+        let (Some(first), Some(last)) = (
+            p.items.iter().position(street),
+            p.items.iter().rposition(street),
+        ) else {
+            return false;
+        };
+        let (a, b, c) = (
+            rng.random_range(1..=12),
+            rng.random_range(10..=999),
+            rng.random_range(1000..=9999),
+        );
+        let (x, y) = (
+            char::from(b'A' + rng.random_range(0..26u8)),
+            char::from(b'A' + rng.random_range(0..26u8)),
+        );
+        let text = match rng.random_range(0..9) {
+            0 => format!("Room {a}{x}-{b:03}"),
+            1 => format!("Room {x}{a}-{b}"),
+            2 => format!("Suite {x}{y}-{c}"),
+            3 => format!("Rm. {c}"),
+            4 => format!("Mail Stop {x}{a}-{}", a + 3),
+            5 => format!("MS {x}{a}-{a}"),
+            6 => format!("Mailstop {a}{x}"),
+            7 => format!("Mail Code {}{x}", c * 10 + a),
+            _ => format!("Room {x}{a}-{b}-{:02}", a + 1),
+        };
+        if rng.random::<f32>() < 0.5 {
+            p.items.insert(first, piece(Some(L::Unit), text));
+            p.seps.insert(first, ", ".into());
+        } else {
+            p.items.insert(last + 1, piece(Some(L::Unit), text));
+            p.seps.insert(last, ", ".into());
+        }
+        true
+    }
+
+    /// A German house number as a range of numbers: `52–54`, `2 - 4`, `16/18`.
+    pub fn number_range_de(country: &str, p: &mut Pieces, rng: &mut ChaCha8Rng) -> bool {
+        if country != "DE" {
+            return false;
+        }
+        let Some(k) = position(p, L::HouseNumber) else {
+            return false;
+        };
+        let Ok(n) = p.items[k].text.parse::<u32>() else {
+            return false;
+        };
+        let dash = ["–", "-", " - ", " – ", "/"][rng.random_range(0..5)];
+        let step = if dash == "/" {
+            2
+        } else {
+            rng.random_range(1..=6)
+        };
+        p.items[k].text = format!("{n}{dash}{}", n + step);
+        true
+    }
+
+    /// The old country prefix before a German postcode, printed outside the code: `D-70565`.
+    pub fn postcode_prefix_de(country: &str, p: &mut Pieces, _: &mut ChaCha8Rng) -> bool {
+        if country != "DE" {
+            return false;
+        }
+        let Some(k) = position(p, L::Postcode) else {
+            return false;
+        };
+        let before = if k > 0 {
+            format!("{}{}", p.items[k - 1].text, p.seps[k - 1])
+        } else {
+            String::new()
+        };
+        if !p.items[k].text.starts_with(|c: char| c.is_ascii_digit()) || before.ends_with('-') {
+            return false;
+        }
+        p.items.insert(k, piece(None, "D-"));
+        p.seps.insert(k, String::new());
+        true
+    }
+
     fn ordinal(n: u32) -> String {
         let suffix = match (n % 10, n % 100) {
             (1, x) if x != 11 => "st",
@@ -2894,6 +3287,176 @@ mod tests {
             &mut ChaCha8Rng::seed_from_u64(0)
         ));
         assert!(render_pieces(&p).0.contains("Downing St"));
+    }
+
+    #[test]
+    fn japanese_town_names_the_source_calls_roads_are_towns() {
+        assert_eq!(
+            labelled(
+                "JP",
+                "ja\tjp\t104-1/house_number |/FSEP 吉/road 成/road 有/road 天/road |/FSEP 応/suburb 神/suburb 町/suburb |/FSEP 徳/city 島/city 市/city |/FSEP 徳/state 島/state 県/state"
+            ),
+            pairs(&[
+                ("region", "徳島県"),
+                ("city", "徳島市"),
+                ("suburb", "応神町吉成有天"),
+                ("house_number", "104-1"),
+            ])
+        );
+        let suburbs = |line: &str| -> Vec<String> {
+            labelled("JP", line)
+                .into_iter()
+                .filter(|(l, _)| l == "suburb")
+                .map(|(_, t)| t)
+                .collect()
+        };
+        assert_eq!(
+            suburbs(
+                "ja\tjp\t1/house_number |/FSEP 銀/road 座/road 4/road |/FSEP 銀/suburb 座/suburb |/FSEP 中/city 央/city 区/city |/FSEP 東/state 京/state 都/state"
+            ),
+            ["銀座4"]
+        );
+        assert_eq!(
+            suburbs(
+                "ja\tjp\t住/road 吉/road 町/road |/FSEP 飯/suburb 寺/suburb 北/suburb 一/suburb 丁/suburb 目/suburb |/FSEP 会/city 津/city 若/city 松/city 市/city"
+            ),
+            ["飯寺北一丁目", "住吉町"]
+        );
+        let roads = |line: &str| -> Vec<String> {
+            labelled("JP", line)
+                .into_iter()
+                .filter(|(l, _)| l == "road")
+                .map(|(_, t)| t)
+                .collect()
+        };
+        assert_eq!(
+            roads("ja\tjp\t国/road 道/road 1/road 号/road |/FSEP 箱/city 根/city 町/city"),
+            ["国道1号"]
+        );
+        assert_eq!(
+            labelled(
+                "DE",
+                "de\tde\tHauptstraße/road 5/house_number |/FSEP D-85049/postcode Ingolstadt/city"
+            ),
+            pairs(&[
+                ("road", "Hauptstraße"),
+                ("house_number", "5"),
+                ("postcode", "85049"),
+                ("city", "Ingolstadt"),
+            ])
+        );
+        assert_eq!(
+            suburbs(
+                "unk\tjp\t豊/suburb 洲/suburb 豊/suburb 洲/suburb 2/suburb |/FSEP 江/city 東/city 区/city"
+            ),
+            ["豊洲2"]
+        );
+    }
+
+    #[test]
+    fn official_layouts_print_what_public_bodies_print() {
+        use augment::*;
+        let spans_of = |p: &Pieces| {
+            let (text, spans) = render_pieces(p);
+            let parts: Vec<(AddressLabel, String)> = spans
+                .iter()
+                .map(|s| (s.label, text[s.start as usize..s.end as usize].to_string()))
+                .collect();
+            (text, spans, parts)
+        };
+        let ge = example(
+            "GE",
+            "ka\tge\tწერეთლის/road ქ./road 15/house_number |/FSEP ქუთაისი/city |/FSEP საქართველო/country",
+        );
+        let mut numbers = std::collections::BTreeSet::new();
+        for seed in 0..60 {
+            let mut p = decompose(&ge.text, &ge.spans);
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            assert!(official_format_ge("GE", &mut p, &mut rng));
+            floor_room_ge("GE", &mut p, &mut rng);
+            let (text, spans, parts) = spans_of(&p);
+            assert!(text.contains("ქუთაისი, წერეთლის ქ. "), "{text}");
+            assert!(!text.contains("საქართველო"), "{text}");
+            assert_invariant(&LabelledExample {
+                text,
+                spans,
+                ..ge.clone()
+            });
+            for (label, part) in parts {
+                if label == AddressLabel::HouseNumber {
+                    numbers.insert(part);
+                }
+            }
+        }
+        assert!(
+            numbers.contains("№15") && numbers.contains("15"),
+            "{numbers:?}"
+        );
+
+        let jp = example(
+            "JP",
+            "ja\tjp\t〒100-8926/postcode |/FSEP 東/state 京/state 都/state |/FSEP 千/city 代/city 田/city 区/city |/FSEP 霞/suburb が/suburb 関/suburb 2/suburb 丁/suburb 目/suburb |/FSEP 1-2/house_number",
+        );
+        let mut p = decompose(&jp.text, &jp.spans);
+        assert!(official_layout_jp(
+            "JP",
+            &mut p,
+            &mut ChaCha8Rng::seed_from_u64(3)
+        ));
+        let (text, spans, parts) = spans_of(&p);
+        assert!(
+            parts
+                .iter()
+                .any(|(l, t)| *l == AddressLabel::Postcode && !t.contains('〒'))
+        );
+        assert_invariant(&LabelledExample {
+            text,
+            spans,
+            ..jp.clone()
+        });
+
+        let us = example(
+            "US",
+            "en\tus\t1000/house_number Independence/road Avenue/road SW/road |/FSEP Washington/city DC/state 20585/postcode",
+        );
+        let mut p = decompose(&us.text, &us.spans);
+        assert!(office_unit_us(
+            "US",
+            &mut p,
+            &mut ChaCha8Rng::seed_from_u64(1)
+        ));
+        let (text, spans, parts) = spans_of(&p);
+        assert!(
+            parts.iter().any(|(l, _)| *l == AddressLabel::Unit),
+            "{text}"
+        );
+        assert_invariant(&LabelledExample {
+            text,
+            spans,
+            ..us.clone()
+        });
+
+        let de = example(
+            "DE",
+            "de\tde\tMarzahner/road Promenade/road 52/house_number |/FSEP 12679/postcode Berlin/city",
+        );
+        let mut p = decompose(&de.text, &de.spans);
+        let mut rng = ChaCha8Rng::seed_from_u64(2);
+        assert!(number_range_de("DE", &mut p, &mut rng));
+        assert!(postcode_prefix_de("DE", &mut p, &mut rng));
+        let (text, spans, parts) = spans_of(&p);
+        assert!(text.contains("D-12679"), "{text}");
+        assert!(parts.contains(&(AddressLabel::Postcode, "12679".to_string())));
+        assert!(
+            parts.iter().any(|(l, t)| *l == AddressLabel::HouseNumber
+                && t.starts_with("52")
+                && t.len() > 2)
+        );
+        assert_invariant(&LabelledExample {
+            text,
+            spans,
+            ..de.clone()
+        });
     }
 
     #[test]
