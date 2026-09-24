@@ -2,7 +2,7 @@
   "source": "tessera-generator",
   "version": 1,
   "seed": 42,
-  "templates": 216,
+  "templates": 219,
   "max_tokens": 900,
   "names": "data/processed/names",
   "addresses": "data/processed/parser",
@@ -34,107 +34,107 @@
     },
     "family": {
       "email_body": {
-        "test": 2045,
-        "train": 23590,
-        "valid": 1384
+        "test": 2160,
+        "train": 23673,
+        "valid": 1391
       },
       "invoice": {
-        "test": 1727,
-        "train": 19883,
-        "valid": 1196
+        "test": 1628,
+        "train": 20018,
+        "valid": 1142
       },
       "letterhead": {
-        "test": 2389,
-        "train": 28134,
-        "valid": 1673
+        "test": 2412,
+        "train": 28019,
+        "valid": 1643
       },
       "markdown": {
         "test": 5000
       },
       "prose": {
-        "test": 2594,
-        "train": 28964,
-        "valid": 1702
+        "test": 2730,
+        "train": 29604,
+        "valid": 1788
       },
       "signature": {
-        "test": 2175,
-        "train": 24458,
-        "valid": 1401
+        "test": 2100,
+        "train": 24233,
+        "valid": 1392
       },
       "support": {
-        "test": 1613,
-        "train": 19277,
-        "valid": 1115
+        "test": 1604,
+        "train": 19003,
+        "valid": 1090
       },
       "table": {
-        "test": 1885,
-        "train": 19817,
-        "valid": 1162
+        "test": 1813,
+        "train": 19651,
+        "valid": 1197
       },
       "technical": {
-        "test": 572,
-        "train": 5877,
-        "valid": 367
+        "test": 553,
+        "train": 5799,
+        "valid": 357
       }
     },
     "category": {
       "both": {
-        "test": 11226,
-        "train": 85005,
-        "valid": 5036
+        "test": 11163,
+        "train": 84705,
+        "valid": 4970
       },
       "no_address_with_person": {
-        "test": 3714,
-        "train": 28464,
-        "valid": 1602
+        "test": 3744,
+        "train": 28381,
+        "valid": 1716
       },
       "no_person_with_address": {
-        "test": 2555,
-        "train": 28199,
-        "valid": 1721
+        "test": 2558,
+        "train": 28331,
+        "valid": 1634
       },
       "nothing": {
-        "test": 2505,
-        "train": 28332,
-        "valid": 1641
+        "test": 2535,
+        "train": 28583,
+        "valid": 1680
       }
     },
     "country": {
       "DE": {
-        "test": 3963,
-        "train": 33909,
-        "valid": 2068
+        "test": 4032,
+        "train": 34156,
+        "valid": 2015
       },
       "GB": {
-        "test": 3973,
-        "train": 33810,
-        "valid": 2003
+        "test": 3933,
+        "train": 33745,
+        "valid": 1984
       },
       "GE": {
-        "test": 4022,
-        "train": 34207,
-        "valid": 2010
+        "test": 4002,
+        "train": 34050,
+        "valid": 1979
       },
       "JP": {
-        "test": 4024,
-        "train": 33947,
-        "valid": 1920
+        "test": 4037,
+        "train": 34050,
+        "valid": 1996
       },
       "US": {
-        "test": 4018,
-        "train": 34127,
-        "valid": 1999
+        "test": 3996,
+        "train": 33999,
+        "valid": 2026
       }
     }
   },
   "train_category_share": {
-    "both": 0.5000294117647058,
-    "no_address_with_person": 0.16743529411764707,
-    "no_person_with_address": 0.1658764705882353,
-    "nothing": 0.16665882352941178
+    "both": 0.49826470588235294,
+    "no_address_with_person": 0.16694705882352942,
+    "no_person_with_address": 0.1666529411764706,
+    "nothing": 0.16813529411764705
   },
   "dropped": {
-    "boundary_misaligned": 109
+    "boundary_misaligned": 113
   },
   "pools": {
     "DE/test": {
@@ -228,5 +228,5 @@
       "addresses": 2396
     }
   },
-  "phones_fixture_safe_ratio": 0.80452
+  "phones_fixture_safe_ratio": 0.80472
 }
