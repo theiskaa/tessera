@@ -17,6 +17,8 @@ pub(crate) struct Candidate {
     /// parenthesised trunk `(0)` after the country code left out.
     pub dial: String,
     pub international: bool,
+    /// Written with its `+`, not dialled through a `00` prefix or read from a bare code.
+    pub plus: bool,
     pub groups: Vec<u8>,
     /// Char indices `(first, past_last)` of each group in the scanned text, brackets included.
     pub group_spans: Vec<(usize, usize)>,
@@ -93,6 +95,27 @@ const PHONE_LABELS: &[&str] = &[
     "ph",
     "t",
     "m",
+    "free",
+    "tollfree",
+    "freephone",
+    "textphone",
+    "helpline",
+    "tty",
+    "tdd",
+    "relay",
+    "voice",
+    "text",
+    "sms",
+    "dial",
+    "zentrale",
+    "durchwahl",
+    "ტელ",
+    "ტელეფონი",
+    "მობ",
+    "მობილური",
+    "ფაქსი",
+    "代表",
+    "直通",
     "tél",
     "téléphone",
     "電話",
@@ -358,6 +381,7 @@ fn take_candidate(
 
     let start = chars[i].0;
     let mut international = chars[i].1 == '+';
+    let plus = international || (chars[i].1 == '(' && at(i + 1) == Some('+'));
     let mut j = if international { i + 1 } else { i };
     let mut groups: Vec<u8> = Vec::new();
     let mut group_spans: Vec<(usize, usize)> = Vec::new();
@@ -397,6 +421,15 @@ fn take_candidate(
     let mut end_i = j;
 
     loop {
+        let code_before_trunk = !international
+            && !paren_used
+            && at(j) == Some('(')
+            && at(j + 1) == Some('0')
+            && at(j + 2) == Some(')')
+            && unplussed_code(&groups, &digits);
+        if code_before_trunk {
+            international = true;
+        }
         let paren_allowed = !paren_used
             && ((groups.is_empty() && !international)
                 || paren_may_follow(&groups, &digits, international));
@@ -455,6 +488,14 @@ fn take_candidate(
         while at(j).is_some_and(|c| is_sep(c) && c != '(' && c != ')') {
             j += 1;
         }
+        // `Fax: 202-366-7951. 3. Mail`: a full stop before a space ends the sentence, and no
+        // number is grouped that way.
+        let full_stop = chars[run_start..j]
+            .windows(2)
+            .any(|w| w[0].1 == '.' && w[1].1.is_whitespace());
+        if full_stop {
+            break;
+        }
         // `030 / 1234567` and `030 - 1234567`: the DIN 5008 slash between area code and
         // number, and the spaced hyphen used the same way.
         let spaced_mark = [" / ", " - "]
@@ -464,10 +505,12 @@ fn take_candidate(
             break;
         }
         let next = at(j);
+        let trunk_next = at(j + 1) == Some('0') && at(j + 2) == Some(')');
         let continues = next.is_some_and(|c| c.is_ascii_digit())
             || (next == Some('(')
                 && !paren_used
-                && paren_may_follow(&groups, &digits, international));
+                && (paren_may_follow(&groups, &digits, international)
+                    || (trunk_next && unplussed_code(&groups, &digits))));
         if !continues {
             break;
         }
@@ -518,6 +561,7 @@ fn take_candidate(
         end,
         dial,
         international,
+        plus,
         groups,
         group_spans,
         gaps,
@@ -546,6 +590,12 @@ fn international_digits<'d>(digits: &'d str, plus: bool, groups: &[u8]) -> Optio
 /// after a national area code in the Japanese style (`03(1234)5678`).
 fn paren_may_follow(groups: &[u8], digits: &str, international: bool) -> bool {
     groups.len() == 1 && (international || digits.starts_with('0'))
+}
+
+/// Whether `digits`, the first group of a run, is a calling code written without its `+`
+/// before a bracketed trunk: `44 (0)303 123 1113`. Only a code is followed by `(0)`.
+fn unplussed_code(groups: &[u8], digits: &str) -> bool {
+    groups.len() == 1 && (1..=3).contains(&digits.len()) && !digits.starts_with('0')
 }
 
 fn is_hard_negative(chars: &[(usize, char)], c: &Candidate, first_i: usize, next_i: usize) -> bool {
@@ -867,30 +917,167 @@ fn hinted_regions(country_hint: &[&str]) -> Vec<&'static Region> {
 pub fn scan(text: &str, country_hint: &[&str]) -> Vec<Entity> {
     let chars: Vec<(usize, char)> = text.char_indices().collect();
     let hints = hinted_regions(country_hint);
+    let found = scan_numbers(text, &chars, &hints);
+    with_service_numbers(text, &chars, country_hint, &hints, found)
+}
+
+/// The numbers the scanner reads in `text`, before service numbers and relay prefixes.
+fn scan_numbers(text: &str, chars: &[(usize, char)], hints: &[&'static Region]) -> Vec<Entity> {
     let mut out = Vec::new();
     let mut i = 0;
     // Where a capped run said to read on, and whether a phone label came before that run.
     let mut carried: Option<(usize, bool)> = None;
-    while let Some((mut c, first_i, next_i)) = next_candidate(text, &chars, i) {
+    while let Some((mut c, first_i, next_i)) = next_candidate(text, chars, i) {
         if let Some((at, labelled)) = carried.take()
             && at == first_i
         {
             c.phone_label |= labelled;
         }
         let labelled = c.phone_label;
-        let whole = if c.capped { None } else { validate(&c, &hints) };
+        let whole = if c.capped { None } else { validate(&c, hints) };
         let (parts, resume) = match whole {
             Some(v) => (vec![(c, v)], None),
-            None => split(text, &chars, &c, &hints),
+            None => split(text, chars, &c, hints),
         };
         for (part, v) in parts {
-            let (part, v) = without_short_tail(text, &chars, part, v, &hints);
+            let (part, v) = without_short_tail(text, chars, part, v, hints);
             out.push(entity(&part, v));
         }
         i = resume.unwrap_or(next_i);
         carried = resume.map(|at| (at, labelled));
     }
     out
+}
+
+/// Emergency, relay, and service numbers per region: too short for the scanner, and phones
+/// only where a text tells the reader to call them.
+const SERVICE_NUMBERS: &[(&str, &[&str])] = &[
+    ("US", &["711", "7-1-1", "911", "988"]),
+    ("CA", &["711", "911"]),
+    ("GB", &["999", "111", "101", "112", "18001"]),
+    ("IE", &["999", "112"]),
+    ("DE", &["110", "112", "115", "116117"]),
+    ("AT", &["112", "133", "144"]),
+    ("CH", &["112", "117", "118", "144"]),
+    ("NL", &["112"]),
+    ("BE", &["112", "101"]),
+    ("GE", &["112"]),
+    ("JP", &["110", "119", "118"]),
+];
+
+/// Words right before a service number that make it one to call.
+const CALL_WORDS: &[&str] = &[
+    "dial", "call", "calling", "ring", "phone", "text", "tel", "wählen", "anrufen", "notruf",
+];
+
+/// A text relay prefix dialled before a whole number, which stays part of it.
+const RELAY_PREFIX: &str = "18001";
+
+/// `found` with the service numbers of the hinted regions that follow a call word (`dial 711`,
+/// `call 999`), and with a relay prefix joined to the number it precedes (`18001 0300 123
+/// 1300`). Sorted by start, non-overlapping.
+fn with_service_numbers(
+    text: &str,
+    chars: &[(usize, char)],
+    country_hint: &[&str],
+    hints: &[&'static Region],
+    mut found: Vec<Entity>,
+) -> Vec<Entity> {
+    let numbers: Vec<(&str, &str)> = country_hint
+        .iter()
+        .filter_map(|h| {
+            SERVICE_NUMBERS
+                .iter()
+                .find(|(r, _)| r.eq_ignore_ascii_case(h))
+        })
+        .flat_map(|(r, list)| list.iter().map(move |n| (*r, *n)))
+        .collect();
+    if numbers.is_empty() {
+        return found;
+    }
+    if numbers.iter().any(|&(_, n)| n == RELAY_PREFIX) {
+        found = with_relay_prefixes(text, hints, found);
+    }
+    let mut extra = Vec::new();
+    for (i, &(at, _)) in chars.iter().enumerate() {
+        let Some(&(region, number)) = numbers.iter().find(|&&(_, n)| text[at..].starts_with(n))
+        else {
+            continue;
+        };
+        let end = at + number.len();
+        let after = &text[end..];
+        let glued = i > 0 && chars[i - 1].1.is_alphanumeric();
+        // `911-555`, `711.5`: digits after a separator make it part of another number.
+        let continued = after.starts_with(|c: char| c.is_alphanumeric())
+            || (after.starts_with(['-', '.', '/', ','])
+                && after[1..].starts_with(|d: char| d.is_ascii_digit()));
+        let taken = found.iter().any(|e| e.start < end && at < e.end);
+        if !glued && !continued && !taken && after_call_word(chars, i) {
+            extra.push(Entity {
+                kind: Kind::Phone,
+                start: at,
+                end,
+                confidence: 0.9,
+                review_recommended: false,
+                source: Source::Rules,
+                components: Vec::new(),
+                normalized: Some(number.replace('-', "")),
+                region: Some(region.to_string()),
+            });
+        }
+    }
+    found.extend(extra);
+    found.sort_by_key(|e| e.start);
+    found
+}
+
+/// `found` with every `18001 <number>` read as one phone: the number after the prefix is
+/// read on its own, since a run of both is too long to be one number.
+fn with_relay_prefixes(text: &str, hints: &[&'static Region], found: Vec<Entity>) -> Vec<Entity> {
+    let mut joined = Vec::new();
+    for (at, _) in text.match_indices(RELAY_PREFIX) {
+        let rest = at + RELAY_PREFIX.len() + 1;
+        let standalone = !text[..at].ends_with(|c: char| c.is_alphanumeric())
+            && text[at + RELAY_PREFIX.len()..].starts_with(' ');
+        if !standalone || rest > text.len() {
+            continue;
+        }
+        let tail = &text[rest..];
+        let tail_chars: Vec<(usize, char)> = tail.char_indices().collect();
+        if let Some(first) = scan_numbers(tail, &tail_chars, hints).into_iter().next()
+            && first.start == 0
+        {
+            joined.push(Entity {
+                start: at,
+                end: rest + first.end,
+                ..first
+            });
+        }
+    }
+    let mut out: Vec<Entity> = found
+        .into_iter()
+        .filter(|e| !joined.iter().any(|j| e.start < j.end && j.start < e.end))
+        .collect();
+    out.extend(joined);
+    out.sort_by_key(|e| e.start);
+    out
+}
+
+/// Whether the word before char index `i`, over spaces and a colon, is a call word.
+fn after_call_word(chars: &[(usize, char)], i: usize) -> bool {
+    let mut j = i;
+    while j > 0 && matches!(chars[j - 1].1, ' ' | ':' | '\u{A0}') {
+        j -= 1;
+    }
+    let end = j;
+    while j > 0 && chars[j - 1].1.is_alphabetic() {
+        j -= 1;
+    }
+    let word: String = chars[j..end]
+        .iter()
+        .flat_map(|&(_, c)| c.to_lowercase())
+        .collect();
+    end > j && end < i && CALL_WORDS.contains(&word.as_str())
 }
 
 /// `candidate` as one phone number, as the scanner would read it in running text: the entity
@@ -1070,8 +1257,10 @@ fn dial_reading(
     }
     let bare = groups.len() == 1 && !labelled;
     match international_digits(digits, plus, groups) {
-        Some(rest) => dial_confidence(rest, true, bare, hints).map(|v| (v, true)),
-        None => dial_confidence(digits, false, bare, hints).map(|v| (v, digits.starts_with('0'))),
+        Some(rest) => dial_confidence(rest, true, plus, bare, hints).map(|v| (v, true)),
+        None => {
+            dial_confidence(digits, false, false, bare, hints).map(|v| (v, digits.starts_with('0')))
+        }
     }
 }
 
@@ -1505,21 +1694,80 @@ fn consider<'d>(best: &mut Option<Reading<'d>>, region: &'static Region, nationa
 
 fn validate(c: &Candidate, hints: &[&'static Region]) -> Option<Validated> {
     let bare = c.gaps.is_empty() && !c.phone_label;
-    validate_dial(&c.dial, c.international, bare, hints)
+    validate_dial(&c.dial, c.international, c.plus, bare, hints)
+        .or_else(|| with_extension(c, bare, hints))
 }
 
-/// Validates a dialled number, with or without its `+`; `bare` is a single unseparated group
-/// with no phone label before it.
+/// `+49 5121 206917-5555`: a German or Austrian number followed by its direct-dial extension
+/// after a hyphen is dialled whole, and may run past the fifteen digits E.164 allows. The
+/// number without the extension must validate on its own; the extension's digits are
+/// appended to its E.164 form.
+fn with_extension(c: &Candidate, bare: bool, hints: &[&'static Region]) -> Option<Validated> {
+    let (&last, gap) = (c.groups.last()?, c.gaps.last()?);
+    if !(1..=5).contains(&last) || gap.trim() != "-" {
+        return None;
+    }
+    let cut = c.dial.len().checked_sub(usize::from(last))?;
+    let (base, extension) = (c.dial.get(..cut)?, c.dial.get(cut..)?);
+    let (confidence, e164, region) = validate_dial(base, c.international, c.plus, bare, hints)?;
+    matches!(region.as_deref(), Some("DE" | "AT"))
+        .then(|| (confidence, format!("{e164}{extension}"), region))
+}
+
+/// Validates a dialled number, with or without its `+`; `plus` is whether it was written with
+/// one, and `bare` is a single unseparated group with no phone label before it.
 #[cfg(feature = "phone-metadata")]
 fn validate_dial(
     dial: &str,
     international: bool,
+    plus: bool,
     bare: bool,
     hints: &[&'static Region],
 ) -> Option<Validated> {
-    let (score, region, national) = best_reading(dial, international, bare, hints)?;
-    let e164 = format!("+{}{}", region.code, national);
-    Some((score, e164, Some(region.id.to_string())))
+    if let Some((score, region, national)) = best_reading(dial, international, bare, hints) {
+        let e164 = format!("+{}{}", region.code, national);
+        return Some((score, e164, Some(region.id.to_string())));
+    }
+    let (code, region, national) = other_code(dial, plus)?;
+    Some((
+        OTHER_CODE,
+        format!("+{code}{national}"),
+        Some(region.to_string()),
+    ))
+}
+
+/// The confidence of a number read by `other_code`: its length fits, and nothing more is known.
+#[cfg(feature = "phone-metadata")]
+const OTHER_CODE: f32 = 0.75;
+
+/// A number written with a calling code that has no table (`+34 91 714 6300`), read by the
+/// code and the possible national lengths alone: the code, its main region, and the national
+/// number. A trunk `0` written after the code is dropped when the rest has a possible length.
+/// Calling codes are prefix-free, so at most one width reads as a code. Only a number written
+/// with its `+` is read this way: `0020 7946 0958` is not an Egyptian number.
+#[cfg(feature = "phone-metadata")]
+fn other_code(dial: &str, plus: bool) -> Option<(u16, &'static str, &str)> {
+    use super::phone_tables::OTHER_CODES;
+
+    if !plus {
+        return None;
+    }
+    let digits = dial.trim_start_matches('+');
+    (1..=3).find_map(|width| {
+        let code: u16 = digits.get(..width)?.parse().ok()?;
+        let k = OTHER_CODES
+            .binary_search_by_key(&code, |&(c, _, _)| c)
+            .ok()?;
+        let (_, region, lengths) = OTHER_CODES.get(k)?;
+        let region = std::str::from_utf8(region).ok()?;
+        let fits = |n: &str| n.len() < 32 && lengths & (1 << n.len()) != 0;
+        let national = digits.get(width..)?;
+        let national = national
+            .strip_prefix('0')
+            .filter(|n| fits(n))
+            .unwrap_or(national);
+        (fits(national) && !national.starts_with('0')).then_some((code, region, national))
+    })
 }
 
 /// The confidence `validate_dial` would give, without building the E.164 form.
@@ -1527,10 +1775,13 @@ fn validate_dial(
 fn dial_confidence(
     dial: &str,
     international: bool,
+    plus: bool,
     bare: bool,
     hints: &[&'static Region],
 ) -> Option<f32> {
-    best_reading(dial, international, bare, hints).map(|(score, _, _)| score)
+    best_reading(dial, international, bare, hints)
+        .map(|(score, _, _)| score)
+        .or_else(|| other_code(dial, plus).map(|_| OTHER_CODE))
 }
 
 #[cfg(feature = "phone-metadata")]
@@ -1627,6 +1878,7 @@ fn readings<'d>(
 fn dial_confidence(
     _dial: &str,
     _international: bool,
+    _plus: bool,
     _bare: bool,
     _hints: &[&'static Region],
 ) -> Option<f32> {
@@ -1637,6 +1889,7 @@ fn dial_confidence(
 fn validate_dial(
     _dial: &str,
     _international: bool,
+    _plus: bool,
     _bare: bool,
     _hints: &[&'static Region],
 ) -> Option<Validated> {
@@ -1675,6 +1928,96 @@ mod tests {
         assert_eq!(
             spans("0044 20 7946 0958"),
             vec![("0044 20 7946 0958", "+442079460958".into())]
+        );
+    }
+
+    #[cfg(feature = "phone-metadata")]
+    fn read(text: &str, hints: &[&str]) -> Vec<(String, String)> {
+        scan(text, hints)
+            .into_iter()
+            .map(|e| {
+                (
+                    text[e.start..e.end].to_string(),
+                    e.normalized.unwrap_or_default(),
+                )
+            })
+            .collect()
+    }
+
+    #[cfg(feature = "phone-metadata")]
+    #[test]
+    fn numbers_with_a_code_outside_the_tables_are_read_by_length() {
+        let pair = |a: &str, b: &str| (a.to_string(), b.to_string());
+        assert_eq!(
+            read("call +34 91 714 6300.", &[]),
+            vec![pair("+34 91 714 6300", "+34917146300")]
+        );
+        assert_eq!(
+            read("+591 2 2433424 / +591 77774146", &[]),
+            vec![
+                pair("+591 2 2433424", "+59122433424"),
+                pair("+591 77774146", "+59177774146")
+            ]
+        );
+        assert_eq!(
+            scan("+34 91 714 6300", &[])[0].region.as_deref(),
+            Some("ES")
+        );
+        // Too short for Spain, and a `00` prefix is not enough for a code without a table.
+        assert!(scan("+34 91 714", &[]).is_empty());
+        assert!(scan("Tel 0034 91 714 6300", &["GB"]).is_empty());
+    }
+
+    #[cfg(feature = "phone-metadata")]
+    #[test]
+    fn a_code_before_a_bracketed_trunk_needs_no_plus() {
+        assert_eq!(
+            read("Telephone: 44 (0)303 123 1113", &["GB"]),
+            vec![("44 (0)303 123 1113".into(), "+443031231113".into())]
+        );
+        assert!(scan("Room 44 (0) floor", &["GB"]).is_empty());
+    }
+
+    #[cfg(feature = "phone-metadata")]
+    #[test]
+    fn a_full_stop_ends_a_number() {
+        assert_eq!(
+            read("2. Fax: 202-366-7951. 3. Mail", &["US"]),
+            vec![("202-366-7951".into(), "+12023667951".into())]
+        );
+    }
+
+    #[cfg(feature = "phone-metadata")]
+    #[test]
+    fn service_numbers_need_a_call_word_and_their_region() {
+        assert_eq!(
+            read("please dial 7-1-1 to reach", &["US"]),
+            vec![("7-1-1".into(), "711".into())]
+        );
+        assert_eq!(
+            read("on the coast, call 999 and ask", &["GB"]),
+            vec![("999".into(), "999".into())]
+        );
+        assert!(scan("on the coast, call 999 and ask", &["US"]).is_empty());
+        assert!(scan("there were 999 calls", &["GB"]).is_empty());
+        assert!(scan("in 711 cases", &["US"]).is_empty());
+        assert!(scan("call 911-555 now", &["US"]).is_empty());
+        assert!(scan("dial 711", &[]).is_empty());
+    }
+
+    #[cfg(feature = "phone-metadata")]
+    #[test]
+    fn a_relay_prefix_joins_the_number_it_precedes() {
+        assert_eq!(
+            read("Textphone:\n\n18001 0300 123 1300\n", &["GB"]),
+            vec![("18001 0300 123 1300".into(), "+443001231300".into())]
+        );
+        assert_eq!(
+            read("dial 18001 then 0300 200 3300", &["GB"]),
+            vec![
+                ("18001".into(), "18001".into()),
+                ("0300 200 3300".into(), "+443002003300".into())
+            ]
         );
     }
 
@@ -2251,6 +2594,29 @@ mod tests {
     fn nothing_longer_than_e164_allows() {
         assert!(scan("01.01.202608.00212", &["DE"]).is_empty());
         assert!(scan("+4910120260800212", &[]).is_empty());
+    }
+
+    #[cfg(feature = "phone-metadata")]
+    #[test]
+    fn a_german_extension_after_a_hyphen_stays_with_its_number() {
+        for (text, e164) in [
+            ("Fax: +49-5121-206917-5555 |", "+4951212069175555"),
+            ("Tel: +49 (0)7071 - 40 78 56-6169", "+4970714078566169"),
+            ("Tel. 05121 206917-55", "+49512120691755"),
+        ] {
+            let found = scan(text, &["DE"]);
+            assert_eq!(found.len(), 1, "{text}");
+            assert_eq!(found[0].normalized.as_deref(), Some(e164), "{text}");
+            assert!(
+                text[found[0].end..].trim_start_matches(' ').len() <= 1,
+                "{text}"
+            );
+        }
+        assert!(
+            scan("Tel +1 202 555 0143-12", &["US"])
+                .iter()
+                .all(|e| e.end < 20)
+        );
     }
 
     /// Decimals, national numbers that still start with `0`, dash ranges, date lists, IBANs
