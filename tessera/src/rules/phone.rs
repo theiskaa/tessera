@@ -26,6 +26,8 @@ pub(crate) struct Candidate {
     pub gaps: Vec<String>,
     /// A phone word such as `Tel` or `Customer service:` comes right before.
     pub phone_label: bool,
+    /// Nothing but spaces shares its line: `\n2 99 11 61\n`.
+    pub own_line: bool,
     /// The read stopped at `MAX_RUN_GROUPS` or `MAX_RUN_DIGITS`, so the run may go on past
     /// `end`, and its last groups may be the start of a number cut in two.
     pub capped: bool,
@@ -211,6 +213,8 @@ const NUMBER_MARKERS: &[&str] = &[
     "numéro",
     "numero",
     "ნომერი",
+    "კოდი",
+    "კოდით",
 ];
 /// Stems that make a `-nummer` or `-nr` compound a phone label (`Faxnummer`, `Telefonnr`,
 /// `Servicenummer`) rather than another number (`Kundennummer`, `Bestellnr`).
@@ -271,6 +275,34 @@ const DASHES: [char; 9] = [
 
 fn is_sep(c: char) -> bool {
     matches!(c, ' ' | '\u{A0}' | '.' | '/' | '(' | ')') || DASHES.contains(&c)
+}
+
+/// Currency words written after an amount: `250 00 00 ლარი`, `1 234 567 GEL`.
+const CURRENCY_WORDS: &[&str] = &[
+    "ლარ",
+    "თეთრ",
+    "gel",
+    "eur",
+    "usd",
+    "euro",
+    "dollar",
+    "pound",
+];
+
+/// Whether the word after char index `next_i`, over one space, is a currency word.
+fn currency_word_follows(chars: &[(usize, char)], next_i: usize) -> bool {
+    let start = if chars.get(next_i).is_some_and(|&(_, c)| c == ' ') {
+        next_i + 1
+    } else {
+        next_i
+    };
+    let word: String = chars
+        .iter()
+        .skip(start)
+        .take_while(|&&(_, c)| c.is_alphabetic())
+        .flat_map(|&(_, c)| c.to_lowercase())
+        .collect();
+    !word.is_empty() && CURRENCY_WORDS.iter().any(|w| word.starts_with(w))
 }
 
 fn is_currency(c: char) -> bool {
@@ -352,7 +384,25 @@ fn checked_candidate(
         return Ok((Checked::RuledOut(cand), next_i));
     }
     cand.phone_label = labelled_as_phone(chars, i);
+    cand.own_line = alone_on_line(chars, i, next_i);
     Ok((Checked::Open(cand), next_i))
+}
+
+/// Whether chars `first..past` are the only text on their line besides spaces.
+fn alone_on_line(chars: &[(usize, char)], first: usize, past: usize) -> bool {
+    let blank = |c: char| c == ' ' || c == '\u{A0}' || c == '\t';
+    let before = chars[..first]
+        .iter()
+        .rev()
+        .find(|&&(_, c)| !blank(c))
+        .is_none_or(|&(_, c)| c == '\n');
+    let after = chars
+        .get(past..)
+        .unwrap_or_default()
+        .iter()
+        .find(|&&(_, c)| !blank(c))
+        .is_none_or(|&(_, c)| c == '\n');
+    before && after
 }
 
 /// `PLZ 01067 0351 1234567`: a label for another number that rules out the run at `first_i`
@@ -396,20 +446,52 @@ fn take_candidate(
     let mut paren_used = false;
     let mut capped = false;
 
-    // `(+49) 30 1234567`: the country code in brackets.
-    if at(i) == Some('(') && at(i + 1) == Some('+') {
-        let mut k = i + 2;
+    // `(+49) 30 1234567`, `(+995 32) 2 25 04 84`, `+(995 32) 299 11 11`: the country code in
+    // brackets, alone or with the area code.
+    let bracketed_code = (at(i) == Some('(') && at(i + 1) == Some('+'))
+        || (at(i) == Some('+') && at(i + 1) == Some('('));
+    if bracketed_code {
+        let code_start = i + 2;
+        let mut k = code_start;
         while at(k).is_some_and(|c| c.is_ascii_digit()) {
             k += 1;
         }
-        let n = k - (i + 2);
-        if !(1..=3).contains(&n) || at(k) != Some(')') {
+        let n = k - code_start;
+        if !(1..=3).contains(&n) {
+            return Err(i + 1);
+        }
+        let mut area = None;
+        let mut spaces = k;
+        while spaces - k < 2 && at(spaces).is_some_and(|c| c == ' ' || c == '\u{A0}') {
+            spaces += 1;
+        }
+        if spaces > k {
+            let area_start = spaces;
+            let mut m = area_start;
+            while at(m).is_some_and(|c| c.is_ascii_digit()) {
+                m += 1;
+            }
+            if (1..=4).contains(&(m - area_start)) {
+                area = Some((area_start, m));
+                k = m;
+            }
+        }
+        if at(k) != Some(')') {
             return Err(i + 1);
         }
         international = true;
-        digits.extend(chars[i + 2..k].iter().map(|&(_, c)| c));
+        digits.extend(chars[code_start..code_start + n].iter().map(|&(_, c)| c));
         groups.push(n as u8);
-        group_spans.push((i, k + 1));
+        match area {
+            Some((a, m)) => {
+                group_spans.push((i, code_start + n));
+                digits.extend(chars[a..m].iter().map(|&(_, c)| c));
+                gaps.push(chars[code_start + n..a].iter().map(|&(_, c)| c).collect());
+                groups.push((m - a) as u8);
+                group_spans.push((a, k + 1));
+            }
+            None => group_spans.push((i, k + 1)),
+        }
         paren_used = true;
         j = k + 1;
         let run_start = j;
@@ -570,6 +652,7 @@ fn take_candidate(
         group_spans,
         gaps,
         phone_label: false,
+        own_line: false,
         capped,
     };
     Ok((candidate, end_i))
@@ -591,9 +674,11 @@ fn international_digits<'d>(digits: &'d str, plus: bool, groups: &[u8]) -> Optio
 }
 
 /// Whether a bracketed group may come next: after the country code (`+49 (030) ...`), or
-/// after a national area code in the Japanese style (`03(1234)5678`).
+/// after a national area code in the Japanese style (`03(1234)5678`). A whole number before
+/// the bracket leaves it an extension: `0322250484(3225)`, `+995322250484(3225)`.
 fn paren_may_follow(groups: &[u8], digits: &str, international: bool) -> bool {
-    groups.len() == 1 && (international || digits.starts_with('0'))
+    let first = if international { 3 } else { 5 };
+    groups.len() == 1 && digits.len() <= first && (international || digits.starts_with('0'))
 }
 
 /// Whether `digits`, the first group of a run, is a calling code written without its `+`
@@ -662,6 +747,9 @@ fn is_hard_negative(chars: &[(usize, char)], c: &Candidate, first_i: usize, next
         after
     };
     if before.is_some_and(is_currency) || after.is_some_and(is_currency) {
+        return true;
+    }
+    if currency_word_follows(chars, next_i) {
         return true;
     }
 
@@ -978,8 +1066,8 @@ const CALL_WORDS: &[&str] = &[
 const RELAY_PREFIX: &str = "18001";
 
 /// `found` with the service numbers of the hinted regions that follow a call word (`dial 711`,
-/// `call 999`), and with a relay prefix joined to the number it precedes (`18001 0300 123
-/// 1300`). Sorted by start, non-overlapping.
+/// `call 999`), Georgian hotlines after a phone label, and a relay prefix joined to the number
+/// it precedes (`18001 0300 123 1300`). Sorted by start, non-overlapping.
 fn with_service_numbers(
     text: &str,
     chars: &[(usize, char)],
@@ -996,9 +1084,6 @@ fn with_service_numbers(
         })
         .flat_map(|(r, list)| list.iter().map(move |n| (*r, *n)))
         .collect();
-    if numbers.is_empty() {
-        return found;
-    }
     if numbers.iter().any(|&(_, n)| n == RELAY_PREFIX) {
         found = with_relay_prefixes(text, hints, found);
     }
@@ -1017,22 +1102,69 @@ fn with_service_numbers(
                 && after[1..].starts_with(|d: char| d.is_ascii_digit()));
         let taken = found.iter().any(|e| e.start < end && at < e.end);
         if !glued && !continued && !taken && after_call_word(chars, i) {
-            extra.push(Entity {
-                kind: Kind::Phone,
-                start: at,
-                end,
-                confidence: 0.9,
-                review_recommended: false,
-                source: Source::Rules,
-                components: Vec::new(),
-                normalized: Some(number.replace('-', "")),
-                region: Some(region.to_string()),
-            });
+            extra.push(service_entity(at, end, number, region));
+        }
+    }
+    for (at, end) in short_hotlines(text, chars, country_hint) {
+        if !found
+            .iter()
+            .chain(&extra)
+            .any(|e| e.start < end && at < e.end)
+        {
+            extra.push(service_entity(at, end, &text[at..end], "GE"));
         }
     }
     found.extend(extra);
     found.sort_by_key(|e| e.start);
     found
+}
+
+fn service_entity(start: usize, end: usize, number: &str, region: &str) -> Entity {
+    Entity {
+        kind: Kind::Phone,
+        start,
+        end,
+        confidence: 0.9,
+        review_recommended: false,
+        source: Source::Rules,
+        components: Vec::new(),
+        normalized: Some(number.replace('-', "")),
+        region: Some(region.to_string()),
+    }
+}
+
+/// Georgian hotlines, four digits from `1000` to `1899` (`ტელეფონი: 1403`), standing alone
+/// right after a phone label: not the first block of a longer number (`1403 55 55`,
+/// `1234 5678 9012 3456`), a decimal or an amount (`1403.5`, `1403,50`), or a year (`1998`).
+fn short_hotlines(
+    text: &str,
+    chars: &[(usize, char)],
+    country_hint: &[&str],
+) -> Vec<(usize, usize)> {
+    if !country_hint.iter().any(|h| h.eq_ignore_ascii_case("GE")) {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for (i, &(at, c)) in chars.iter().enumerate() {
+        let end = at + 4;
+        let four = c == '1'
+            && text
+                .get(at..end)
+                .is_some_and(|s| s.bytes().all(|b| b.is_ascii_digit()))
+            && !text[at..].starts_with("19");
+        if !four {
+            continue;
+        }
+        let glued = i > 0 && chars[i - 1].1.is_alphanumeric();
+        let after = &text[end..];
+        let continued = after.starts_with(|d: char| d.is_alphanumeric())
+            || (after.starts_with([' ', '-', '.', '/', ','])
+                && after[1..].starts_with(|d: char| d.is_ascii_digit()));
+        if !glued && !continued && labelled_as_phone(chars, i) {
+            out.push((at, end));
+        }
+    }
+    out
 }
 
 /// `found` with every `18001 <number>` read as one phone: the number after the prefix is
@@ -1700,6 +1832,47 @@ fn validate(c: &Candidate, hints: &[&'static Region]) -> Option<Validated> {
     let bare = c.gaps.is_empty() && !c.phone_label;
     validate_dial(&c.dial, c.international, c.plus, bare, hints)
         .or_else(|| with_extension(c, bare, hints))
+        .or_else(|| tbilisi_local(c, hints))
+}
+
+/// Whether the last four digits of `dial` read as a year from 1900 to 2099.
+fn year_last(dial: &str) -> bool {
+    dial.get(dial.len().saturating_sub(4)..)
+        .and_then(|y| y.parse::<u16>().ok())
+        .is_some_and(|y| (1900..=2099).contains(&y))
+}
+
+#[cfg(feature = "phone-metadata")]
+fn region_id(region: &Region) -> Option<&'static str> {
+    Some(region.id)
+}
+
+#[cfg(not(feature = "phone-metadata"))]
+fn region_id(region: &Region) -> Option<&'static str> {
+    match *region {}
+}
+
+/// `225 04 84` in a Georgian text: a Tbilisi number written for a local reader, without the
+/// area code `32`. The three-two-two grouping only phones use is read anywhere; the others
+/// (`2 99 11 11`, `2 25 0484`) only after a phone word or alone on their line, since scores
+/// and dates in running text (`2 15 20 25`, `2 05 2024`) share them, and an unseparated one
+/// (`2507177`) only after a phone word. Amounts group in threes and are never read.
+fn tbilisi_local(c: &Candidate, hints: &[&'static Region]) -> Option<Validated> {
+    let georgian = hints.iter().any(|r| region_id(r) == Some("GE"));
+    let marked = c.phone_label || c.own_line;
+    let shaped = match c.groups.as_slice() {
+        [3, 2, 2] => true,
+        [1, 2, 2, 2] => marked,
+        [7] => c.phone_label,
+        [1, 2, 4] => marked && !year_last(&c.dial),
+        _ => false,
+    };
+    if !georgian || c.international || !shaped || !c.dial.starts_with('2') {
+        return None;
+    }
+    let (confidence, e164, region) =
+        validate_dial(&format!("032{}", c.dial), false, false, false, hints)?;
+    Some((confidence.min(0.9), e164, region))
 }
 
 /// `+49 5121 206917-5555`: a German or Austrian number followed by its direct-dial extension
@@ -2023,6 +2196,68 @@ mod tests {
                 ("0300 200 3300".into(), "+443002003300".into())
             ]
         );
+    }
+
+    #[cfg(feature = "phone-metadata")]
+    #[test]
+    fn georgian_bracketed_codes_local_numbers_and_extensions() {
+        for (text, e164) in [
+            ("ტელ: (+995 32) 2 25 04 84", "+995322250484"),
+            ("+(995 32) 299 11 11", "+995322991111"),
+            ("(+995 32)2 25 04 84", "+995322250484"),
+            ("ტელ: 225 04 84 (შიდა 2330)", "+995322250484"),
+            ("ტელეფონი: 2 99 11 61", "+995322991161"),
+            ("ტელ.:0322250484(3225)", "+995322250484"),
+            ("ტელ: 2507177", "+995322507177"),
+        ] {
+            let found = scan(text, &["GE"]);
+            assert_eq!(found.len(), 1, "{text}: {found:?}");
+            assert_eq!(found[0].normalized.as_deref(), Some(e164), "{text}");
+        }
+        assert_eq!(read("ტელ.:0322250484(3225)", &["GE"])[0].0, "0322250484");
+        assert!(scan("ღირებულება 2 500 000 ლარი", &["GE"]).is_empty());
+        assert!(scan("225 04 84", &["GB"]).is_empty());
+        assert!(scan("2507177", &["GE"]).is_empty());
+        assert_eq!(
+            read("ტელეფონი: 1403; +(995 32) 299 11 11", &["GE"]).len(),
+            2
+        );
+        assert!(scan("ტელეფონი: 1403", &["GB"]).is_empty());
+        for text in [
+            "Phone: 1234 5678 9012 3456",
+            "ტელ: 1403 55 55",
+            "ტელ: 1403-55-55",
+            "ტელ: 1403.5",
+            "ტელ: 1403,50 ლარი",
+            "ტელ: 1403/2",
+            "ტელეფონი 1998 წლიდან",
+            "2 05 2024 წელს",
+            "ფასი 250 00 00 ლარი",
+            "ქულები 2 15 20 25",
+            "საიდენტიფიკაციო კოდი 225 04 84",
+            "შედეგი:\n2 05 2024\n",
+        ] {
+            assert!(
+                scan(text, &["GE"]).is_empty(),
+                "{text}: {:?}",
+                scan(text, &["GE"])
+            );
+        }
+        assert_eq!(
+            read("ტელ: +995322250484(3225)", &["GE"]),
+            vec![("+995322250484".into(), "+995322250484".into())]
+        );
+        assert_eq!(
+            read("შიდა აუდიტი\n\n2 99 11 61\n2 99 11 70\n", &["GE"]).len(),
+            2
+        );
+        for text in ["(+995\u{A0}32) 299 11 11", "(+995  32) 299 11 11"] {
+            let found = read(text, &["GE"]);
+            assert_eq!(found.len(), 1, "{text}");
+            assert!(found[0].0.starts_with("(+995"), "{text}: {found:?}");
+        }
+        assert!(scan("წელს 1403 მოქალაქე", &["GE"]).is_empty());
+        assert!(scan("ტელ: 14ა3 ტელ: 1ქქქ", &["GE"]).is_empty());
     }
 
     #[cfg(feature = "phone-metadata")]
