@@ -82,8 +82,8 @@ impl Tessera {
             }
             out.push(e);
         }
-        if mask.is_none() && self.kinds.contains(Kind::Org) {
-            let repeats = repeated_orgs(text, &tokens, &out, &taken);
+        if mask.is_none() {
+            let repeats = repeated_names(text, &tokens, &out, &taken);
             out.extend(repeats);
             out.sort_by_key(|e| e.start);
         }
@@ -319,32 +319,94 @@ fn span_entity(
     })
 }
 
-/// Other mentions of the organizations in `found`: the same text on whole tokens, clear of
-/// everything the detector and the rules found (`taken`, of every kind). Documents name a body
-/// in full once and then repeat it (`HMRC` eighty times on one contact page) where the context
+/// Other mentions of the organizations and people in `found`: the same text on whole tokens,
+/// or with a possessive after it (`NRC's`), clear of everything the detector and the rules
+/// found (`taken`, of every kind). Documents name a body or a person in full once and then
+/// repeat it (`HMRC` eighty times on one contact page, `Kobakhidze said`) where the context
 /// around a repeat is too thin for the network alone. Only confident, distinctive names are
 /// repeated, longest first, so a stray prediction does not spread: two or more words, an
-/// acronym, or a name in a script without letter case. A Han name is not repeated inside a
-/// longer run of Han characters (`総務省令`).
-fn repeated_orgs(
-    text: &str,
+/// acronym, or a name in a script without letter case, and a person's family name alone (see
+/// `family_name`). A Han name is not repeated inside a longer run of Han characters
+/// (`総務省令`).
+fn repeated_names<'t>(
+    text: &'t str,
     tokens: &[token::Token],
     found: &[Entity],
     taken: &[(usize, usize)],
 ) -> Vec<Entity> {
-    let mut names: Vec<(&str, f32)> = Vec::new();
+    // Capitalized words the document also writes in lower case outside every found span are
+    // common words, not names: a role taken for a name (`Non-Executive Director`, `Service
+    // Board`) must not spread. Particles (`von der`), initials, and scripts without capitals
+    // are never common.
+    let inside = |t: &token::Token| taken.iter().any(|&(s, e)| s < t.end && t.start < e);
+    let lower: std::collections::HashSet<&str> = tokens
+        .iter()
+        .filter(|t| !inside(t))
+        .map(|t| t.text(text))
+        .filter(|w| w.chars().all(char::is_lowercase))
+        .collect();
+    let common = |word: &str| {
+        let word = word.trim_end_matches([',', '.']);
+        let capitalized = word.chars().next().is_some_and(char::is_uppercase)
+            && word.chars().filter(|c| c.is_alphabetic()).count() >= 2;
+        capitalized
+            && (lower.contains(word.to_lowercase().as_str())
+                || GLUED_ROLES.contains(&word)
+                || ROLE_WORDS.contains(&word)
+                || word.split('-').any(|part| GLUED_ROLES.contains(&part)))
+    };
+    // A person is repeated only when no word of the name is a common word.
+    let person = |name: &'t str| -> Vec<&'t str> {
+        if name.split_whitespace().any(common) {
+            return Vec::new();
+        }
+        std::iter::once(name).chain(family_name(name)).collect()
+    };
+    let mut names: Vec<(&str, Kind, f32)> = Vec::new();
     let mut seen = std::collections::HashSet::new();
-    for e in found.iter().filter(|e| e.kind == Kind::Org) {
+    let mut family_names = std::collections::HashSet::new();
+    for e in found.iter().filter(|e| e.confidence >= policy::HIGH) {
         let name = &text[e.start..e.end];
-        if e.confidence >= policy::HIGH && distinctive(name) && seen.insert(name) {
-            names.push((name, e.confidence));
+        let keys = match e.kind {
+            Kind::Org => vec![name],
+            Kind::Person => person(name),
+            _ => continue,
+        };
+        for key in keys {
+            if key != name {
+                family_names.insert(key);
+            }
+            if (key != name || distinctive(key)) && seen.insert(key) {
+                names.push((key, e.kind, e.confidence));
+            }
         }
     }
-    names.sort_by_key(|(name, _)| std::cmp::Reverse(name.len()));
+    names.sort_by_key(|(name, _, _)| std::cmp::Reverse(name.len()));
+    // A family name alone must stand alone: one followed by another capitalized word or a
+    // number is part of a longer name or a date (`Paul Smith`, `3 May 2024`).
+    let followed = |end: usize| {
+        let rest = text[end..].trim_start_matches([' ', '\u{a0}']);
+        rest.len() < text.len() - end
+            && rest
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_uppercase() || c.is_ascii_digit())
+    };
     let mut by_first: std::collections::HashMap<&str, Vec<usize>> =
         std::collections::HashMap::new();
     for t in tokens {
         by_first.entry(t.text(text)).or_default().push(t.start);
+    }
+    // A name's first token may be the whole of a token that also carries a possessive.
+    for t in tokens {
+        let word = t.text(text);
+        for possessive in ["'s", "\u{2019}s"] {
+            if let Some(bare) = word.strip_suffix(possessive)
+                && !bare.is_empty()
+            {
+                by_first.entry(bare).or_default().push(t.start);
+            }
+        }
     }
     let ends: std::collections::HashSet<usize> = tokens.iter().map(|t| t.end).collect();
     let mut blocked: std::collections::BTreeMap<usize, usize> = taken.iter().copied().collect();
@@ -358,13 +420,21 @@ fn repeated_orgs(
         c.is_some_and(|c| matches!(token::script_of(c as u32), Some(token::Script::Han)))
     };
     let mut out = Vec::new();
-    for (name, confidence) in names {
+    for (name, kind, confidence) in names {
         let Some(first) = token::tokenize(name).first().map(|t| t.text(name)) else {
             continue;
         };
         for &at in by_first.get(first).map(Vec::as_slice).unwrap_or_default() {
             let end = at + name.len();
-            if text.get(at..end) != Some(name) || !ends.contains(&end) {
+            if text.get(at..end) != Some(name) {
+                continue;
+            }
+            let possessive = ["'s", "\u{2019}s"]
+                .iter()
+                .any(|p| text[end..].starts_with(p) && ends.contains(&(end + p.len())));
+            if !ends.contains(&end) && !possessive
+                || family_names.contains(name) && !possessive && followed(end)
+            {
                 continue;
             }
             let glued_han = han(name.chars().next()) && han(text[..at].chars().next_back())
@@ -372,7 +442,7 @@ fn repeated_orgs(
             if !glued_han && !overlaps(&blocked, at, end) {
                 blocked.insert(at, end);
                 out.push(Entity {
-                    kind: Kind::Org,
+                    kind,
                     start: at,
                     end,
                     confidence,
@@ -387,6 +457,72 @@ fn repeated_orgs(
     }
     out
 }
+
+/// Titles, roles, and office words that a role line taken for a name would end in, beyond
+/// `GLUED_ROLES`.
+const ROLE_WORDS: [&str; 18] = [
+    "General",
+    "Minister",
+    "Owner",
+    "Manager",
+    "Executive",
+    "Team",
+    "Care",
+    "Media",
+    "Embassy",
+    "Office",
+    "Service",
+    "Services",
+    "Council",
+    "Ministry",
+    "Chief",
+    "Ambassador",
+    "Consul",
+    "Commissioner",
+];
+
+/// The family name a person is mentioned by after the first time: the last word of a name of
+/// two or more words in a cased script, skipping generational suffixes and initials
+/// (`Kobakhidze` from `Irakli Kobakhidze`, `Parham` from `William N. Parham, III`). It must
+/// start with a capital, have three or more letters, and not be all capitals, which would more
+/// often be an acronym. Scripts without letter case glue case endings or titles to the family
+/// name, so their names are repeated only in full.
+fn family_name(name: &str) -> Option<&str> {
+    let words: Vec<(usize, &str)> = name
+        .split_whitespace()
+        .map(|w| (w.as_ptr() as usize - name.as_ptr() as usize, w))
+        .collect();
+    // `Smith, John`: the family name comes first and the last word is the given name.
+    if words.len() < 2 || words[0].1.ends_with(',') {
+        return None;
+    }
+    let k = words.iter().rposition(|(_, w)| {
+        let bare = w.trim_end_matches([',', '.']);
+        !matches!(bare, "Jr" | "Sr" | "II" | "III" | "IV") && bare.chars().count() > 1
+    })?;
+    let (at, word) = words[k];
+    let word = word.trim_end_matches(',');
+    let letters = word.chars().filter(|c| c.is_alphabetic()).count();
+    let shaped = word.chars().next().is_some_and(char::is_uppercase)
+        && word.chars().skip(1).any(char::is_lowercase)
+        && word
+            .chars()
+            .all(|c| c.is_alphabetic() || matches!(c, '-' | '\'' | '\u{2019}'));
+    if letters < 3 || !shaped || k == 0 {
+        return None;
+    }
+    // `von der Leyen`, `van Dijk`, `bin Salman`: particles belong to the family name.
+    let mut first = k;
+    while first > 1 && PARTICLES.contains(&words[first - 1].1) {
+        first -= 1;
+    }
+    Some(&name[words[first].0..at + word.len()])
+}
+
+/// Lower-case particles that open a family name.
+const PARTICLES: [&str; 12] = [
+    "von", "van", "der", "den", "de", "da", "di", "du", "le", "la", "bin", "al",
+];
 
 /// Whether an organization's name is distinctive enough to repeat: two or more words, an
 /// acronym of two or more capitals, or a name in a script without letter case. A single
@@ -572,7 +708,7 @@ mod tests {
     fn repeats(text: &str, found: &[Entity]) -> Vec<String> {
         let tokens = crate::token::tokenize(text);
         let taken: Vec<(usize, usize)> = found.iter().map(|e| (e.start, e.end)).collect();
-        repeated_orgs(text, &tokens, found, &taken)
+        repeated_names(text, &tokens, found, &taken)
             .iter()
             .map(|e| text[e.start..e.end].to_string())
             .collect()
@@ -614,6 +750,71 @@ mod tests {
             repeats(text, &[org(text, "შემოსავლების სამსახური", 0)]).len(),
             1
         );
+    }
+
+    #[test]
+    fn a_person_named_in_full_is_found_by_family_name() {
+        let person = |text: &str, name: &str, from: usize| {
+            let mut e = org(text, name, from);
+            e.kind = Kind::Person;
+            e
+        };
+        let text = "Irakli Kobakhidze spoke. Kobakhidze said that Kobakhidze’s plan and \
+                    Kobakhidzes and KOBAKHIDZE stand; Irakli Kobakhidze left.";
+        assert_eq!(
+            repeats(text, &[person(text, "Irakli Kobakhidze", 0)]),
+            ["Irakli Kobakhidze", "Kobakhidze", "Kobakhidze"]
+        );
+
+        let text = "William N. Parham, III wrote. Parham agreed.";
+        assert_eq!(
+            repeats(text, &[person(text, "William N. Parham, III", 0)]),
+            ["Parham"]
+        );
+
+        let text = "Director General Anna Wu. Non-Executive Director. The director and Wu.";
+        let found = [
+            person(text, "Director General", 0),
+            person(text, "Non-Executive Director", 26),
+        ];
+        assert!(repeats(text, &found).is_empty(), "roles do not spread");
+
+        let text = "Media Team said the media would wait. Team and Media.";
+        assert!(repeats(text, &[person(text, "Media Team", 0)]).is_empty());
+
+        let text = "Ursula von der Leyen spoke. Later von der Leyen left.";
+        assert_eq!(
+            repeats(text, &[person(text, "Ursula von der Leyen", 0)]),
+            ["von der Leyen"]
+        );
+
+        let text = "John A. Smith spoke; write to smith@x.org. Smith said.";
+        let mut email = org(text, "smith@x.org", 0);
+        email.kind = Kind::Email;
+        let found = [person(text, "John A. Smith", 0), email];
+        assert_eq!(repeats(text, &found), ["Smith"]);
+
+        let text = "ირაკლი კობახიძე თქვა. ირაკლი კობახიძე წავიდა.";
+        assert_eq!(
+            repeats(text, &[person(text, "ირაკლი კობახიძე", 0)]),
+            ["ირაკლი კობახიძე"]
+        );
+
+        let text = "Theresa May spoke on 3 May 2024. May said so. Paul May Smith came.";
+        assert_eq!(repeats(text, &[person(text, "Theresa May", 0)]), ["May"]);
+
+        let text = "Smith, John spoke. John left.";
+        assert!(repeats(text, &[person(text, "Smith, John", 0)]).is_empty());
+
+        let text = "Jo Li met Li.";
+        assert!(repeats(text, &[person(text, "Jo Li", 0)]).is_empty());
+
+        let text = "Ms Smith of Smith & Co. Smith said.";
+        let found = [person(text, "Ms Smith", 0), org(text, "Smith & Co", 12)];
+        assert_eq!(repeats(text, &found), ["Smith"], "clear of other spans");
+
+        let text = "The NRC's staff; the NRC said.";
+        assert_eq!(repeats(text, &[org(text, "NRC", 16)]), ["NRC"]);
     }
 
     #[test]
