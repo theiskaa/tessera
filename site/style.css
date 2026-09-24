@@ -20,8 +20,8 @@
 .k-phone, .c-phone { --fg: #b45309; --bg: rgba(180, 83, 9, 0.14); }
 .k-email, .c-email { --fg: #be185d; --bg: rgba(190, 24, 93, 0.12); }
 
-@keyframes tsScanA { from { top: 0; opacity: 1; } 92% { opacity: 1; } to { top: 100%; opacity: 0; } }
-@keyframes tsScanB { from { top: 0; opacity: 1; } 92% { opacity: 1; } to { top: 100%; opacity: 0; } }
+@keyframes tsScanA { from { top: var(--scan-from, 0); opacity: 1; } 92% { opacity: 1; } to { top: var(--scan-to, 100%); opacity: 0; } }
+@keyframes tsScanB { from { top: var(--scan-from, 0); opacity: 1; } 92% { opacity: 1; } to { top: var(--scan-to, 100%); opacity: 0; } }
 @keyframes tsDimA { from { color: var(--ink); } }
 @keyframes tsDimB { from { color: var(--ink); } }
 @keyframes tsLitA { from { background-color: transparent; box-shadow: inset 0 0 0 transparent; color: var(--ink); } }
@@ -78,15 +78,6 @@ p { margin: 0; }
   color: var(--ink-strong);
   text-wrap: balance;
 }
-/* The headline's kind words are drawn as the demo draws what it finds, and light up in turn. */
-.intro h1 .hit {
-  padding: 0 0.1em;
-  background: var(--bg);
-  box-shadow: inset 0 -3px 0 var(--fg);
-  animation: tsLitA 0.5s ease-out calc(0.25s + var(--i, 0) * 0.16s) both;
-}
-.intro .subtitle { margin-top: 4px; color: var(--muted); }
-
 .code {
   margin: 0;
   padding: 18px 20px;
@@ -249,8 +240,14 @@ p { margin: 0; }
 }
 .doc .plain { color: var(--dim); }
 .panes.idle .doc .plain, .panes.failed .doc .plain { color: var(--ink); }
-.doc .hit { color: var(--ink-strong); background: var(--bg); box-shadow: inset 0 -2px 0 var(--fg); }
-.doc .hit.selected { outline: 2px solid var(--fg); outline-offset: 2px; }
+.doc .hit {
+  color: var(--ink-strong);
+  background: var(--bg);
+  box-shadow: inset 0 -2px 0 var(--fg);
+  cursor: pointer;
+}
+.doc .hit.selected, /* Outside a selected section: not analyzed, so neither lit nor scanned. */
+.doc .plain.outside { color: var(--dim); opacity: 0.5; }
 
 .scan {
   position: absolute;
@@ -268,8 +265,8 @@ p { margin: 0; }
    leaves every run in its final state, so nodes added later are not scanned again. */
 .panes.scanning.run-a .scan { animation: tsScanA var(--scan, 1.8s) linear 0s both; }
 .panes.scanning.run-b .scan { animation: tsScanB var(--scan, 1.8s) linear 0s both; }
-.panes.scanning.run-a .plain { animation: tsDimA 0.35s ease-out calc(var(--f, 0) * var(--scan, 1.8s)) both; }
-.panes.scanning.run-b .plain { animation: tsDimB 0.35s ease-out calc(var(--f, 0) * var(--scan, 1.8s)) both; }
+.panes.scanning.run-a .plain:not(.outside) { animation: tsDimA 0.35s ease-out calc(var(--f, 0) * var(--scan, 1.8s)) both; }
+.panes.scanning.run-b .plain:not(.outside) { animation: tsDimB 0.35s ease-out calc(var(--f, 0) * var(--scan, 1.8s)) both; }
 .panes.scanning.run-a .hit { animation: tsLitA 0.3s ease-out calc(var(--f, 0) * var(--scan, 1.8s)) both; }
 .panes.scanning.run-b .hit { animation: tsLitB 0.3s ease-out calc(var(--f, 0) * var(--scan, 1.8s)) both; }
 .doc .hit.fresh, .rows .row, .json .piece { animation: tsLand 0.14s ease-out both; }
@@ -279,7 +276,40 @@ p { margin: 0; }
 }
 
 .rows { display: flex; flex-direction: column; }
-.rows[hidden], .json[hidden] { display: none; }
+.rows[hidden], .json[hidden], .cards[hidden] { display: none; }
+
+.cards { display: flex; flex-direction: column; gap: 14px; }
+.card { border: 1px solid var(--line); background: var(--pane-alt); animation: tsLand 0.14s ease-out both; }
+.card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.card-title { color: var(--ink-strong); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card-meta { color: var(--muted); font-size: 12px; white-space: nowrap; display: flex; gap: 8px; align-items: baseline; }
+.badge { border: 1px solid var(--line); padding: 0 6px; color: var(--ink); font-size: 11px; }
+.card .card-row { grid-template-columns: 100px minmax(0, 1fr) 84px; }
+.card .card-row:last-child { border-bottom: none; }
+.unassigned { display: flex; flex-direction: column; gap: 8px; padding-top: 4px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip {
+  border: none;
+  padding: 2px 6px;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--ink-strong);
+  background: var(--bg);
+  box-shadow: inset 0 -2px 0 var(--fg);
+  cursor: pointer;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chip.selected { outline: 2px solid var(--fg); outline-offset: 2px; }
 
 .row {
   display: grid;
@@ -299,6 +329,9 @@ p { margin: 0; }
   cursor: pointer;
 }
 .row.selected { background: var(--code); }
+.json .piece { cursor: pointer; }
+.json .piece.selected { background: var(--code); }
+.json .piece:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .row.sub { font-size: 11.5px; min-height: 26px; }
 .row .row-kind { color: var(--fg); font-weight: 500; }
 .row.sub .row-kind { color: var(--muted); font-weight: 400; padding-left: 12px; }

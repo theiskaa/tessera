@@ -1,9 +1,10 @@
-//! The output pane: what the library returned, as a list or as JSON, written as the scan
-//! reaches each entity, with the status line and the phone-region hint above it.
+//! The output pane: what the library returned, as JSON, a list, or contact cards, written as the
+//! scan reaches each entity, with the status line and the phone-region hint above it.
 
 use leptos::prelude::*;
 
-use super::demo::{DemoState, Failure, HINTS, Shown};
+use super::demo::{DemoState, Failure, HINTS, Shown, View};
+use super::format::thousands;
 use super::highlight;
 use super::json::{self, kind_name};
 use crate::protocol::{Found, FoundKind};
@@ -21,6 +22,29 @@ fn extra(found: &Found) -> String {
         FoundKind::Person | FoundKind::Org | FoundKind::Address => {
             format!("{} {:.3}", found.source, found.confidence)
         }
+    }
+}
+
+/// The bytes `start..end` of `text` as an owned string; empty when they do not slice it.
+fn covered(text: &str, start: usize, end: usize) -> String {
+    text.get(start..end).unwrap_or("").to_string()
+}
+
+/// `items` the scan has reached: those whose entity starts before byte `reached`.
+fn written_so_far<T: Clone>(items: &[T], first: impl Fn(&T) -> usize, reached: usize) -> Vec<T> {
+    items
+        .iter()
+        .filter(|item| first(item) < reached)
+        .cloned()
+        .collect()
+}
+
+/// `n` of something, as `1 contact` or `3 contacts`.
+fn count(n: usize, one: &str, many: &str) -> String {
+    if n == 1 {
+        format!("1 {one}")
+    } else {
+        format!("{n} {many}")
     }
 }
 
@@ -53,17 +77,22 @@ pub(crate) fn OutputPane(state: DemoState) -> impl IntoView {
             view! { <span class="failed">"worker stopped"</span> }.into_any()
         }
         (None, Some(shown), _) if state.done.get() => {
-            let n = shown.found.len();
-            let count = match n {
-                1 => "1 entity found".to_string(),
-                n => format!("{n} entities found"),
+            let counted = if state.view.get() == View::Cards {
+                count(shown.contacts.len(), "contact", "contacts")
+            } else {
+                count(shown.found.len(), "entity found", "entities found")
             };
-            view! { <span class="found-count">{count}</span> }.into_any()
+            let scope = if shown.section.is_some() {
+                " in the selection"
+            } else {
+                ""
+            };
+            view! { <span class="found-count">{counted}{scope}</span> }.into_any()
         }
         // Only the count is announced; the scanning label is a visual effect.
         (None, Some(shown), _) => view! {
             <span class="scanning" aria-hidden="true">
-                {format!("scanning {} bytes", super::format::thousands(shown.text.len() as u64))}
+                {format!("scanning {} bytes", thousands(shown.span_len() as u64))}
             </span>
         }
         .into_any(),
@@ -105,23 +134,19 @@ pub(crate) fn OutputPane(state: DemoState) -> impl IntoView {
         .into_any(),
     };
 
-    // Scrolling the output by hand stops it following the newest line; scrolling back to the
-    // bottom resumes it.
-    let stop_following = move || state.follow.set_value(false);
-    let on_scroll = move |_| {
-        if let Some(pane) = state.output.get_untracked() {
-            let gap = pane.scroll_height() - pane.scroll_top() - pane.client_height();
-            if gap <= 4 {
-                state.follow.set_value(true);
-            }
-        }
-    };
-
     view! {
         <div class="out-pane">
             <div class="pane-head">
                 <span class="out-title">
-                    <span class="out-name">"detect · "</span>
+                    <span class="out-name">
+                        {move || {
+                            if state.view.get() == View::Cards {
+                                "extract_contacts · "
+                            } else {
+                                "detect · "
+                            }
+                        }}
+                    </span>
                     <select
                         class="hint"
                         aria-label="region for phone numbers without a country code"
@@ -144,10 +169,6 @@ pub(crate) fn OutputPane(state: DemoState) -> impl IntoView {
             <div
                 class="pane-scroll"
                 node_ref=state.output
-                on:wheel=move |_| stop_following()
-                on:touchmove=move |_| stop_following()
-                on:keydown=move |_| stop_following()
-                on:scroll=on_scroll
             >
                 {body}
             </div>
@@ -170,7 +191,6 @@ struct Line {
 }
 
 fn lines(text: &str, found: &[Found]) -> Vec<Line> {
-    let slice = |start: usize, end: usize| text.get(start..end).unwrap_or("").to_string();
     let mut out = Vec::new();
     for e in found {
         let extra = extra(e);
@@ -179,7 +199,7 @@ fn lines(text: &str, found: &[Found]) -> Vec<Line> {
             start: e.start,
             component: None,
             kind: kind_name(e.kind).to_string(),
-            text: slice(e.start, e.end),
+            text: covered(text, e.start, e.end),
             range: format!("{}..{}", e.start, e.end),
             extra,
         });
@@ -192,7 +212,7 @@ fn lines(text: &str, found: &[Found]) -> Vec<Line> {
                 start: e.start,
                 component: Some(k),
                 kind: c.label.clone(),
-                text: slice(c.start, c.end),
+                text: covered(text, c.start, c.end),
                 range: format!("{}..{}", c.start, c.end),
                 extra: String::new(),
             });
@@ -235,38 +255,26 @@ fn written(shown: Memo<Option<Shown>>, state: DemoState) -> impl IntoView {
                 .unwrap_or_default()
         })
     });
-    let visible_lines = move || {
-        let reached = state.reached.get();
-        all_lines.with(|l| {
-            l.iter()
-                .filter(|l| l.start < reached)
-                .cloned()
-                .collect::<Vec<_>>()
-        })
-    };
-    let visible_objects = move || {
-        let reached = state.reached.get();
-        all_objects.with(|o| {
-            o.iter()
-                .filter(|o| o.start < reached)
-                .cloned()
-                .collect::<Vec<_>>()
-        })
-    };
+    let visible_lines =
+        move || all_lines.with(|l| written_so_far(l, |l: &Line| l.start, state.reached.get()));
+    let visible_objects =
+        move || all_objects.with(|o| written_so_far(o, |o: &Object| o.start, state.reached.get()));
     let first = Memo::new(move |_| {
         let reached = state.reached.get();
         all_objects.with(|o| o.iter().find(|o| o.start < reached).map(|o| o.body.clone()))
     });
     view! {
-        <div class="rows" hidden=move || state.json.get()>
+        <div class="rows" hidden=move || state.view.get() != View::List>
             <For each=visible_lines key=|l| l.key.clone() children=move |l| list_row(l, state) />
         </div>
-        <pre class="json" hidden=move || !state.json.get()>
+        <pre class="json" hidden=move || state.view.get() != View::Json>
             {json::OPEN}
             <For
                 each=visible_objects
                 key=|o| o.body.clone()
                 children=move |o| {
+                    let start = o.start;
+                    let (enter, leave) = state.hover(start);
                     let body = o.body.clone();
                     let separator = move || {
                         if first.with(|f| f.as_deref() == Some(body.as_str())) {
@@ -276,7 +284,23 @@ fn written(shown: Memo<Option<Shown>>, state: DemoState) -> impl IntoView {
                         }
                     };
                     view! {
-                        <span class="piece" data-anim="">
+                        <span
+                            class="piece"
+                            class:selected=move || state.is_selected(start)
+                            role="button"
+                            tabindex="0"
+                            data-anim=""
+                            data-out=start.to_string()
+                            on:mouseenter=enter
+                            on:mouseleave=leave
+                            on:click=move |_| state.reveal_in_document(start)
+                            on:keydown=move |ev| {
+                                if ev.key() == "Enter" || ev.key() == " " {
+                                    ev.prevent_default();
+                                    state.reveal_in_document(start);
+                                }
+                            }
+                        >
                             <span class="t-punct">{separator}</span>
                             {highlight::render(highlight::json(&o.body))}
                         </span>
@@ -285,6 +309,9 @@ fn written(shown: Memo<Option<Shown>>, state: DemoState) -> impl IntoView {
             />
             {move || state.done.get().then_some(json::CLOSE)}
         </pre>
+        <div class="cards" hidden=move || state.view.get() != View::Cards>
+            {cards(shown, state)}
+        </div>
     }
 }
 
@@ -292,42 +319,179 @@ fn written(shown: Memo<Option<Shown>>, state: DemoState) -> impl IntoView {
 /// lands a moment after the entity.
 fn list_row(line: Line, state: DemoState) -> impl IntoView {
     let start = line.start;
-    let selected = move || state.selected.get() == Some(start);
-    let delay = line.component.map_or(String::new(), |k| {
-        format!("animation-delay: {}ms", (k + 1) * 25)
-    });
-    match line.component {
-        Some(_) => view! {
-            <button
-                type="button"
-                class="row sub"
-                class:selected=selected
-                data-anim=""
-                style=delay
-                on:click=move |_| state.toggle(start)
-            >
-                <span class="row-kind">{line.kind}</span>
-                <span class="row-text">{line.text}</span>
-                <span class="row-range">{line.range}</span>
-                <span class="row-extra"></span>
-            </button>
+    let (enter, leave) = state.hover(start);
+    let (class, kind_class, delay) = match line.component {
+        Some(k) => (
+            "row sub",
+            "row-kind".to_string(),
+            format!("animation-delay: {}ms", (k + 1) * 25),
+        ),
+        None => ("row", format!("row-kind c-{}", line.kind), String::new()),
+    };
+    view! {
+        <button
+            type="button"
+            class=class
+            class:selected=move || state.is_selected(start)
+            data-out=start.to_string()
+            data-anim=""
+            style=delay
+            on:mouseenter=enter
+            on:mouseleave=leave
+            on:click=move |_| state.reveal_in_document(start)
+        >
+            <span class=kind_class>{line.kind}</span>
+            <span class="row-text">{line.text}</span>
+            <span class="row-range">{line.range}</span>
+            <span class="row-extra">{line.extra}</span>
+        </button>
+    }
+}
+
+/// One contact card as drawn: its title, confidence, flag, and rows, keyed by content so a new
+/// answer redraws only the cards that changed.
+#[derive(Debug, Clone, PartialEq)]
+struct CardView {
+    key: String,
+    /// The card appears when the scan reaches its first entity.
+    first: usize,
+    title: String,
+    percent: String,
+    review: bool,
+    rows: Vec<CardRow>,
+}
+
+/// One member of a contact.
+#[derive(Debug, Clone, PartialEq)]
+struct CardRow {
+    kind: FoundKind,
+    text: String,
+    start: usize,
+    end: usize,
+}
+
+fn card_views(s: &Shown) -> Vec<CardView> {
+    s.contacts
+        .iter()
+        .map(|c| {
+            let members: Vec<&Found> = c.members.iter().filter_map(|&i| s.found.get(i)).collect();
+            let rows: Vec<CardRow> = members
+                .iter()
+                .map(|e| CardRow {
+                    kind: e.kind,
+                    text: covered(&s.text, e.start, e.end),
+                    start: e.start,
+                    end: e.end,
+                })
+                .collect();
+            CardView {
+                key: format!("{rows:?}{}{}", c.confidence, c.review_recommended),
+                first: members.iter().map(|e| e.start).min().unwrap_or(0),
+                title: rows.first().map(|r| r.text.clone()).unwrap_or_default(),
+                percent: format!("{:.0}%", c.confidence * 100.0),
+                review: c.review_recommended,
+                rows,
+            }
+        })
+        .collect()
+}
+
+/// The contacts the scan has reached, one card each, updated in place; once the scan is done,
+/// the entities no contact took, as chips.
+fn cards(shown: Memo<Option<Shown>>, state: DemoState) -> impl IntoView {
+    let all = Memo::new(move |_| shown.with(|s| s.as_ref().map(card_views).unwrap_or_default()));
+    let visible =
+        move || all.with(|c| written_so_far(c, |c: &CardView| c.first, state.reached.get()));
+    let chips = move || {
+        if !state.done.get() {
+            return None;
         }
-        .into_any(),
-        None => view! {
-            <button
-                type="button"
-                class="row"
-                class:selected=selected
-                aria-pressed=move || selected().to_string()
-                data-anim=""
-                on:click=move |_| state.toggle(start)
-            >
-                <span class=format!("row-kind c-{}", line.kind)>{line.kind.clone()}</span>
-                <span class="row-text">{line.text}</span>
-                <span class="row-range">{line.range}</span>
-                <span class="row-extra">{line.extra}</span>
-            </button>
-        }
-        .into_any(),
+        shown.with(|s| {
+            let s = s.as_ref()?;
+            let loose: Vec<&Found> = s
+                .unassigned
+                .iter()
+                .filter_map(|&i| s.found.get(i))
+                .collect();
+            let none = s
+                .contacts
+                .is_empty()
+                .then(|| view! { <p class="waiting">"no contacts"</p> });
+            let list = (!loose.is_empty()).then(|| {
+                view! {
+                    <div class="unassigned">
+                        <span class="control-label">"unassigned"</span>
+                        <div class="chips">
+                            {loose
+                                .into_iter()
+                                .map(|e| chip(covered(&s.text, e.start, e.end), e.kind, e.start, state))
+                                .collect_view()}
+                        </div>
+                    </div>
+                }
+            });
+            Some(view! { {none} {list} })
+        })
+    };
+    view! {
+        <For each=visible key=|c| c.key.clone() children=move |c| card(c, state) />
+        {chips}
+    }
+}
+
+fn card(c: CardView, state: DemoState) -> impl IntoView {
+    let rows = c
+        .rows
+        .into_iter()
+        .map(|row| {
+            let start = row.start;
+            let (enter, leave) = state.hover(start);
+            view! {
+                <button
+                    type="button"
+                    class="row card-row"
+                    class:selected=move || state.is_selected(start)
+                    data-out=start.to_string()
+                    on:mouseenter=enter
+                    on:mouseleave=leave
+                    on:click=move |_| state.reveal_in_document(start)
+                >
+                    <span class=format!("row-kind c-{}", kind_name(row.kind))>
+                        {kind_name(row.kind)}
+                    </span>
+                    <span class="row-text">{row.text}</span>
+                    <span class="row-range">{format!("{start}..{}", row.end)}</span>
+                </button>
+            }
+        })
+        .collect_view();
+    view! {
+        <article class="card" data-anim="">
+            <header class="card-head">
+                <span class="card-title">{c.title}</span>
+                <span class="card-meta">
+                    {c.percent}
+                    {c.review.then(|| view! { <span class="badge">"review"</span> })}
+                </span>
+            </header>
+            {rows}
+        </article>
+    }
+}
+
+fn chip(text: String, kind: FoundKind, start: usize, state: DemoState) -> impl IntoView {
+    let (enter, leave) = state.hover(start);
+    view! {
+        <button
+            type="button"
+            class=format!("chip k-{}", kind_name(kind))
+            class:selected=move || state.is_selected(start)
+            data-out=start.to_string()
+            on:mouseenter=enter
+            on:mouseleave=leave
+            on:click=move |_| state.reveal_in_document(start)
+        >
+            {text}
+        </button>
     }
 }

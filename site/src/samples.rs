@@ -1,11 +1,16 @@
-//! The demo documents. Everything highlighted in them is found by `detect` at run time; the
-//! contact details are reserved for fiction or documentation.
+//! The demo documents. Everything highlighted in them is found by `extract_contacts` at run
+//! time; the contact details are reserved for fiction or documentation.
 
 /// One demo document.
 pub(crate) struct Sample {
     pub(crate) name: &'static str,
     pub(crate) file: &'static str,
-    /// Region for phone numbers written without a country code.
+    /// The region the document is written in. The demo leaves the library to infer it; the
+    /// tests check that inference finds what this hint finds.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "only the tests read the hint; the demo infers it")
+    )]
     pub(crate) country_hint: &'static str,
     pub(crate) text: &'static str,
 }
@@ -163,21 +168,25 @@ mod tests {
     use super::*;
     use tessera::{Config, Kind, Query, Tessera};
 
-    fn rules_output(sample: &Sample) -> Vec<(String, String)> {
-        let rules = Tessera::load(
+    /// The library with the rules only, which need no bundle.
+    fn rules() -> Tessera {
+        Tessera::load(
             &[],
             Config {
                 kinds: Kind::Email | Kind::Phone,
                 expected_checksum: None,
             },
         )
-        .unwrap();
+        .unwrap()
+    }
+
+    fn rules_output(sample: &Sample) -> Vec<(String, String)> {
         let hint = [sample.country_hint];
         let query = Query {
             country_hint: &hint,
             ..Query::default()
         };
-        rules
+        rules()
             .detect(sample.text, &query)
             .unwrap()
             .iter()
@@ -226,6 +235,27 @@ mod tests {
                 .map(|(k, t)| (k.to_string(), t.to_string()))
                 .collect();
             assert_eq!(rules_output(sample), want, "{}", sample.name);
+        }
+    }
+
+    /// The demo reads regions from each document, so no sample may need its hint.
+    #[test]
+    fn inferred_regions_find_what_the_hint_finds() {
+        let rules = rules();
+        for sample in SAMPLES {
+            let found = |hint: &[&str]| -> Vec<(usize, usize, Option<String>)> {
+                let query = Query {
+                    country_hint: hint,
+                    ..Query::default()
+                };
+                rules
+                    .detect(sample.text, &query)
+                    .unwrap()
+                    .into_iter()
+                    .map(|e| (e.start, e.end, e.normalized))
+                    .collect()
+            };
+            assert_eq!(found(&[]), found(&[sample.country_hint]), "{}", sample.name);
         }
     }
 

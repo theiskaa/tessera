@@ -8,6 +8,7 @@ mod highlight;
 mod json;
 mod output;
 mod parse;
+mod selection;
 mod stream;
 
 use gloo_worker::{Spawnable, WorkerBridge};
@@ -17,7 +18,6 @@ use leptos::task::spawn_local;
 use wasm_bindgen::{JsCast, JsValue};
 
 use crate::inference::Inference;
-use crate::protocol::FoundKind;
 use crate::samples::SAMPLES;
 use crate::stats;
 use demo::{Demo, DemoState, Failure};
@@ -42,17 +42,6 @@ const found = await tessera.detect(text, { countryHint: ['GB'] })
 
 const address = await tessera.parseAddress('Flat 4, 221B Baker Street, London NW1 6XE')
 // offsets are UTF-16 code units";
-
-/// How the headline names each kind.
-fn plural(kind: FoundKind) -> &'static str {
-    match kind {
-        FoundKind::Person => "people",
-        FoundKind::Org => "organizations",
-        FoundKind::Address => "addresses",
-        FoundKind::Phone => "phones",
-        FoundKind::Email => "emails",
-    }
-}
 
 /// The whole page. Spawns the worker and sends it the first document; the worker answers once
 /// its bundle is loaded.
@@ -158,34 +147,9 @@ fn Header() -> impl IntoView {
 
 #[component]
 fn Intro() -> impl IntoView {
-    let last = demo::KINDS.len() - 1;
-    let kinds = demo::KINDS
-        .iter()
-        .enumerate()
-        .map(|(i, &kind)| {
-            let joint = match i {
-                0 => "",
-                i if i == last => " and ",
-                _ => ", ",
-            };
-            view! {
-                {joint}
-                <span
-                    class=format!("hit k-{}", json::kind_name(kind))
-                    data-anim=""
-                    style=format!("--i: {i}")
-                >
-                    {plural(kind)}
-                </span>
-            }
-        })
-        .collect_view();
     view! {
         <section class="intro">
-            <div>
-                <h1>"Find " {kinds} " in text"</h1>
-                <p class="subtitle">"in the browser, with exact spans"</p>
-            </div>
+            <h1>"A tiny model that finds contact details in text"</h1>
             <pre class="code">{highlight::render(highlight::javascript(SNIPPET))}</pre>
             <p>
                 "Emails and phone numbers are found by validating rules, people, organizations and addresses by an int8 network, and each address is split into its parts by a second one, all in WebAssembly. Offsets are UTF-8 bytes from Rust and UTF-16 code units from JavaScript."

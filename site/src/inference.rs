@@ -4,7 +4,7 @@
 use gloo_worker::{HandlerId, Worker, WorkerScope};
 use tessera::{Config, Kind, Query, Tessera};
 
-use crate::protocol::{Found, Request, Response};
+use crate::protocol::{Analysis, Found, Request, Response};
 
 /// Resolved against the worker script, which Trunk puts beside the bundle.
 const BUNDLE_URL: &str = "tessera-v1.safetensors";
@@ -66,7 +66,7 @@ fn answer(tessera: &Tessera, request: Request) -> Response {
                 .map(|entity| Found::from_entity(&entity))
                 .map_err(|e| format!("{e:?}: {e}")),
         },
-        Request::Detect {
+        Request::Analyze {
             id,
             text,
             country_hint,
@@ -76,11 +76,11 @@ fn answer(tessera: &Tessera, request: Request) -> Response {
                 country_hint: &hints,
                 ..Query::default()
             };
-            Response::Detected {
+            Response::Analyzed {
                 id,
                 result: tessera
-                    .detect(&text, &query)
-                    .map(|found| found.iter().map(Found::from_entity).collect())
+                    .extract_contacts(&text, &query)
+                    .map(|x| Analysis::from_extraction(&x))
                     .map_err(|e| format!("{e:?}: {e}")),
             }
         }

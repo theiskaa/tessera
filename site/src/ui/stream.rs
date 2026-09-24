@@ -1,6 +1,7 @@
 //! When the output is written during a scan. Everything runs on one clock: the scan line crosses
-//! the document in a set number of seconds, and an entity's rows and JSON object are written the
-//! moment the line reaches the entity's first byte.
+//! the scanned span (the document, or the section the reader selected) in a set number of
+//! seconds, and an entity's rows and JSON object are written the moment the line reaches the
+//! entity's first byte.
 
 use crate::protocol::Found;
 
@@ -11,9 +12,15 @@ pub(crate) const QUICK_SCAN: f64 = 0.6;
 /// Seconds the last highlight takes to settle after the line reaches the end.
 pub(crate) const SETTLE: f64 = 0.4;
 
-/// When a `scan`-second scan line reaches byte `at` of a `len`-byte document, in seconds.
-pub(crate) fn reach(at: usize, len: usize, scan: f64) -> f64 {
-    at as f64 / len.max(1) as f64 * scan
+/// How far through the bytes `span` byte `at` lies, from 0 at its start to 1 at its end.
+pub(crate) fn share(at: usize, span: (usize, usize)) -> f64 {
+    let through = at.saturating_sub(span.0) as f64 / span.1.saturating_sub(span.0).max(1) as f64;
+    through.min(1.0)
+}
+
+/// When a `scan`-second scan line over the bytes `span` reaches byte `at`, in seconds.
+pub(crate) fn reach(at: usize, span: (usize, usize), scan: f64) -> f64 {
+    share(at, span) * scan
 }
 
 /// Something the scan writes at a moment.
@@ -25,12 +32,12 @@ pub(crate) enum Step {
     Done,
 }
 
-/// Every write of a `scan`-second scan over a `len`-byte document, with its time in seconds, in
-/// time order. `Done` comes with the last write.
-pub(crate) fn schedule(found: &[Found], len: usize, scan: f64) -> Vec<(f64, Step)> {
+/// Every write of a `scan`-second scan over the bytes `span`, with its time in seconds, in time
+/// order. `Done` comes with the last write.
+pub(crate) fn schedule(found: &[Found], span: (usize, usize), scan: f64) -> Vec<(f64, Step)> {
     let mut steps: Vec<(f64, Step)> = found
         .iter()
-        .map(|e| (reach(e.start, len, scan), Step::Reach(e.start + 1)))
+        .map(|e| (reach(e.start, span, scan), Step::Reach(e.start + 1)))
         .collect();
     steps.sort_by(|a, b| a.0.total_cmp(&b.0));
     let last = steps.last().map_or(0.0, |s| s.0);
@@ -59,15 +66,22 @@ mod tests {
 
     #[test]
     fn each_entity_is_written_when_the_line_reaches_it() {
-        let steps = schedule(&[found(10), found(50)], 100, SCAN);
+        let steps = schedule(&[found(10), found(50)], (0, 100), SCAN);
         assert_eq!(
             steps,
             vec![
-                (reach(10, 100, SCAN), Step::Reach(11)),
-                (reach(50, 100, SCAN), Step::Reach(51)),
-                (reach(50, 100, SCAN), Step::Done),
+                (reach(10, (0, 100), SCAN), Step::Reach(11)),
+                (reach(50, (0, 100), SCAN), Step::Reach(51)),
+                (reach(50, (0, 100), SCAN), Step::Done),
             ]
         );
-        assert_eq!(schedule(&[], 100, SCAN), vec![(0.0, Step::Done)]);
+        assert_eq!(schedule(&[], (0, 100), SCAN), vec![(0.0, Step::Done)]);
+    }
+
+    #[test]
+    fn a_section_scan_runs_over_the_section_only() {
+        assert_eq!(reach(40, (40, 60), SCAN), 0.0);
+        assert_eq!(reach(60, (40, 60), SCAN), SCAN);
+        assert_eq!(reach(50, (40, 60), SCAN), SCAN / 2.0);
     }
 }

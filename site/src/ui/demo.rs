@@ -1,25 +1,29 @@
 //! The live demo: a document whose people, organizations, addresses, emails, and phone numbers
-//! light up as a scan line passes over it, while the list or JSON of what the library returned
-//! is written beside it on the same clock. The reader can edit the document and change the phone
-//! region. Offsets are UTF-8 bytes into the document.
+//! light up as a scan line passes over it, while what the library returned is written beside it
+//! on the same clock, as JSON, a list, or contact cards. The reader can edit the document,
+//! select part of it to analyze that part alone, and change the phone region. Offsets are UTF-8
+//! bytes into the document.
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use gloo_worker::WorkerBridge;
+use leptos::ev;
 use leptos::html::Div;
 use leptos::prelude::*;
 use web_sys::{
-    HtmlDivElement, ScrollBehavior, ScrollIntoViewOptions, ScrollLogicalPosition, ScrollToOptions,
+    HtmlDivElement, MouseEvent, ScrollBehavior, ScrollIntoViewOptions, ScrollLogicalPosition,
+    ScrollToOptions,
 };
 
-use super::document::DocumentPane;
+use super::document::{self, DocumentPane};
 use super::json::kind_name;
 use super::output::OutputPane;
 use super::parse::ParseState;
+use super::selection;
 use super::stream::{self, Step};
 use crate::inference::Inference;
-use crate::protocol::{Found, FoundKind, Request, Response};
+use crate::protocol::{Card, Found, FoundKind, Request, Response};
 use crate::samples::SAMPLES;
 
 /// Longest document the demo analyzes, in bytes.
@@ -27,9 +31,12 @@ pub(crate) const MAX_TEXT: usize = 20 * 1024;
 /// Quiet time after the last keystroke before an edited document is analyzed.
 const DEBOUNCE: Duration = Duration::from_millis(300);
 
-/// The regions the phone tables cover, offered as the country hint.
-pub(crate) const HINTS: [&str; 11] = [
-    "GB", "DE", "US", "GE", "JP", "AT", "BE", "CH", "IE", "NL", "CA",
+/// The hint that sends none, so the library reads the region from the document itself.
+pub(crate) const AUTO: &str = "auto";
+
+/// `AUTO`, then the regions the phone tables cover, offered as the country hint.
+pub(crate) const HINTS: [&str; 12] = [
+    AUTO, "GB", "DE", "US", "GE", "JP", "AT", "BE", "CH", "IE", "NL", "CA",
 ];
 
 /// What the library returned for one text, kept with that text so the output never mixes a
@@ -37,7 +44,43 @@ pub(crate) const HINTS: [&str; 11] = [
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Shown {
     pub(crate) text: Arc<str>,
+    /// The bytes of `text` that were analyzed, when the reader selected a section.
+    pub(crate) section: Option<(usize, usize)>,
     pub(crate) found: Arc<Vec<Found>>,
+    pub(crate) contacts: Arc<Vec<Card>>,
+    pub(crate) unassigned: Arc<Vec<usize>>,
+}
+
+impl Shown {
+    /// The bytes the scan crosses: the section, or the whole text.
+    pub(crate) fn span(&self) -> (usize, usize) {
+        self.section.unwrap_or((0, self.text.len()))
+    }
+
+    /// How many bytes the scan crosses.
+    pub(crate) fn span_len(&self) -> usize {
+        let (start, end) = self.span();
+        end - start
+    }
+}
+
+/// An analysis request: its id, the document it was for, and the section of it that was sent.
+#[derive(Debug, Clone)]
+struct Sent {
+    id: u64,
+    text: Arc<str>,
+    section: Option<(usize, usize)>,
+}
+
+/// How the output pane shows the answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum View {
+    /// `detect`'s entities as the CLI prints them.
+    Json,
+    /// `detect`'s entities one per row, address components under their address.
+    List,
+    /// `extract_contacts`'s contacts, and what it left unassigned.
+    Cards,
 }
 
 /// Why nothing can be analyzed.
@@ -56,6 +99,8 @@ pub(crate) struct DemoState {
     /// The document as it is now, edited or not.
     pub(crate) text: RwSignal<Arc<str>>,
     pub(crate) hint: RwSignal<String>,
+    /// The selected bytes the next analysis covers; `None` analyzes the whole document.
+    pub(crate) section: RwSignal<Option<(usize, usize)>>,
     pub(crate) editing: RwSignal<bool>,
     /// The newest answer to a request still wanted.
     pub(crate) answer: RwSignal<Option<Result<Shown, String>>>,
@@ -71,18 +116,22 @@ pub(crate) struct DemoState {
     /// Entities starting before this byte are written to the output.
     pub(crate) reached: RwSignal<usize>,
     pub(crate) done: RwSignal<bool>,
-    /// The entity whose row was clicked, by its first byte.
+    /// The entity lit in both panes, by its first byte: the one under the pointer, else the
+    /// one last clicked.
     pub(crate) selected: RwSignal<Option<usize>>,
-    pub(crate) json: RwSignal<bool>,
-    /// Whether the output pane keeps its newest line in view; the reader scrolling turns it off.
-    pub(crate) follow: StoredValue<bool>,
+    /// The entity last clicked, which the selection returns to when the pointer leaves another.
+    pinned: StoredValue<Option<usize>>,
+    /// Whether the pointer went down in the document, so letting go anywhere takes the text it
+    /// dragged over as a section.
+    dragging: StoredValue<bool>,
+    pub(crate) view: RwSignal<View>,
     /// The scrolling boxes of the document and output panes.
     pub(crate) document: NodeRef<Div>,
     pub(crate) output: NodeRef<Div>,
     /// The "parse an address" box, whose answers come through the same worker.
     pub(crate) parse: ParseState,
-    /// Id and text of the newest analysis; answers to older ones are dropped.
-    latest: StoredValue<(u64, Arc<str>)>,
+    /// The newest analysis; answers to older ones are dropped.
+    latest: StoredValue<Sent>,
     /// Seconds of the scan that plays when the newest analysis is answered.
     next_scan: StoredValue<f64>,
     timers: StoredValue<Vec<TimeoutHandle>, LocalStorage>,
@@ -95,7 +144,8 @@ impl DemoState {
         DemoState {
             sample: RwSignal::new(0),
             text: RwSignal::new(Arc::from(SAMPLES[0].text)),
-            hint: RwSignal::new(SAMPLES[0].country_hint.to_string()),
+            hint: RwSignal::new(AUTO.to_string()),
+            section: RwSignal::new(None),
             editing: RwSignal::new(false),
             answer: RwSignal::new(None),
             failure: RwSignal::new(None),
@@ -106,12 +156,17 @@ impl DemoState {
             reached: RwSignal::new(0),
             done: RwSignal::new(false),
             selected: RwSignal::new(None),
-            json: RwSignal::new(true),
-            follow: StoredValue::new(true),
+            pinned: StoredValue::new(None),
+            dragging: StoredValue::new(false),
+            view: RwSignal::new(View::Json),
             document: NodeRef::new(),
             output: NodeRef::new(),
             parse: ParseState::new(),
-            latest: StoredValue::new((0, Arc::from(""))),
+            latest: StoredValue::new(Sent {
+                id: 0,
+                text: Arc::from(""),
+                section: None,
+            }),
             next_scan: StoredValue::new(stream::SCAN),
             timers: StoredValue::new_local(Vec::new()),
             debounce: StoredValue::new_local(None),
@@ -137,14 +192,28 @@ impl DemoState {
     pub(crate) fn receive(self, response: Response) {
         match response {
             Response::LoadFailed(message) => self.fail(Failure::Model(message)),
-            Response::Detected { id, result } => {
-                let (latest, text) = self.latest.get_value();
+            Response::Analyzed { id, result } => {
+                let Sent {
+                    id: latest,
+                    text,
+                    section,
+                } = self.latest.get_value();
                 if id != latest {
                     return;
                 }
-                let shown = result.map(|found| Shown {
+                let base = section.map_or(0, |(start, _)| start);
+                let shown = result.map(|analysis| Shown {
                     text,
-                    found: Arc::new(found),
+                    section,
+                    found: Arc::new(
+                        analysis
+                            .found
+                            .into_iter()
+                            .map(|f| f.shifted(base))
+                            .collect(),
+                    ),
+                    contacts: Arc::new(analysis.contacts),
+                    unassigned: Arc::new(analysis.unassigned),
                 });
                 self.answer.set(Some(shown));
                 self.replay_with(self.next_scan.get_value());
@@ -165,17 +234,18 @@ impl DemoState {
         let Some(sample) = SAMPLES.get(index) else {
             return;
         };
-        self.selected.set(None);
+        self.clear_selection();
         self.sample.set(index);
         self.editing.set(false);
         self.too_long.set(false);
         self.text.set(Arc::from(sample.text));
-        self.hint.set(sample.country_hint.to_string());
+        self.hint.set(AUTO.to_string());
+        self.section.set(None);
         self.answer.set(None);
         self.analyze(stream::SCAN);
     }
 
-    /// Restores the current sample's text and hint.
+    /// Restores the current sample's text, with the region read from it.
     pub(crate) fn reset(self) {
         self.pick(self.sample.get_untracked());
     }
@@ -187,20 +257,22 @@ impl DemoState {
             .is_some_and(|s| *self.text.get() != *s.text)
     }
 
-    /// Switches between reading and editing. Leaving edit mode analyzes any pending edit and
-    /// scans the result in full.
+    /// Switches between reading and editing. Editing drops any selected section; leaving edit
+    /// mode analyzes any pending edit, or the whole document when a section was analyzed last,
+    /// and scans the result in full.
     pub(crate) fn toggle_editing(self) {
         let editing = !self.editing.get_untracked();
-        self.selected.set(None);
+        self.clear_selection();
         self.editing.set(editing);
         if editing {
+            self.section.set(None);
             return;
         }
         let text = self.text.get_untracked();
         let pending = self.debounce.with_value(Option::is_some);
-        let (_, sent) = self.latest.get_value();
+        let sent = self.latest.get_value();
         let answered = matches!(self.answer.get_untracked(), Some(Ok(ref s)) if s.text == text);
-        if pending || *sent != *text {
+        if pending || *sent.text != *text || sent.section.is_some() {
             self.analyze(stream::SCAN);
         } else if answered {
             self.replay();
@@ -213,6 +285,7 @@ impl DemoState {
     /// Takes an edit, and analyzes it once typing pauses.
     pub(crate) fn input(self, value: String) {
         self.text.set(Arc::from(value));
+        self.section.set(None);
         self.cancel_debounce();
         let handle = set_timeout_with_handle(
             move || {
@@ -236,15 +309,69 @@ impl DemoState {
         }
     }
 
-    /// Sends the document as it is now. A text over the size limit is not sent, and any answer
-    /// still coming for an older text is dropped either way.
+    /// The pointer went down in the document. A double or triple click selects a word or a
+    /// line to read, not a section to analyze, so only a single press starts a drag.
+    pub(crate) fn press(self, ev: &MouseEvent) {
+        let single = ev.detail() <= 1 && ev.button() == 0;
+        self.dragging
+            .set_value(single && !self.editing.get_untracked());
+    }
+
+    /// The pointer came up, anywhere on the page: after a drag in the document, the text it
+    /// selected is analyzed alone. Its highlights and output replace the whole document's, and
+    /// its scan covers only its lines.
+    fn release(self, ev: &MouseEvent) {
+        if !self
+            .dragging
+            .try_update_value(std::mem::take)
+            .unwrap_or(false)
+            || ev.detail() > 1
+        {
+            return;
+        }
+        let Some(doc) = self
+            .document
+            .get_untracked()
+            .and_then(|pane| pane.query_selector(".doc").ok().flatten())
+        else {
+            return;
+        };
+        let text = self.text.get_untracked();
+        let Some((start, end)) = selection::take(&doc, &text) else {
+            return;
+        };
+        let Some(section) = selection::section(&text, start, end) else {
+            return;
+        };
+        self.section.set(section);
+        self.clear_selection();
+        self.analyze(stream::SCAN);
+    }
+
+    /// Goes back from a section to the whole document.
+    pub(crate) fn whole_document(self) {
+        self.section.set(None);
+        self.clear_selection();
+        self.analyze(stream::SCAN);
+    }
+
+    /// Sends the document, or its selected section, as it is now. A text over the size limit
+    /// is not sent, and any answer still coming for an older text is dropped either way.
     fn analyze(self, scan: f64) {
         self.cancel_debounce();
         let text = self.text.get_untracked();
-        let (id, _) = self.latest.get_value();
-        let id = id.wrapping_add(1);
-        self.latest.set_value((id, text.clone()));
-        let too_long = text.len() > MAX_TEXT;
+        let section = self
+            .section
+            .get_untracked()
+            .filter(|&(start, end)| text.get(start..end).is_some());
+        let sent = section.map_or(&*text, |(start, end)| &text[start..end]);
+        let id = self.latest.with_value(|s| s.id).wrapping_add(1);
+        self.latest.set_value(Sent {
+            id,
+            text: text.clone(),
+            section,
+        });
+        let too_long = sent.len() > MAX_TEXT;
         if self.too_long.get_untracked() != too_long {
             self.too_long.set(too_long);
         }
@@ -252,10 +379,11 @@ impl DemoState {
             return;
         }
         self.next_scan.set_value(scan);
-        self.send(Request::Detect {
+        let hint = self.hint.get_untracked();
+        self.send(Request::Analyze {
             id,
-            text: text.to_string(),
-            country_hint: vec![self.hint.get_untracked()],
+            text: sent.to_string(),
+            country_hint: if hint == AUTO { Vec::new() } else { vec![hint] },
         });
     }
 
@@ -274,37 +402,46 @@ impl DemoState {
         });
         self.scan.set(scan);
         self.run.update(|r| *r = r.wrapping_add(1));
-        self.selected.set(None);
-        self.follow.set_value(true);
-        let top = ScrollToOptions::new();
-        top.set_top(0.0);
-        top.set_behavior(ScrollBehavior::Instant);
-        for pane in [self.document, self.output] {
-            if let Some(pane) = pane.get_untracked() {
-                pane.scroll_to_with_scroll_to_options(&top);
-            }
-        }
+        self.clear_selection();
         self.reached.set(0);
         self.done.set(false);
         let Some(Ok(shown)) = self.answer.get_untracked() else {
             self.scanning.set(false);
             return;
         };
+        let top = ScrollToOptions::new();
+        top.set_top(0.0);
+        top.set_behavior(ScrollBehavior::Instant);
+        // A section is scanned where the reader selected it, so the document stays put.
+        let panes = if shown.section.is_some() {
+            vec![self.output]
+        } else {
+            vec![self.document, self.output]
+        };
+        for pane in panes {
+            if let Some(pane) = pane.get_untracked() {
+                pane.scroll_to_with_scroll_to_options(&top);
+            }
+        }
+        let pane = self.document;
+        request_animation_frame(move || {
+            if let Some(pane) = pane.get_untracked() {
+                document::fit_scan_line(&pane);
+            }
+        });
         if reduced_motion() {
             self.scanning.set(false);
-            self.follow.set_value(false);
             self.write(Step::Done);
             return;
         }
         self.scanning.set(true);
-        let mut handles: Vec<TimeoutHandle> =
-            stream::schedule(&shown.found, shown.text.len(), scan)
-                .into_iter()
-                .filter_map(|(at, step)| {
-                    let wait = Duration::from_secs_f64(at.max(0.0));
-                    set_timeout_with_handle(move || self.write(step), wait).ok()
-                })
-                .collect();
+        let mut handles: Vec<TimeoutHandle> = stream::schedule(&shown.found, shown.span(), scan)
+            .into_iter()
+            .filter_map(|(at, step)| {
+                let wait = Duration::from_secs_f64(at.max(0.0));
+                set_timeout_with_handle(move || self.write(step), wait).ok()
+            })
+            .collect();
         let settled = Duration::from_secs_f64(scan + stream::SETTLE);
         handles.extend(set_timeout_with_handle(move || self.scanning.set(false), settled).ok());
         self.timers.set_value(handles);
@@ -318,26 +455,69 @@ impl DemoState {
                 self.done.set(true);
             }
         }
-        if self.follow.get_value() {
-            let output = self.output;
-            request_animation_frame(move || {
-                if let Some(pane) = output.get_untracked() {
-                    let bottom = ScrollToOptions::new();
-                    bottom.set_top(f64::from(pane.scroll_height()));
-                    pane.scroll_to_with_scroll_to_options(&bottom);
+    }
+
+    /// Clears what is lit and what was clicked.
+    fn clear_selection(self) {
+        self.pinned.set_value(None);
+        self.selected.set(None);
+    }
+
+    /// Whether the entity starting at byte `start` is lit; tracks the selection.
+    pub(crate) fn is_selected(self, start: usize) -> bool {
+        self.selected.get() == Some(start)
+    }
+
+    /// Handlers that light the entity starting at byte `start` while the pointer is over its
+    /// highlight, line, object, card row, or chip, and on leaving return to the entity last
+    /// clicked. An entity the scan has not reached yet is still unlit, so hovering it does
+    /// nothing.
+    pub(crate) fn hover(
+        self,
+        start: usize,
+    ) -> (impl Fn(MouseEvent) + Copy, impl Fn(MouseEvent) + Copy) {
+        (
+            move |_| {
+                if start < self.reached.get_untracked() {
+                    self.selected.set(Some(start));
                 }
-            });
+            },
+            move |_| {
+                if self.selected.get_untracked() == Some(start) {
+                    self.selected.set(self.pinned.get_value());
+                }
+            },
+        )
+    }
+
+    /// Lights the entity starting at byte `start` until another is clicked, and brings its
+    /// highlight into view in the document pane: what clicking its result does.
+    pub(crate) fn reveal_in_document(self, start: usize) {
+        self.pin(start);
+        if let Some(pane) = self.document.get_untracked() {
+            reveal(&pane, &format!("[data-entity=\"{start}\"]"));
         }
     }
 
-    /// Selects the entity starting at byte `start`, or clears the selection when it is already
-    /// selected, and brings a newly selected entity into view in the document pane.
-    pub(crate) fn toggle(self, start: usize) {
-        let selecting = self.selected.get_untracked() != Some(start);
-        self.selected.set(selecting.then_some(start));
-        if selecting && let Some(pane) = self.document.get_untracked() {
-            reveal(&pane, start);
+    /// The same from the document's side: brings the entity's line, object, or card row into
+    /// view in the output pane, once the scan has written it there.
+    pub(crate) fn reveal_in_output(self, start: usize) {
+        if start >= self.reached.get_untracked() {
+            return;
         }
+        self.pin(start);
+        if let Some(pane) = self.output.get_untracked() {
+            // Every view stays in the page; only the shown one has boxes to scroll to.
+            let shown = [".rows", ".json", ".cards"]
+                .map(|view| format!("{view}:not([hidden]) [data-out=\"{start}\"]"))
+                .join(", ");
+            reveal(&pane, &shown);
+        }
+    }
+
+    fn pin(self, start: usize) {
+        self.pinned.set_value(Some(start));
+        self.selected.set(Some(start));
     }
 }
 
@@ -349,11 +529,11 @@ fn reduced_motion() -> bool {
         .is_some_and(|query| query.matches())
 }
 
-/// Scrolls the document pane so the entity starting at byte `start` sits in its middle, then
-/// brings the pane itself into view if it is off screen, as on a phone where the panes stack.
+/// Scrolls `pane` so the first element matching `selector` sits in its middle, then brings
+/// the pane itself into view if it is off screen, as on a phone where the panes stack.
 /// Whether either scroll is smooth is left to CSS, which turns it off for reduced motion.
-fn reveal(pane: &HtmlDivElement, start: usize) {
-    let Ok(Some(span)) = pane.query_selector(&format!("[data-entity=\"{start}\"]")) else {
+fn reveal(pane: &HtmlDivElement, selector: &str) {
+    let Ok(Some(span)) = pane.query_selector(selector) else {
         return;
     };
     let frame = pane.get_bounding_client_rect();
@@ -369,7 +549,7 @@ fn reveal(pane: &HtmlDivElement, start: usize) {
 }
 
 /// Legend order.
-pub(crate) const KINDS: [FoundKind; 5] = [
+const KINDS: [FoundKind; 5] = [
     FoundKind::Person,
     FoundKind::Org,
     FoundKind::Address,
@@ -380,6 +560,9 @@ pub(crate) const KINDS: [FoundKind; 5] = [
 /// The demo section.
 #[component]
 pub(crate) fn Demo(state: DemoState) -> impl IntoView {
+    // A drag that starts in the document may end anywhere on the page.
+    let release = window_event_listener(ev::mouseup, move |ev| state.release(&ev));
+    on_cleanup(move || release.remove());
     let phase = move || {
         let phase = match (state.failure.get(), state.answer.get()) {
             (_, Some(Ok(_))) if state.run.get().is_multiple_of(2) => "panes run-a",
@@ -421,24 +604,22 @@ pub(crate) fn Demo(state: DemoState) -> impl IntoView {
                 </div>
                 <div class="control-group">
                     <span class="control-label">"output"</span>
-                    <button
-                        type="button"
-                        class="toggle"
-                        class:on=move || state.json.get()
-                        aria-pressed=move || state.json.get().to_string()
-                        on:click=move |_| state.json.set(true)
-                    >
-                        "json"
-                    </button>
-                    <button
-                        type="button"
-                        class="toggle"
-                        class:on=move || !state.json.get()
-                        aria-pressed=move || (!state.json.get()).to_string()
-                        on:click=move |_| state.json.set(false)
-                    >
-                        "list"
-                    </button>
+                    {[(View::Json, "json"), (View::List, "list"), (View::Cards, "contacts")]
+                        .into_iter()
+                        .map(|(view, name)| {
+                            view! {
+                                <button
+                                    type="button"
+                                    class="toggle"
+                                    class:on=move || state.view.get() == view
+                                    aria-pressed=move || (state.view.get() == view).to_string()
+                                    on:click=move |_| state.view.set(view)
+                                >
+                                    {name}
+                                </button>
+                            }
+                        })
+                        .collect_view()}
                 </div>
             </div>
             <div class=phase style=move || format!("--scan: {:.2}s", state.scan.get())>
@@ -474,12 +655,13 @@ pub(crate) fn Demo(state: DemoState) -> impl IntoView {
                         })
                         .collect_view()}
                 </span>
-                <span>"click a row to find it in the document · offsets are UTF-8 bytes"</span>
+                <span>
+                    "select text to analyze just that part · click a result or a highlight to find its match"
+                </span>
             </div>
             <p class="note">
-                "Everything highlighted is "<code>"detect"</code>
-                "'s output for the whole document, run in a web worker in this browser: emails and phones from validating rules, people, organizations and addresses from an int8 network, and each address split into parts by "
-                <code>"parse_address"</code>"."
+                "Everything highlighted is what "<code>"extract_contacts"</code>
+                " returned for the document, or for the part of it you selected, run in a web worker in this browser: emails and phones from validating rules, people, organizations and addresses from an int8 network, and each address split into its parts by a second one. Offsets are UTF-8 bytes."
             </p>
         </section>
     }
