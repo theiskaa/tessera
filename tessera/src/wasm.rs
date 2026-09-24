@@ -525,6 +525,103 @@ fn reject_all(pending: &Pending, err: &JsValue) {
     }
 }
 
+/// Profiling exports for the benchmark page, which loads a build with `wasm,profile` that is
+/// never published. They run inline on an instance created with `worker: false`.
+#[cfg(feature = "profile")]
+#[wasm_bindgen(js_class = Tessera)]
+impl JsTessera {
+    /// `profileStages(text, iterations, now)`: `extractContacts` run `iterations` times after 10
+    /// warmups; `{ median: {...}, p95_total }` in milliseconds per stage. `now` is
+    /// `performance.now.bind(performance)`.
+    #[wasm_bindgen(js_name = profileStages)]
+    pub fn profile_stages(
+        &self,
+        text: &str,
+        iterations: u32,
+        now: &Function,
+    ) -> Result<JsValue, JsValue> {
+        let tessera = self.local()?;
+        profile_runs(iterations, now, |clock| {
+            crate::profile::extract_timed(tessera, text, &Query::default(), clock).map(|(t, _)| t)
+        })
+    }
+
+    /// `profileAddress(text, iterations, now)`: the same for `parseAddress` on one address.
+    #[wasm_bindgen(js_name = profileAddress)]
+    pub fn profile_address(
+        &self,
+        text: &str,
+        iterations: u32,
+        now: &Function,
+    ) -> Result<JsValue, JsValue> {
+        let tessera = self.local()?;
+        profile_runs(iterations, now, |clock| {
+            crate::profile::parse_timed(tessera, text, &Query::default(), clock).map(|(t, _)| t)
+        })
+    }
+
+    /// `memoryBytes()`: the size of this module's linear memory.
+    #[wasm_bindgen(js_name = memoryBytes)]
+    pub fn memory_bytes(&self) -> f64 {
+        wasm_bindgen::memory()
+            .unchecked_into::<js_sys::WebAssembly::Memory>()
+            .buffer()
+            .unchecked_into::<ArrayBuffer>()
+            .byte_length() as f64
+    }
+
+    fn local(&self) -> Result<&Tessera, JsValue> {
+        match &self.backend {
+            Some(Backend::Local(t)) => Ok(t),
+            Some(Backend::Remote(_)) => {
+                Err(TypeError::new("profiling runs inline; create with worker: false").into())
+            }
+            None => Err(disposed()),
+        }
+    }
+}
+
+/// `iterations` runs of `one` after 10 discarded warmups, as `{ median, p95_total }`. A clock
+/// that fails reads as 0, which shows in the report as an obvious anomaly rather than a panic.
+#[cfg(feature = "profile")]
+fn profile_runs(
+    iterations: u32,
+    now: &Function,
+    mut one: impl FnMut(Box<dyn Fn() -> f64>) -> Result<crate::profile::StageTimings, Error>,
+) -> Result<JsValue, JsValue> {
+    let mut runs = Vec::with_capacity(iterations as usize);
+    for i in 0..iterations + 10 {
+        let now = now.clone();
+        let clock = move || {
+            now.call0(&JsValue::NULL)
+                .ok()
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0)
+        };
+        let t = one(Box::new(clock))?;
+        if i >= 10 {
+            runs.push(t);
+        }
+    }
+    let t = crate::profile::median(&runs);
+    let median = Object::new();
+    for (key, value) in [
+        ("tokenize_ms", t.tokenize_ms),
+        ("featurize_ms", t.featurize_ms),
+        ("rules_ms", t.rules_ms),
+        ("detect_ms", t.detect_ms),
+        ("parse_ms", t.parse_ms),
+        ("group_ms", t.group_ms),
+        ("total_ms", t.total_ms),
+    ] {
+        set(&median, key, value);
+    }
+    let out = Object::new();
+    set(&out, "median", median);
+    set(&out, "p95_total", crate::profile::p95_total(&runs));
+    Ok(out.into())
+}
+
 fn disposed() -> JsValue {
     tessera_error("DISPOSED", "this Tessera instance has been disposed", None)
 }

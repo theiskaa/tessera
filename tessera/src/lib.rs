@@ -6,6 +6,17 @@
 //! exclusive. The `wasm` feature converts them to UTF-16 code units at the
 //! binding boundary.
 
+/// `$e`, timed as the profiling stage `$stage` when the `profile` feature is on.
+macro_rules! stage {
+    ($stage:ident, $e:expr) => {{
+        #[cfg(feature = "profile")]
+        let out = crate::profile::stage(crate::profile::Stage::$stage, || $e);
+        #[cfg(not(feature = "profile"))]
+        let out = $e;
+        out
+    }};
+}
+
 mod chunk;
 mod detect;
 mod features;
@@ -14,6 +25,8 @@ mod group;
 pub mod markdown;
 mod model;
 mod policy;
+#[cfg(feature = "profile")]
+pub mod profile;
 mod rules;
 mod token;
 #[cfg(feature = "wasm")]
@@ -599,9 +612,11 @@ impl Tessera {
         mask: Option<&chunk::Mask>,
         linked: Vec<Entity>,
     ) -> Result<Vec<Entity>, Error> {
-        let mut scanned = rules::scan(text, query.country_hint);
-        rules::retain_in_mask(&mut scanned, mask);
-        let rule_entities = rules::merge_links(scanned, linked);
+        let rule_entities = stage!(Rules, {
+            let mut scanned = rules::scan(text, query.country_hint);
+            rules::retain_in_mask(&mut scanned, mask);
+            rules::merge_links(scanned, linked)
+        });
         let mut out: Vec<Entity> = rule_entities
             .iter()
             .filter(|e| self.kinds.contains(e.kind))
@@ -612,7 +627,10 @@ impl Tessera {
             .any(|&k| self.kinds.contains(k))
         {
             let (model, detector) = self.detector()?;
-            out.extend(self.detect_model(text, &rule_entities, model, detector, query, mask)?);
+            out.extend(stage!(
+                Detect,
+                self.detect_model(text, &rule_entities, model, detector, query, mask)
+            )?);
         }
         let mut out = policy::apply(out, query.include_uncertain);
         out.sort_by_key(|e| (e.start, e.end));
@@ -629,8 +647,10 @@ impl Tessera {
     /// organizations has no anchors: its contacts are empty and every entity is unassigned.
     pub fn extract_contacts(&self, text: &str, query: &Query<'_>) -> Result<Extraction, Error> {
         let entities = self.detect(text, query)?;
-        let grouped = group::group(text, entities);
-        Ok(policy::apply_contacts(grouped, query.include_uncertain))
+        Ok(stage!(
+            Group,
+            policy::apply_contacts(group::group(text, entities), query.include_uncertain)
+        ))
     }
 
     /// Split text already known to be an address into components. Offsets are relative to `text`.
@@ -640,7 +660,7 @@ impl Tessera {
     /// confidence 0. Of `query`, only `include_uncertain` applies: `query.format` is ignored,
     /// since the input is one address, not a document.
     pub fn parse_address(&self, text: &str, query: &Query<'_>) -> Result<Entity, Error> {
-        let trace = self.trace(text)?;
+        let trace = stage!(Parse, self.trace(text))?;
         let found = model::bio::components(
             &trace.token_spans,
             &trace
@@ -678,7 +698,7 @@ impl Tessera {
         if text.len() > model::MAX_PARSE_BYTES {
             return Err(Error::InputTooLarge);
         }
-        let tokens = token::tokenize(text);
+        let tokens = stage!(Tokenize, token::tokenize(text));
         let retained = |t: &token::Token| {
             !matches!(
                 t.class,
@@ -689,7 +709,10 @@ impl Tessera {
             return Err(Error::InputTooLarge);
         }
         // The trainer featurizes addresses without a country, so the library must too.
-        let feats = features::featurize(text, &tokens, &[], None, &model.feature_config, None);
+        let feats = stage!(
+            Featurize,
+            features::featurize(text, &tokens, &[], None, &model.feature_config, None)
+        );
         let (token_spans, features): (Vec<_>, Vec<_>) = tokens
             .iter()
             .zip(feats)

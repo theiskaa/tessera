@@ -43,6 +43,11 @@ wasm-size: wasm
     @echo "baseline, without phone tables: $(gzip -9 -c tessera/pkg-nophone/tessera_bg.wasm | wc -c | tr -d ' ') bytes gzip"
     rm -rf tessera/pkg-nophone
 
+# The never-published `wasm,profile` build the profiling page loads, into bench/web/pkg, with the
+# shipped size profile; `just profile-web baseline` builds it without simd128.
+profile-web variant="simd":
+    env {{wasm_env}} {{ if variant == "simd" { "RUSTFLAGS='-C target-feature=+simd128'" } else { "" } }} wasm-pack build --release --target web --out-dir ../bench/web/pkg tessera --features wasm,profile
+
 # Every integration test in headless browsers, e.g. `just wasm-test firefox` or
 # `just wasm-test chrome firefox safari`. The runner's default budget of 20 seconds covers a whole
 # test binary including the browser's start, and the worker tests compile the debug test module

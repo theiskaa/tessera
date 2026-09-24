@@ -18,6 +18,8 @@ phone-metadata = []
 wasm = ["dep:wasm-bindgen", "dep:js-sys", "dep:wasm-bindgen-futures", "dep:web-sys"]
 cli = ["dep:serde", "dep:serde_json"]
 markdown = ["dep:pulldown-cmark"]
+# Per-stage timing for the benchmark harness; never enabled in a published build.
+profile = []
 
 [dependencies]
 thiserror.workspace = true

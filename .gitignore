@@ -9,6 +9,7 @@ internal/
 
 # wasm-pack and trunk output
 /tessera/pkg/
+/bench/web/pkg/
 /site/dist/
 
 # corpora, shards, checkpoints, and run directories

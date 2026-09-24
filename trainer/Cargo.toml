@@ -10,7 +10,7 @@ name = "trainer"
 path = "src/main.rs"
 
 [dependencies]
-tessera.workspace = true
+tessera = { workspace = true, features = ["profile"] }
 anyhow.workspace = true
 thiserror.workspace = true
 serde.workspace = true

@@ -175,15 +175,18 @@ fn detector_inputs(
     model: &Model,
     mask: Option<&chunk::Mask>,
 ) -> DetectorInputs {
-    let tokens = token::tokenize(text);
+    let tokens = stage!(Tokenize, token::tokenize(text));
     let rule_spans: Vec<(usize, usize)> = rule_entities.iter().map(|e| (e.start, e.end)).collect();
-    let all_feats = features::featurize(
-        text,
-        &tokens,
-        &rule_spans,
-        None,
-        &model.feature_config,
-        mask,
+    let all_feats = stage!(
+        Featurize,
+        features::featurize(
+            text,
+            &tokens,
+            &rule_spans,
+            None,
+            &model.feature_config,
+            mask
+        )
     );
     let retained: Vec<usize> = tokens
         .iter()

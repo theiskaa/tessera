@@ -2,6 +2,7 @@
 //! Depends on `tessera` for the tokenizer and features. Never ships.
 
 mod baselines;
+mod bench;
 mod check;
 mod config;
 mod data;
@@ -83,6 +84,15 @@ enum Command {
     },
     /// Score a run, the deterministic baselines, or external predictions.
     Eval(EvalArgs),
+    /// Time each pipeline stage natively on the profiling fixtures and append to the report.
+    Bench {
+        #[arg(long, default_value = "models/tessera-v1.safetensors")]
+        model: PathBuf,
+        #[arg(long, default_value_t = 200)]
+        iterations: u32,
+        #[arg(long, default_value = "internal/reports/m7-profile.md")]
+        out: PathBuf,
+    },
     /// Per-channel int8 quantization of a trained run.
     Quantize {
         #[arg(long)]
@@ -197,6 +207,11 @@ fn main() -> anyhow::Result<()> {
             backend,
         }),
         Command::Eval(args) => eval::run(args),
+        Command::Bench {
+            model,
+            iterations,
+            out,
+        } => bench::run(&model, iterations, &out),
         Command::Quantize { run, backend } => match backend {
             train::BackendKind::Wgpu => {
                 quantize::run::<burn::backend::Wgpu>(&run, &Default::default())
