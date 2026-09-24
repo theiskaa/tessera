@@ -16,9 +16,13 @@ function assertSlices(input, entity, name) {
   }
 }
 
-// A module that fails to instantiate rejects, and the next call loads it afresh.
+// A module that fails to instantiate rejects, and the next call loads it afresh. Only our module
+// is blocked, told apart by its glue's import namespace (`./tessera_bg.js` or
+// `./tessera_simd_bg.js`): the runtime may instantiate modules of its own, such as its HTTP parser.
 const { instantiate } = WebAssembly;
-WebAssembly.instantiate = () => Promise.reject(new Error("blocked by the smoke test"));
+const ours = (imports) => Object.keys(imports ?? {}).some((name) => name.startsWith("./tessera"));
+WebAssembly.instantiate = (source, imports) =>
+  ours(imports) ? Promise.reject(new Error("blocked by the smoke test")) : instantiate(source, imports);
 await assert.rejects(createTessera({ kinds: ["email"] }), { name: "TesseraError", code: "UNSUPPORTED_RUNTIME" });
 WebAssembly.instantiate = instantiate;
 
