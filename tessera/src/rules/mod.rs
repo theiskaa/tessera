@@ -22,3 +22,10 @@ pub fn scan(text: &str, country_hint: &[&str]) -> Vec<Entity> {
     out.sort_by_key(|e| (e.start, e.end));
     out
 }
+
+/// Drops rule entities the mask does not fully contain; plain text has no mask.
+pub(crate) fn retain_in_mask(entities: &mut Vec<Entity>, mask: Option<&crate::chunk::Mask>) {
+    if let Some(mask) = mask {
+        entities.retain(|e| mask.contains(e.start, e.end));
+    }
+}

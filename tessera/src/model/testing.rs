@@ -193,7 +193,7 @@ mod tests {
             .collect::<Vec<_>>()
             .join(" ");
         let tokens = tokenize(&text);
-        let feats: Vec<_> = featurize(&text, &tokens, &[], None, &FeatureConfig::default())
+        let feats: Vec<_> = featurize(&text, &tokens, &[], None, &FeatureConfig::default(), None)
             .into_iter()
             .zip(&tokens)
             .filter(|(_, t)| crate::features::is_content(t))

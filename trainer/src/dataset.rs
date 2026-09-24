@@ -57,7 +57,7 @@ pub fn label_id(label: AddressLabel, begin: bool) -> Option<u8> {
 /// gets no reliable country for a single address.
 pub fn encode(text: &str, spans: &[Span], fc: &FeatureConfig) -> Result<Encoded, EncodeError> {
     let tokens = tokenize(text);
-    let feats = featurize(text, &tokens, &[], None, fc);
+    let feats = featurize(text, &tokens, &[], None, fc, None);
     let mut enc = Encoded {
         token_spans: Vec::new(),
         ngram_ids: Vec::new(),

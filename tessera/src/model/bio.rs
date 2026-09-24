@@ -234,6 +234,14 @@ mod tests {
     }
 
     #[test]
+    fn a_masked_token_splits_a_span_and_the_inside_label_after_it_opens_another() {
+        // B-PERSON, I-PERSON, I-PERSON with the middle position masked.
+        let p = rows(&[1, 2, 2]);
+        let found = decode_detector(&p, &[false, true, false], &[false; 3]);
+        assert_eq!(spans(&found), [(Kind::Person, 0, 0), (Kind::Person, 2, 2)]);
+    }
+
+    #[test]
     fn a_paragraph_break_splits_a_span() {
         let p = rows(&[5, 6, 6, 6]);
         let mut breaks = [false; 4];

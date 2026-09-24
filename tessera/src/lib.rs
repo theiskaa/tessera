@@ -22,7 +22,7 @@ pub mod wasm;
 /// Internals shared with the trainer and the integration tests. Not a stable API.
 #[doc(hidden)]
 pub mod internal {
-    pub use crate::chunk::{MAX_ENTITY_TOKENS, paragraph_breaks};
+    pub use crate::chunk::{MAX_ENTITY_TOKENS, Mask, paragraph_breaks};
     pub use crate::features::{
         FeatureConfig, MAX_NGRAMS_PER_TOKEN, TokenFeatures, featurize, flag, fnv1a, is_content,
         line_ranges,
@@ -521,7 +521,18 @@ impl Tessera {
     /// components and kept only if the parser finds at least two distinct labels in it, unless
     /// `include_uncertain`, which keeps it as uncertain.
     pub fn detect(&self, text: &str, query: &Query<'_>) -> Result<Vec<Entity>, Error> {
-        let rule_entities = rules::scan(text, query.country_hint);
+        self.detect_masked(text, query, None)
+    }
+
+    /// `detect` where only the bytes in `mask` may hold entities; `None` is plain text.
+    pub(crate) fn detect_masked(
+        &self,
+        text: &str,
+        query: &Query<'_>,
+        mask: Option<&chunk::Mask>,
+    ) -> Result<Vec<Entity>, Error> {
+        let mut rule_entities = rules::scan(text, query.country_hint);
+        rules::retain_in_mask(&mut rule_entities, mask);
         let mut out: Vec<Entity> = rule_entities
             .iter()
             .filter(|e| self.kinds.contains(e.kind))
@@ -532,7 +543,7 @@ impl Tessera {
             .any(|&k| self.kinds.contains(k))
         {
             let (model, detector) = self.detector()?;
-            out.extend(self.detect_model(text, &rule_entities, model, detector, query)?);
+            out.extend(self.detect_model(text, &rule_entities, model, detector, query, mask)?);
         }
         let mut out = policy::apply(out, query.include_uncertain);
         out.sort_by_key(|e| (e.start, e.end));
@@ -609,7 +620,7 @@ impl Tessera {
             return Err(Error::InputTooLarge);
         }
         // The trainer featurizes addresses without a country, so the library must too.
-        let feats = features::featurize(text, &tokens, &[], None, &model.feature_config);
+        let feats = features::featurize(text, &tokens, &[], None, &model.feature_config, None);
         let (token_spans, features): (Vec<_>, Vec<_>) = tokens
             .iter()
             .zip(feats)

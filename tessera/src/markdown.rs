@@ -39,6 +39,13 @@ pub struct Selection {
     pub links: Vec<LinkTarget>,
 }
 
+impl Selection {
+    /// The bytes entities may lie in: scan minus skip.
+    pub fn mask(&self) -> crate::chunk::Mask {
+        crate::chunk::Mask::new(&self.scan, &self.skip)
+    }
+}
+
 struct LinkFrame {
     dest: String,
     start: usize,

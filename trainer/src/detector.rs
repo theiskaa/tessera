@@ -82,7 +82,7 @@ pub fn encode_document(
             return Err(DetectorEncodeError::RuleOverlap(*g));
         }
     }
-    let feats = featurize(text, &tokens, &rule_spans, None, fc);
+    let feats = featurize(text, &tokens, &rule_spans, None, fc, None);
     let mut enc = Encoded {
         token_spans: Vec::new(),
         ngram_ids: Vec::new(),

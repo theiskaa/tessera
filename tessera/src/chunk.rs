@@ -33,6 +33,67 @@ pub(crate) const MAX_UNBROKEN_TOKENS: usize = 4096;
 /// How far back from a window's target end a natural boundary is searched for.
 const CUT_SEARCH: usize = 256;
 
+/// Byte ranges entities may lie in, for input where only some bytes are content, such as
+/// Markdown. Plain text has no mask.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Mask {
+    ranges: Vec<(usize, usize)>,
+}
+
+/// A masked run of at least this many retained positions is cut out of windowing altogether;
+/// shorter ones (inline code, a link destination) stay as context inside a window.
+pub(crate) const SKIP_SPLIT_TOKENS: usize = 32;
+
+impl Mask {
+    /// `scan` minus `skip`: both sorted, `scan` disjoint. The result is sorted, disjoint, and
+    /// holds no empty range.
+    pub fn new(scan: &[(usize, usize)], skip: &[(usize, usize)]) -> Mask {
+        let mut ranges = Vec::with_capacity(scan.len());
+        let mut skips = skip.iter().copied().peekable();
+        for &(scan_start, scan_end) in scan {
+            let mut cursor = scan_start;
+            while let Some(&(skip_start, skip_end)) = skips.peek() {
+                if skip_end <= cursor {
+                    skips.next();
+                    continue;
+                }
+                if skip_start >= scan_end {
+                    break;
+                }
+                if skip_start > cursor {
+                    ranges.push((cursor, skip_start));
+                }
+                cursor = cursor.max(skip_end);
+                if skip_end <= scan_end {
+                    skips.next();
+                } else {
+                    break;
+                }
+            }
+            if cursor < scan_end {
+                ranges.push((cursor, scan_end));
+            }
+        }
+        Mask { ranges }
+    }
+
+    /// Whether one range holds all of `start..end`.
+    pub fn contains(&self, start: usize, end: usize) -> bool {
+        let i = self.ranges.partition_point(|&(_, e)| e <= start);
+        matches!(self.ranges.get(i), Some(&(s, e)) if s <= start && end <= e)
+    }
+
+    /// Whether the token lies entirely inside the mask.
+    pub fn covers(&self, token: &Token) -> bool {
+        self.contains(token.start, token.end)
+    }
+
+    /// The ranges, sorted and disjoint.
+    pub fn ranges(&self) -> &[(usize, usize)] {
+        &self.ranges
+    }
+}
+
 /// A window over the retained tokens `tok_start..tok_end`, whose text is the byte range
 /// `start..end` of the document.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -87,12 +148,16 @@ pub fn paragraph_breaks(tokens: &[Token], retained: &[usize]) -> Vec<bool> {
 
 /// Covers the retained positions with windows of at most `window` positions, overlapping by
 /// at least `overlap`, each ending at the strongest natural boundary within `CUT_SEARCH`
-/// positions of its target end.
+/// positions of its target end. With `masked` (per retained position, whether it is outside
+/// the mask), a masked run of at least `SKIP_SPLIT_TOKENS` positions belongs to no window and
+/// the positions on either side are windowed separately, and no window ends inside a shorter
+/// masked run.
 pub(crate) fn windows(
     tokens: &[Token],
     retained: &[usize],
     window: usize,
     overlap: usize,
+    masked: Option<&[bool]>,
 ) -> Result<Vec<Window>, Error> {
     let n = retained.len();
     if n == 0 {
@@ -101,14 +166,70 @@ pub(crate) fn windows(
     let breaks = breaks_before(tokens, retained);
     check_unbroken(&breaks)?;
     let mut out = Vec::new();
-    let mut start = 0;
+    for (from, to) in pieces(masked, n) {
+        window_piece(
+            tokens,
+            retained,
+            &breaks,
+            masked,
+            (from, to),
+            window,
+            overlap,
+            &mut out,
+        );
+    }
+    Ok(out)
+}
+
+/// The ranges of retained positions left once every masked run of at least
+/// `SKIP_SPLIT_TOKENS` positions is removed; the whole sequence without a mask.
+fn pieces(masked: Option<&[bool]>, n: usize) -> Vec<(usize, usize)> {
+    let Some(masked) = masked else {
+        return vec![(0, n)];
+    };
+    let mut out = Vec::new();
+    let (mut from, mut i) = (0, 0);
+    while i < n {
+        if !masked[i] {
+            i += 1;
+            continue;
+        }
+        let run = i;
+        while i < n && masked[i] {
+            i += 1;
+        }
+        if i - run >= SKIP_SPLIT_TOKENS {
+            if from < run {
+                out.push((from, run));
+            }
+            from = i;
+        }
+    }
+    if from < n {
+        out.push((from, n));
+    }
+    out
+}
+
+#[allow(clippy::too_many_arguments)]
+fn window_piece(
+    tokens: &[Token],
+    retained: &[usize],
+    breaks: &[Break],
+    masked: Option<&[bool]>,
+    (from, to): (usize, usize),
+    window: usize,
+    overlap: usize,
+    out: &mut Vec<Window>,
+) {
+    let mut start = from;
     loop {
         let target = start + window;
-        if target >= n {
-            out.push(make(tokens, retained, start, n));
-            return Ok(out);
+        if target >= to {
+            out.push(make(tokens, retained, start, to));
+            return;
         }
-        let cut = find_cut(&breaks, start, target);
+        let cut = outside_masked_run(masked, start, find_cut(breaks, start, target));
         out.push(make(tokens, retained, start, cut));
         let mut next = cut.saturating_sub(overlap).max(start + 1);
         // Snap back to a whitespace boundary so a window never opens mid-word; moving back
@@ -119,6 +240,30 @@ pub(crate) fn windows(
         }
         start = next;
     }
+}
+
+/// `cut` moved back to the first position of the masked run it falls inside, or past the run's
+/// end when that would leave the window empty.
+fn outside_masked_run(masked: Option<&[bool]>, start: usize, cut: usize) -> usize {
+    let Some(masked) = masked else {
+        return cut;
+    };
+    let inside = |i: usize| i > 0 && i < masked.len() && masked[i] && masked[i - 1];
+    if !inside(cut) {
+        return cut;
+    }
+    let mut back = cut;
+    while back > start && inside(back) {
+        back -= 1;
+    }
+    if back > start {
+        return back;
+    }
+    let mut forward = cut;
+    while forward < masked.len() && masked[forward] {
+        forward += 1;
+    }
+    forward
 }
 
 /// The retained position the window ends before: the last paragraph break in the search
@@ -170,9 +315,12 @@ pub(crate) fn trusted(w: &Window, n: usize, first: usize, last: usize) -> bool {
 /// collapse; spans are then taken best first (a rules span before a model span, then the
 /// longer, then the more confident, then the earlier) and each is kept unless it overlaps one
 /// already kept, so a span is lost only to a better span it overlaps. Rules spans never
-/// overlap each other, so none is dropped for a model span. Output is sorted by start and
-/// non-overlapping.
-pub(crate) fn merge(mut spans: Vec<Entity>) -> Vec<Entity> {
+/// overlap each other, so none is dropped for a model span. With a mask, spans it does not fully
+/// contain are dropped first. Output is sorted by start and non-overlapping.
+pub(crate) fn merge(mut spans: Vec<Entity>, mask: Option<&Mask>) -> Vec<Entity> {
+    if let Some(mask) = mask {
+        spans.retain(|e| mask.contains(e.start, e.end));
+    }
     spans.sort_by(|a, b| a.start.cmp(&b.start).then(b.end.cmp(&a.end)));
     spans.dedup_by(|a, b| a.start == b.start && a.end == b.end && a.kind == b.kind);
     let rank = |e: &Entity| {
@@ -199,6 +347,21 @@ mod tests {
     use super::*;
     use crate::Kind;
     use crate::token::tokenize;
+
+    /// Plain-text windowing, the path every caller without a mask takes.
+    fn windows(
+        tokens: &[Token],
+        retained: &[usize],
+        window: usize,
+        overlap: usize,
+    ) -> Result<Vec<Window>, Error> {
+        super::windows(tokens, retained, window, overlap, None)
+    }
+
+    /// Plain-text merging.
+    fn merge(spans: Vec<Entity>) -> Vec<Entity> {
+        super::merge(spans, None)
+    }
 
     /// A text of `n` one-character tokens, `sep(i)` before token `i`. The tokens are `.` so
     /// that an empty separator still leaves them separate tokens.
@@ -390,5 +553,59 @@ mod tests {
         let out = merge(vec![m(50, 60), m(0, 10), m(20, 30)]);
         let starts: Vec<usize> = out.iter().map(|e| e.start).collect();
         assert_eq!(starts, vec![0, 20, 50]);
+    }
+
+    #[test]
+    fn mask_subtracts_skips_from_scans() {
+        let m = Mask::new(
+            &[(0, 100), (200, 300)],
+            &[(10, 20), (90, 110), (250, 260), (400, 410)],
+        );
+        assert_eq!(m.ranges(), &[(0, 10), (20, 90), (200, 250), (260, 300)]);
+        assert!(m.contains(20, 90));
+        assert!(!m.contains(15, 25));
+        assert!(!m.contains(85, 95));
+        assert!(m.contains(260, 300));
+        assert!(!m.contains(300, 301));
+    }
+
+    #[test]
+    fn mask_with_skip_covering_whole_scan_is_empty_there() {
+        let m = Mask::new(&[(0, 10), (20, 30)], &[(0, 10)]);
+        assert_eq!(m.ranges(), &[(20, 30)]);
+    }
+
+    #[test]
+    fn a_long_masked_run_belongs_to_no_window() {
+        let text = format!("x y z ```\n{}```\n p q", "code ".repeat(40));
+        let tokens = tokenize(&text);
+        let r = retained(&tokens);
+        let code_start = text.find("```").unwrap_or(0);
+        let code_end = text.rfind("```").map_or(0, |i| i + 3);
+        let mask = Mask::new(&[(0, text.len())], &[(code_start, code_end)]);
+        let masked: Vec<bool> = r.iter().map(|&i| !mask.covers(&tokens[i])).collect();
+        let w = super::windows(&tokens, &r, WINDOW_TOKENS, OVERLAP_TOKENS, Some(&masked)).unwrap();
+        assert_eq!(w.len(), 2);
+        for win in &w {
+            assert!((win.tok_start..win.tok_end).all(|i| !masked[i]));
+        }
+    }
+
+    #[test]
+    fn a_window_never_ends_inside_a_short_masked_run() {
+        let masked = [false, false, true, true, true, false, false];
+        assert_eq!(outside_masked_run(Some(&masked), 0, 3), 2);
+        assert_eq!(outside_masked_run(Some(&masked), 2, 3), 5);
+        assert_eq!(outside_masked_run(Some(&masked), 0, 5), 5);
+        assert_eq!(outside_masked_run(None, 0, 3), 3);
+    }
+
+    #[test]
+    fn merge_drops_spans_the_mask_does_not_contain() {
+        let m = |s, e| entity(Kind::Email, Source::Rules, s, e, 0.99);
+        let mask = Mask::new(&[(0, 20)], &[]);
+        let out = super::merge(vec![m(2, 10), m(15, 25)], Some(&mask));
+        assert_eq!(out.len(), 1);
+        assert_eq!((out[0].start, out[0].end), (2, 10));
     }
 }

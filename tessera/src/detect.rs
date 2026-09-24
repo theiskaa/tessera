@@ -29,13 +29,15 @@ impl Tessera {
         model: &Model,
         detector: &model::Tagger,
         query: &Query<'_>,
+        mask: Option<&chunk::Mask>,
     ) -> Result<Vec<Entity>, Error> {
         let DetectorInputs {
             tokens,
             retained,
             feats,
             masked,
-        } = detector_inputs(text, rule_entities, model);
+            outside_mask,
+        } = detector_inputs(text, rule_entities, model, mask);
         let breaks = chunk::paragraph_breaks(&tokens, &retained);
         let n = retained.len();
         let mut candidates = Vec::new();
@@ -44,6 +46,7 @@ impl Tessera {
             &retained,
             chunk::WINDOW_TOKENS,
             chunk::OVERLAP_TOKENS,
+            mask.map(|_| outside_mask.as_slice()),
         )? {
             let range = w.tok_start..w.tok_end;
             let mut probs = detector.forward(&feats[range.clone()]);
@@ -68,6 +71,7 @@ impl Tessera {
                 .into_iter()
                 .chain(rule_entities.iter().cloned())
                 .collect(),
+            mask,
         );
         let mut out = Vec::new();
         for mut e in merged {
@@ -86,7 +90,7 @@ impl Tessera {
     /// hint, exactly as the trainer encodes its golden cases.
     pub(crate) fn detect_trace(&self, text: &str) -> Result<internal::DetectTrace, Error> {
         let (model, detector) = self.detector()?;
-        let inputs = detector_inputs(text, &rules::scan(text, &[]), model);
+        let inputs = detector_inputs(text, &rules::scan(text, &[]), model, None);
         let logits = detector.forward(&inputs.feats);
         let mut probs = logits.clone();
         model::kernels::softmax_rows(&mut probs, detector.labels());
@@ -157,19 +161,32 @@ impl Tessera {
 }
 
 /// What the detector reads for one document: its tokens, the retained (non-whitespace)
-/// positions, their features computed over the whole document, and which of them lie inside a
-/// rule span.
+/// positions, their features computed over the whole document, which of them the decoder must
+/// read as `O` (inside a rule span or outside the mask), and which lie outside the mask.
 struct DetectorInputs {
     tokens: Vec<token::Token>,
     retained: Vec<usize>,
     feats: Vec<features::TokenFeatures>,
     masked: Vec<bool>,
+    outside_mask: Vec<bool>,
 }
 
-fn detector_inputs(text: &str, rule_entities: &[Entity], model: &Model) -> DetectorInputs {
+fn detector_inputs(
+    text: &str,
+    rule_entities: &[Entity],
+    model: &Model,
+    mask: Option<&chunk::Mask>,
+) -> DetectorInputs {
     let tokens = token::tokenize(text);
     let rule_spans: Vec<(usize, usize)> = rule_entities.iter().map(|e| (e.start, e.end)).collect();
-    let all_feats = features::featurize(text, &tokens, &rule_spans, None, &model.feature_config);
+    let all_feats = features::featurize(
+        text,
+        &tokens,
+        &rule_spans,
+        None,
+        &model.feature_config,
+        mask,
+    );
     let retained: Vec<usize> = tokens
         .iter()
         .enumerate()
@@ -178,15 +195,15 @@ fn detector_inputs(text: &str, rule_entities: &[Entity], model: &Model) -> Detec
         .collect();
     let feats: Vec<features::TokenFeatures> =
         retained.iter().map(|&i| all_feats[i].clone()).collect();
-    let masked = feats
-        .iter()
-        .map(|f| f.flags & features::flag::IN_RULE_SPAN != 0)
-        .collect();
+    let flagged = |bits: u32| -> Vec<bool> { feats.iter().map(|f| f.flags & bits != 0).collect() };
+    let masked = flagged(features::flag::IN_RULE_SPAN | features::flag::MASKED);
+    let outside_mask = flagged(features::flag::MASKED);
     DetectorInputs {
         tokens,
         retained,
         feats,
         masked,
+        outside_mask,
     }
 }
 

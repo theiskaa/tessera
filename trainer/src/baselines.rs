@@ -80,6 +80,7 @@ impl<'a> Doc<'a> {
             rule_spans,
             country,
             &FeatureConfig::default(),
+            None,
         );
         Doc {
             text,

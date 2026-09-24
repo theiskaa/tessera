@@ -7,6 +7,7 @@
 //! dictionaries for en, de, nl, ka, ja (MIT); legal forms from GLEIF's entity
 //! legal form list; honorifics, salutations, and closings hand-written.
 
+use crate::chunk::Mask;
 use crate::token::{Token, TokenClass};
 
 /// How token text is hashed into n-gram ids. A bundle records the values it was trained
@@ -90,6 +91,8 @@ pub mod flag {
     pub const IS_SPACE: u32 = 1 << 20;
     /// A line break token.
     pub const IS_NEWLINE: u32 = 1 << 21;
+    /// A token outside the mask of structured input: Markdown syntax, code, a link destination.
+    pub const MASKED: u32 = 1 << 22;
 }
 
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
@@ -764,6 +767,7 @@ pub fn featurize(
     rule_spans: &[(usize, usize)],
     country: Option<&str>,
     config: &FeatureConfig,
+    mask: Option<&Mask>,
 ) -> Vec<TokenFeatures> {
     let n = tokens.len();
     let mut out: Vec<TokenFeatures> = Vec::with_capacity(n);
@@ -788,6 +792,9 @@ pub fn featurize(
             f.ngram_ids = ngram_ids(s, config);
         }
         let mut flags = 0u32;
+        if mask.is_some_and(|m| !m.covers(t)) {
+            flags |= flag::MASKED;
+        }
         if s.chars().any(|c| c.is_ascii_digit()) {
             flags |= flag::HAS_DIGIT;
         }
@@ -864,7 +871,7 @@ mod tests {
 
     fn feats(text: &str, country: Option<&str>) -> Vec<(String, u32)> {
         let toks = tokenize(text);
-        featurize(text, &toks, &[], country, &FeatureConfig::default())
+        featurize(text, &toks, &[], country, &FeatureConfig::default(), None)
             .into_iter()
             .zip(&toks)
             .map(|(f, t)| (t.text(text).to_string(), f.flags))
@@ -965,14 +972,14 @@ mod tests {
             "Thanks\r\n\r\nNino",
         ] {
             let toks = tokenize(text);
-            let f = featurize(text, &toks, &[], None, &FeatureConfig::default());
+            let f = featurize(text, &toks, &[], None, &FeatureConfig::default(), None);
             let nino = toks.iter().position(|t| t.text(text) == "Nino").unwrap();
             assert!(f[nino].flags & flag::AFTER_NEWLINE_BLANK != 0, "{text:?}");
             assert!(f[nino].flags & flag::LINE_START != 0, "{text:?}");
         }
         let text = "Thanks\nNino";
         let toks = tokenize(text);
-        let f = featurize(text, &toks, &[], None, &FeatureConfig::default());
+        let f = featurize(text, &toks, &[], None, &FeatureConfig::default(), None);
         assert!(f[2].flags & flag::AFTER_NEWLINE_BLANK == 0);
     }
 
@@ -983,7 +990,7 @@ mod tests {
         let toks = tokenize(&text);
         let spans: Vec<(usize, usize)> = (0..20_000).map(|k| (k * 12, k * 12 + 11)).collect();
         let started = std::time::Instant::now();
-        let f = featurize(&text, &toks, &spans, None, &FeatureConfig::default());
+        let f = featurize(&text, &toks, &spans, None, &FeatureConfig::default(), None);
         assert!(
             started.elapsed().as_secs_f64() < 2.0,
             "{:?}",
@@ -1004,7 +1011,7 @@ mod tests {
     fn long_single_line_is_linear() {
         let text = "word ".repeat(40_000);
         let toks = tokenize(&text);
-        let f = featurize(&text, &toks, &[], None, &FeatureConfig::default());
+        let f = featurize(&text, &toks, &[], None, &FeatureConfig::default(), None);
         assert_eq!(f.len(), toks.len());
         assert!(f[0].flags & flag::LINE_START != 0);
     }
@@ -1013,10 +1020,34 @@ mod tests {
     fn rule_spans_and_blank_lines() {
         let text = "Hi\n\nnino@x.example";
         let toks = tokenize(text);
-        let f = featurize(text, &toks, &[(4, 18)], None, &FeatureConfig::default());
+        let f = featurize(
+            text,
+            &toks,
+            &[(4, 18)],
+            None,
+            &FeatureConfig::default(),
+            None,
+        );
         let nino = toks.iter().position(|t| t.text(text) == "nino").unwrap();
         assert!(f[nino].flags & flag::IN_RULE_SPAN != 0);
         assert!(f[nino].flags & flag::AFTER_NEWLINE_BLANK != 0);
         assert!(f[0].flags & flag::AFTER_NEWLINE_BLANK == 0);
+    }
+
+    #[test]
+    fn tokens_outside_the_mask_carry_the_masked_flag() {
+        let text = "a b c";
+        let toks = tokenize(text);
+        let mask = Mask::new(&[(0, 1)], &[]);
+        let f = featurize(
+            text,
+            &toks,
+            &[],
+            None,
+            &FeatureConfig::default(),
+            Some(&mask),
+        );
+        let masked: Vec<bool> = f.iter().map(|f| f.flags & flag::MASKED != 0).collect();
+        assert_eq!(masked, vec![false, true, true, true, true]);
     }
 }
