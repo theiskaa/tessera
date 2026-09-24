@@ -5,13 +5,6 @@
 //! anchor in the same block, and only a narrow set of rules crosses a block boundary.
 //! Limitations: two-column tab-separated rows are not detected as table rows, and chat turns
 //! are only recognised when a line starts with a timestamp.
-#![cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "extract_contacts in phase 5.3 is the first caller"
-    )
-)]
 
 use crate::policy::MEDIUM;
 use crate::token::{Token, TokenClass};

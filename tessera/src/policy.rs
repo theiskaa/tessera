@@ -4,7 +4,7 @@
 //! already knows the text is an address, so the entity is always returned and the
 //! bands apply to its components.
 
-use crate::{AddressLabel, Component, Entity, Kind};
+use crate::{AddressLabel, Component, Entity, Extraction, Kind};
 
 pub(crate) const HIGH: f32 = 0.85;
 pub(crate) const MEDIUM: f32 = 0.50;
@@ -30,7 +30,6 @@ pub(crate) fn detect_min(kind: Kind) -> f32 {
 
 pub(crate) const STAGE_DETECT: &str = "detect";
 pub(crate) const STAGE_PARSE: &str = "parse";
-pub(crate) const STAGE_GROUP: &str = "group";
 
 /// `c` rounded to four decimals as an `f64`, so serialized output shows 0.99 rather than the
 /// widened 0.9900000095367432. Rounding arithmetically instead of formatting and reparsing the
@@ -154,6 +153,30 @@ pub(crate) fn address_confidence(components: &[Component]) -> f32 {
         .unwrap_or(0.0)
 }
 
+/// Sets `review_recommended` on contacts and dissolves those below `MEDIUM` into `unassigned`
+/// unless `include_uncertain` is set. Entities keep the flags the entity policy gave them.
+pub(crate) fn apply_contacts(extraction: Extraction, include_uncertain: bool) -> Extraction {
+    let mut unassigned = extraction.unassigned;
+    let mut contacts = Vec::with_capacity(extraction.contacts.len());
+    for mut contact in extraction.contacts {
+        if contact.confidence < MEDIUM && !include_uncertain {
+            unassigned.extend(contact.person.take());
+            unassigned.extend(contact.org.take());
+            unassigned.append(&mut contact.addresses);
+            unassigned.append(&mut contact.emails);
+            unassigned.append(&mut contact.phones);
+            continue;
+        }
+        contact.review_recommended = contact.confidence < HIGH;
+        contacts.push(contact);
+    }
+    unassigned.sort_by_key(|e| e.start);
+    Extraction {
+        contacts,
+        unassigned,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -260,5 +283,71 @@ mod tests {
         let all = address_components(parsed, true);
         assert_eq!(all.len(), 4);
         assert_eq!(all[0].label, AddressLabel::Unknown);
+    }
+
+    fn at(kind: Kind, start: usize) -> Entity {
+        Entity {
+            kind,
+            start,
+            end: start + 4,
+            confidence: 0.9,
+            review_recommended: false,
+            source: crate::Source::Model,
+            components: Vec::new(),
+            normalized: None,
+            region: None,
+        }
+    }
+
+    fn contact(confidence: f32) -> crate::Contact {
+        crate::Contact {
+            start: 0,
+            end: 24,
+            confidence,
+            review_recommended: false,
+            person: Some(at(Kind::Person, 0)),
+            org: None,
+            addresses: Vec::new(),
+            emails: vec![at(Kind::Email, 20)],
+            phones: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn low_confidence_contact_is_dissolved() {
+        let x = apply_contacts(
+            Extraction {
+                contacts: vec![contact(0.4)],
+                unassigned: vec![at(Kind::Phone, 10)],
+            },
+            false,
+        );
+        assert!(x.contacts.is_empty());
+        let got: Vec<(Kind, usize)> = x.unassigned.iter().map(|e| (e.kind, e.start)).collect();
+        assert_eq!(
+            got,
+            vec![(Kind::Person, 0), (Kind::Phone, 10), (Kind::Email, 20)]
+        );
+        let kept = apply_contacts(
+            Extraction {
+                contacts: vec![contact(0.4)],
+                unassigned: Vec::new(),
+            },
+            true,
+        );
+        assert!(kept.contacts[0].review_recommended);
+    }
+
+    #[test]
+    fn medium_confidence_contact_is_flagged() {
+        let x = apply_contacts(
+            Extraction {
+                contacts: vec![contact(0.7), contact(0.9)],
+                unassigned: Vec::new(),
+            },
+            false,
+        );
+        let flags: Vec<bool> = x.contacts.iter().map(|c| c.review_recommended).collect();
+        assert_eq!(flags, vec![true, false]);
     }
 }

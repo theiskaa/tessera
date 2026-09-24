@@ -191,8 +191,8 @@ fn model_kinds_are_typed_errors() {
         Some(Error::Inference { stage: "parse" })
     );
     assert_eq!(
-        t.extract_contacts("x", &Query::default()).err(),
-        Some(Error::Inference { stage: "group" })
+        t.extract_contacts("x", &Query::default()),
+        Ok(tessera::Extraction::default())
     );
     assert_eq!(t.detect("", &Query::default()).unwrap(), Vec::new());
 }
@@ -225,4 +225,30 @@ fn overlap_email_wins() {
 #[test]
 fn the_fixture_list_names_every_rules_file() {
     common::assert_lists_every_fixture("rules", &common::rules_fixtures());
+}
+
+#[cfg(feature = "phone-metadata")]
+#[test]
+fn rules_only_extract_contacts_returns_unassigned() {
+    let t = Tessera::load(
+        &[],
+        Config {
+            kinds: Kind::Email | Kind::Phone,
+            expected_checksum: None,
+        },
+    )
+    .unwrap();
+    let text = "Thanks, see you on Monday.\n\nNino Beridze\nKavkaz Freight LLC\n14 Rustaveli Avenue, Tbilisi 0108, Georgia\n+995 32 212 3456\nnino@kavkaz-freight.example";
+    let x = t
+        .extract_contacts(
+            text,
+            &Query {
+                country_hint: &["GE"],
+                ..Query::default()
+            },
+        )
+        .unwrap();
+    assert!(x.contacts.is_empty());
+    let kinds: Vec<Kind> = x.unassigned.iter().map(|e| e.kind).collect();
+    assert_eq!(kinds, vec![Kind::Phone, Kind::Email]);
 }

@@ -502,11 +502,18 @@ impl Tessera {
     }
 
     /// Entities grouped into contacts, plus everything that could not be assigned.
+    ///
+    /// Runs [`Tessera::detect`] with the same query, then the deterministic grouper. A
+    /// contact's confidence is the minimum over its anchor and its assignments; contacts below
+    /// the medium band are dissolved into `unassigned` unless `query.include_uncertain` is set.
+    /// A wrong assignment is treated as worse than an unassigned entity, so ties go to
+    /// `unassigned`. An instance without people or organizations has no anchors: its contacts
+    /// are empty and every entity is unassigned.
     pub fn extract_contacts(&self, text: &str, query: &Query<'_>) -> Result<Extraction, Error> {
-        let _ = (text, query);
-        Err(Error::Inference {
-            stage: policy::STAGE_GROUP,
-        })
+        let entities = self.detect(text, query)?;
+        let tokens = token::tokenize(text);
+        let grouped = group::group(text, &tokens, entities);
+        Ok(policy::apply_contacts(grouped, query.include_uncertain))
     }
 
     /// Split text already known to be an address into components. Offsets are relative to `text`.
