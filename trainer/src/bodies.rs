@@ -4,8 +4,9 @@
 //! refer to them by acronym after the first mention.
 //!
 //! Listed bodies are real; composed ones join a pattern with a topic or a city, so the model
-//! sees shapes, not one fixed list. Both are split by a hash of the name, like the name pools,
-//! so the synthetic test split holds bodies the model never trained on.
+//! sees shapes, not one fixed list. Listed bodies appear in every split, since real documents
+//! keep naming the same national bodies; composed names are split by a hash of the name, like
+//! the name pools, so the synthetic test split holds shapes the model never trained on.
 
 use rand::Rng;
 use rand::seq::IndexedRandom;
@@ -526,6 +527,18 @@ const JP_TOPICS: &[&str] = &[
     "道路整備",
     "子育て支援",
     "文化振興",
+    "総合通信基盤",
+    "移動通信",
+    "電波政策",
+    "統計企画",
+    "農村振興",
+    "消費者政策",
+    "食品表示",
+    "地域政策",
+    "行政評価",
+    "水産資源",
+    "輸出促進",
+    "技術政策",
 ];
 
 /// Georgian units of public bodies.
@@ -534,8 +547,129 @@ const GE_UNITS: &[&str] = &[
     "საგადასახადო დავების დეპარტამენტი",
     "სტატისტიკის დეპარტამენტი",
     "საერთაშორისო ურთიერთობების დეპარტამენტი",
-    "Customs Department",
-    "Tax Disputes Department",
+    "ტრანსპორტის საქალაქო სამსახური",
+    "გარემოს დაცვის საქალაქო სამსახური",
+    "ინფრასტრუქტურის განვითარების საქალაქო სამსახური",
+    "ეკონომიკური განვითარების საქალაქო სამსახური",
+    "სოციალური მომსახურების საქალაქო სამსახური",
+    "აუდიტის დეპარტამენტი",
+    "სამართლებრივი უზრუნველყოფის დეპარტამენტი",
+    "საგარეო ვაჭრობის პოლიტიკის დეპარტამენტი",
+    "ტურიზმის განვითარების სამმართველო",
+    "საინვესტიციო პროექტების სამმართველო",
+    "ზედამხედველობის სამსახური",
+    "მუნიციპალური ინსპექცია",
+];
+
+fn pick_str(list: &[&str], rng: &mut ChaCha8Rng) -> String {
+    list.choose(rng).copied().unwrap_or("").to_string()
+}
+
+/// Whether `name` is written in Georgian or Japanese script rather than Latin.
+fn native_script(name: &str) -> bool {
+    name.chars()
+        .any(|c| crate::inflect::georgian(c) || ('\u{3040}'..='\u{9FFF}').contains(&c))
+}
+
+const GE_UNIVERSITIES: &[&str] = &[
+    "ივანე ჯავახიშვილის სახელობის თბილისის სახელმწიფო უნივერსიტეტი",
+    "თბილისის სახელმწიფო უნივერსიტეტი",
+    "თსუ",
+    "ილიას სახელმწიფო უნივერსიტეტი",
+    "საქართველოს ტექნიკური უნივერსიტეტი",
+    "თბილისის სახელმწიფო სამედიცინო უნივერსიტეტი",
+    "ბათუმის შოთა რუსთაველის სახელმწიფო უნივერსიტეტი",
+    "ქუთაისის აკაკი წერეთლის სახელმწიფო უნივერსიტეტი",
+    "ზუსტ და საბუნებისმეტყველო მეცნიერებათა ფაკულტეტი",
+    "ჰუმანიტარულ მეცნიერებათა ფაკულტეტი",
+    "ეკონომიკისა და ბიზნესის ფაკულტეტი",
+    "იურიდიული ფაკულტეტი",
+    "Tbilisi State University",
+    "Free University of Tbilisi",
+];
+
+const JP_UNIVERSITIES: &[&str] = &[
+    "東京大学",
+    "京都大学",
+    "大阪大学",
+    "東北大学",
+    "九州大学",
+    "北海道大学",
+    "法政大学",
+    "慶應義塾大学",
+    "早稲田大学",
+    "横浜国立大学",
+    "神奈川大学",
+];
+
+const DE_UNIVERSITIES: &[&str] = &[
+    "Freie Universität Berlin",
+    "Humboldt-Universität zu Berlin",
+    "Technische Universität München",
+    "Universität Hamburg",
+    "Universität zu Köln",
+    "Technische Universität Dortmund",
+    "Hochschule München",
+    "Karlsruher Institut für Technologie",
+];
+
+const EN_UNIVERSITIES: &[&str] = &[
+    "University of Leeds",
+    "University of Bristol",
+    "University of Nottingham",
+    "King's College London",
+    "Ohio State University",
+    "University of Texas at Austin",
+    "Georgia Institute of Technology",
+    "University of Edinburgh",
+];
+
+const GE_COUNCILS: &[&str] = &[
+    "უწყებათაშორისი საკოორდინაციო საბჭო",
+    "თბილისის საკრებულოს განათლებისა და კულტურის კომისია",
+    "საპარლამენტო კომიტეტი",
+    "თხილის მწარმოებელთა საბჭო",
+    "საზოგადოებრივი მაუწყებლის სამეურვეო საბჭო",
+];
+
+const GE_PARTIES: &[&str] = &[
+    "Georgian Dream",
+    "United National Movement",
+    "UNM",
+    "Lelo",
+    "Strong Georgia",
+    "Girchi",
+    "For Georgia",
+    "Coalition for Change",
+    "ქართული ოცნება",
+    "ერთიანი ნაციონალური მოძრაობა",
+];
+
+const DE_PARTIES: &[&str] = &[
+    "SPD",
+    "CDU",
+    "CSU",
+    "FDP",
+    "Bündnis 90/Die Grünen",
+    "Die Linke",
+    "AfD",
+];
+
+const JP_PARTIES: &[&str] = &[
+    "自由民主党",
+    "立憲民主党",
+    "公明党",
+    "日本維新の会",
+    "国民民主党",
+];
+
+const EN_PARTIES: &[&str] = &[
+    "Labour Party",
+    "Conservative Party",
+    "Liberal Democrats",
+    "Scottish National Party",
+    "Democratic Party",
+    "Republican Party",
 ];
 
 /// Named EU units as directory pages write them: `Unit C.2 – Road Safety`.
@@ -574,12 +708,14 @@ fn split_pick<'t>(items: &'t [&'t str], split: Split, rng: &mut ChaCha8Rng) -> &
         .unwrap_or("")
 }
 
-fn listed(country: &str, split: Split) -> Vec<Body> {
+/// The listed bodies of `country`, in every split: they are the few dozen national bodies
+/// real documents keep naming, which a model that has not seen them cannot find. Composed
+/// names stay split by hash.
+fn listed(country: &str) -> Vec<Body> {
     LISTED
         .iter()
         .filter(|(c, _)| *c == country)
         .flat_map(|(_, bodies)| bodies.iter())
-        .filter(|(name, _)| in_split(name, split))
         .map(|(name, acronym)| Body {
             name: name.to_string(),
             acronym: (!acronym.is_empty()).then(|| acronym.to_string()),
@@ -601,8 +737,8 @@ impl Bodies {
         Bodies {
             country,
             split: Some(split),
-            own: listed(country, split),
-            eu: listed("EU", split),
+            own: listed(country),
+            eu: listed("EU"),
         }
     }
 
@@ -611,8 +747,16 @@ impl Bodies {
     }
 
     /// A public body: a listed one half the time (an EU one for about one in ten), otherwise
-    /// one composed from a pattern. With `acronym`, only a body that has one.
+    /// one composed from a pattern. With `acronym`, only a body that has one. Without, a
+    /// Georgian or Japanese body is written in its own script more often than not, as the
+    /// country's own documents write it.
     pub fn body(&self, acronym: bool, rng: &mut ChaCha8Rng) -> Body {
+        if !acronym && rng.random_bool(0.6) {
+            let native: Vec<&Body> = self.own.iter().filter(|b| native_script(&b.name)).collect();
+            if let Some(b) = native.choose(rng) {
+                return (*b).clone();
+            }
+        }
         for _ in 0..64 {
             let b = if rng.random_bool(0.5) {
                 let list = if rng.random_bool(0.2) || self.own.is_empty() {
@@ -735,6 +879,86 @@ impl Bodies {
         }
     }
 
+    /// A Japanese or Georgian body and its units written as one name on one line, which gold
+    /// labels as one org: `総務省 総合通信基盤局 電波部 移動通信課`, `თბილისის მერიის
+    /// ტრანსპორტის საქალაქო სამსახური`. English and German chains are one org per unit, so
+    /// elsewhere this is a single unit.
+    pub fn chain(&self, rng: &mut ChaCha8Rng) -> String {
+        let native: Vec<&Body> = self.own.iter().filter(|b| native_script(&b.name)).collect();
+        let body = native.choose(rng).map(|b| b.name.clone());
+        match (self.country, body) {
+            ("JP", Some(body)) => {
+                let sep = if rng.random_bool(0.5) { " " } else { "" };
+                let mut parts = vec![body];
+                for _ in 0..rng.random_range(1..=3) {
+                    let topic = pick_str(JP_TOPICS, rng);
+                    let unit = pick_str(&["局", "部", "課", "室", "班", "係"], rng);
+                    parts.push(format!("{topic}{unit}"));
+                }
+                parts.join(sep)
+            }
+            ("GE", Some(body)) => {
+                let (genitive, _) =
+                    crate::inflect::apply(&body, crate::inflect::Form::Gen, false, rng);
+                format!("{genitive} {}", pick_str(GE_UNITS, rng))
+            }
+            _ => self.unit(rng),
+        }
+    }
+
+    /// A university, faculty, or institute: `თბილისის სახელმწიფო უნივერსიტეტი`, `თსუ`,
+    /// `University of Leeds`, `Freie Universität Berlin`.
+    pub fn university(&self, rng: &mut ChaCha8Rng) -> String {
+        match self.country {
+            "GE" => pick_str(GE_UNIVERSITIES, rng),
+            "JP" => pick_str(JP_UNIVERSITIES, rng),
+            "DE" => pick_str(DE_UNIVERSITIES, rng),
+            _ => pick_str(EN_UNIVERSITIES, rng),
+        }
+    }
+
+    /// A standing council, committee, or commission.
+    pub fn council(&self, rng: &mut ChaCha8Rng) -> String {
+        let split = self.split();
+        match self.country {
+            "JP" => format!(
+                "{}{}",
+                split_pick(JP_TOPICS, split, rng),
+                ["審議会", "委員会", "協議会", "部会", "推進本部"]
+                    .choose(rng)
+                    .copied()
+                    .unwrap_or("審議会")
+            ),
+            "GE" => pick_str(GE_COUNCILS, rng),
+            "DE" => format!(
+                "{} für {}",
+                ["Ausschuss", "Beirat", "Kommission", "Rat"]
+                    .choose(rng)
+                    .copied()
+                    .unwrap_or("Ausschuss"),
+                split_pick(DE_TOPICS, split, rng)
+            ),
+            _ => format!(
+                "{} {}",
+                split_pick(TOPICS, split, rng),
+                ["Committee", "Advisory Board", "Task Force", "Commission"]
+                    .choose(rng)
+                    .copied()
+                    .unwrap_or("Committee")
+            ),
+        }
+    }
+
+    /// A political party.
+    pub fn party(&self, rng: &mut ChaCha8Rng) -> String {
+        match self.country {
+            "GE" => pick_str(GE_PARTIES, rng),
+            "DE" => pick_str(DE_PARTIES, rng),
+            "JP" => pick_str(JP_PARTIES, rng),
+            _ => pick_str(EN_PARTIES, rng),
+        }
+    }
+
     /// A named sub-unit: an office, division, directorate, section, or team with its own name.
     /// Generic business functions (`Customer Service`, `経理部`) are not units; they stay
     /// negatives in `templates::NEG_DEPARTMENTS`.
@@ -807,15 +1031,25 @@ mod tests {
     }
 
     #[test]
-    fn listed_bodies_fall_in_exactly_one_split() {
-        for (_, bodies) in LISTED {
-            for (name, _) in *bodies {
-                let n = [Split::Train, Split::Valid, Split::Test]
-                    .into_iter()
-                    .filter(|&s| in_split(name, s))
-                    .count();
-                assert_eq!(n, 1, "{name}");
-            }
+    fn composed_parts_fall_in_exactly_one_split() {
+        for name in TOPICS.iter().chain(DE_TOPICS).chain(GE_UNITS) {
+            let n = [Split::Train, Split::Valid, Split::Test]
+                .into_iter()
+                .filter(|&s| in_split(name, s))
+                .count();
+            assert_eq!(n, 1, "{name}");
+        }
+    }
+
+    #[test]
+    fn listed_bodies_reach_every_split() {
+        for split in [Split::Train, Split::Valid, Split::Test] {
+            let b = Bodies::new("GB", split);
+            assert!(
+                b.own
+                    .iter()
+                    .any(|body| body.acronym.as_deref() == Some("HMRC"))
+            );
         }
     }
 }

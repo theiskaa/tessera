@@ -6,7 +6,7 @@
 //! fiction. Names and organizations are real (Wikidata and GLEIF), so generated text is
 //! training data only and never enters a versioned fixture.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs::File;
 use std::path::{Path, PathBuf};
 
@@ -24,9 +24,10 @@ use crate::bodies::Bodies;
 use crate::config::{self, Config, GenerateConfig};
 use crate::data::{LabelledExample, Split, read_shard};
 use crate::filler;
+use crate::inflect;
 use crate::negatives;
 use crate::pool_filter;
-use crate::templates::{self, Template};
+use crate::templates::{self, SlotRef, Template};
 
 /// Where a template's documents come from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
@@ -119,6 +120,9 @@ impl Category {
 pub enum Slot {
     Person,
     PersonFirst,
+    PersonLast,
+    PersonNative,
+    PersonList,
     PersonEponymous,
     Org,
     OrgEponymous,
@@ -127,6 +131,11 @@ pub enum Slot {
     OrgAcronym,
     OrgUnit,
     OrgRegistry,
+    OrgChain,
+    OrgUniv,
+    OrgCouncil,
+    OrgParty,
+    OrgList,
     Address,
     AddressMultiline,
     AddressPersonStreet,
@@ -161,6 +170,10 @@ pub enum Slot {
     NegRegisterNo,
     Officers,
     Register,
+    TitleLocal,
+    SentenceLocal,
+    PlaceLocal,
+    RoleHeading,
     Greeting,
     Closing,
     Sentence,
@@ -174,10 +187,11 @@ impl Slot {
     pub fn kind(self) -> Option<Kind> {
         use Slot::*;
         match self {
-            Person | PersonFirst | PersonEponymous => Some(Kind::Person),
-            Org | OrgEponymous | OrgSchool | OrgGov | OrgAcronym | OrgUnit | OrgRegistry => {
-                Some(Kind::Org)
+            Person | PersonFirst | PersonLast | PersonNative | PersonList | PersonEponymous => {
+                Some(Kind::Person)
             }
+            Org | OrgEponymous | OrgSchool | OrgGov | OrgAcronym | OrgUnit | OrgRegistry
+            | OrgChain | OrgUniv | OrgCouncil | OrgParty | OrgList => Some(Kind::Org),
             Address | AddressMultiline | AddressPersonStreet => Some(Kind::Address),
             Email => Some(Kind::Email),
             Phone | PhoneLocal => Some(Kind::Phone),
@@ -190,6 +204,9 @@ impl Slot {
         Some(match name {
             "person" => Person,
             "person_first" => PersonFirst,
+            "person_last" => PersonLast,
+            "person_native" => PersonNative,
+            "person_list" => PersonList,
             "person_eponymous" => PersonEponymous,
             "org" => Org,
             "org_eponymous" => OrgEponymous,
@@ -198,6 +215,11 @@ impl Slot {
             "org_acr" => OrgAcronym,
             "org_unit" => OrgUnit,
             "org_registry" => OrgRegistry,
+            "org_chain" => OrgChain,
+            "org_univ" => OrgUniv,
+            "org_council" => OrgCouncil,
+            "org_party" => OrgParty,
+            "org_list" => OrgList,
             "address" => Address,
             "address_ml" => AddressMultiline,
             "address_person_street" => AddressPersonStreet,
@@ -232,6 +254,10 @@ impl Slot {
             "neg_register_no" => NegRegisterNo,
             "officers" => Officers,
             "register" => Register,
+            "title_local" => TitleLocal,
+            "sentence_local" => SentenceLocal,
+            "place_local" => PlaceLocal,
+            "role_heading" => RoleHeading,
             "greeting" => Greeting,
             "closing" => Closing,
             "sentence" => Sentence,
@@ -245,11 +271,13 @@ impl Slot {
     /// Slots whose value is reused when the same link group appears again in a document. An
     /// acronym is bound with its body's name instead (see `Ctx::acronym`).
     fn bindable(self) -> bool {
-        self != Slot::OrgAcronym
-            && matches!(
-                self.kind(),
-                Some(Kind::Person | Kind::Org | Kind::Address | Kind::Email)
-            )
+        !matches!(
+            self,
+            Slot::OrgAcronym | Slot::PersonLast | Slot::PersonList | Slot::OrgList
+        ) && matches!(
+            self.kind(),
+            Some(Kind::Person | Kind::Org | Kind::Address | Kind::Email)
+        )
     }
 }
 
@@ -342,10 +370,25 @@ impl PoolAddress {
             .iter()
             .find(|s| s.label == AddressLabel::City)
             .map(|s| e.text[s.start as usize..s.end as usize].to_string());
-        PoolAddress {
-            text: pool_filter::with_local_country(e, &pool_filter::without_venue_lines(e)),
-            city,
+        let mut text = pool_filter::with_local_country(e, &pool_filter::without_venue_lines(e));
+        // Japanese documents write the postal mark before the postcode and outside the address,
+        // and no country name in front.
+        if e.country == "JP" {
+            text = text.replace('〒', "").trim().to_string();
+            for country in ["日本国", "日本", "Japan"] {
+                // Only the country itself: `日本橋` and `日本平` are places.
+                if let Some(rest) = text.strip_prefix(country)
+                    && rest.starts_with(|c: char| {
+                        c.is_ascii_digit() || [' ', '\u{3000}', ',', '、'].contains(&c)
+                    })
+                {
+                    text = rest
+                        .trim_start_matches([' ', '\u{3000}', ',', '、'])
+                        .to_string();
+                }
+            }
         }
+        PoolAddress { text, city }
     }
 
     fn multiline(&self) -> bool {
@@ -381,6 +424,8 @@ pub struct Ctx<'a> {
     bound: HashMap<(Kind, u8), String>,
     bound_person: HashMap<u8, PoolPerson>,
     bound_acronym: HashMap<u8, String>,
+    /// Link groups the template also writes as an acronym, whose body must have one.
+    acronym_groups: HashSet<u8>,
     /// Turns off every optional variation (honorifics, casing, email patterns and digits),
     /// for tests that need exact text.
     plain: bool,
@@ -394,6 +439,7 @@ impl<'a> Ctx<'a> {
             bound: HashMap::new(),
             bound_person: HashMap::new(),
             bound_acronym: HashMap::new(),
+            acronym_groups: HashSet::new(),
             plain: false,
         }
     }
@@ -403,7 +449,7 @@ impl<'a> Ctx<'a> {
             && slot.bindable()
             && let Some(kind) = slot.kind()
             && let Some(v) = self.bound.get(&(kind, group))
-            && slot != Slot::PersonFirst
+            && !matches!(slot, Slot::PersonFirst | Slot::PersonLast)
         {
             return Ok(Filled::plain(v.clone()));
         }
@@ -444,6 +490,35 @@ impl<'a> Ctx<'a> {
                 };
                 Filled::plain(first_name(&p))
             }
+            Slot::PersonLast => {
+                let p = match self.bound_person.get(&group) {
+                    Some(p) => p.clone(),
+                    None => {
+                        // Japanese documents write a bare family name in kanji.
+                        let p = if self.country == "JP" {
+                            self.native_person(1.0, rng)?
+                        } else {
+                            self.person(rng)?
+                        };
+                        if group > 0 {
+                            self.bound_person.insert(group, p.clone());
+                            self.bound.insert((Kind::Person, group), p.name.clone());
+                        }
+                        p
+                    }
+                };
+                Filled::plain(family_name(&p))
+            }
+            Slot::PersonNative => {
+                let p = self.native_person(0.7, rng)?;
+                if group > 0 {
+                    self.bound_person.insert(group, p.clone());
+                }
+                Filled::plain(p.name)
+            }
+            Slot::PersonList | Slot::OrgList => {
+                bail!("list slots are expanded before rendering")
+            }
             Slot::PersonEponymous => {
                 let given = self
                     .pools
@@ -461,7 +536,10 @@ impl<'a> Ctx<'a> {
             Slot::OrgEponymous => Filled::plain(*pick(templates::EPONYMOUS_COMPANIES, rng)),
             Slot::OrgSchool => Filled::plain(*pick(templates::PERSON_NAMED_INSTITUTIONS, rng)),
             Slot::OrgGov => {
-                let body = self.pools.bodies.body(group > 0, rng);
+                let body = self
+                    .pools
+                    .bodies
+                    .body(self.acronym_groups.contains(&group), rng);
                 if let Some(acronym) = body.acronym.filter(|_| group > 0) {
                     self.bound_acronym.insert(group, acronym);
                 }
@@ -470,13 +548,17 @@ impl<'a> Ctx<'a> {
             Slot::OrgAcronym => Filled::plain(self.acronym(group, rng)),
             Slot::OrgUnit => Filled::plain(self.pools.bodies.unit(rng)),
             Slot::OrgRegistry => Filled::plain(self.pools.bodies.registry(rng)),
+            Slot::OrgChain => Filled::plain(self.pools.bodies.chain(rng)),
+            Slot::OrgUniv => Filled::plain(self.pools.bodies.university(rng)),
+            Slot::OrgCouncil => Filled::plain(self.pools.bodies.council(rng)),
+            Slot::OrgParty => Filled::plain(self.pools.bodies.party(rng)),
             Slot::Address => {
                 let a = self.address(false, rng)?.one_line();
-                Filled::plain(self.with_room(a, ", ", rng))
+                Filled::plain(self.shaped(a, ", ", rng))
             }
             Slot::AddressMultiline => {
                 let a = self.address(true, rng)?.text.clone();
-                Filled::plain(self.with_room(a, "\n", rng))
+                Filled::plain(self.shaped(a, "\n", rng))
             }
             Slot::AddressPersonStreet => {
                 let (_, capital, streets) = templates::PERSON_NAMED_STREETS
@@ -559,6 +641,12 @@ impl<'a> Ctx<'a> {
             Slot::Register => {
                 Filled::plain(localized(templates::REGISTERS, self.country, 0.7, rng))
             }
+            Slot::TitleLocal => Filled::plain(localized(templates::TITLES, self.country, 1.0, rng)),
+            Slot::SentenceLocal => Filled::plain(filler::sentence_local(self.country, rng)),
+            Slot::PlaceLocal => Filled::plain(localized(templates::PLACES, self.country, 1.0, rng)),
+            Slot::RoleHeading => {
+                Filled::plain(localized(templates::ROLE_HEADINGS, self.country, 1.0, rng))
+            }
             Slot::Greeting => {
                 Filled::plain(localized(templates::GREETINGS, self.country, 0.5, rng))
             }
@@ -577,6 +665,32 @@ impl<'a> Ctx<'a> {
                 .or_insert_with(|| filled.value.clone());
         }
         Ok(filled)
+    }
+
+    /// A person whose name is written in the country's own script, when the pool has any.
+    /// A spaced Japanese name shows where the family name ends; `spaced` is the share of
+    /// Japanese draws that must have one.
+    fn native_person(&self, spaced: f64, rng: &mut ChaCha8Rng) -> anyhow::Result<PoolPerson> {
+        let native = |p: &&PoolPerson| match self.country {
+            "GE" => p.script == "georgian",
+            "JP" => p.cjk(),
+            _ => p.latin(),
+        };
+        let candidates: Vec<&PoolPerson> = self.pools.people.iter().filter(native).collect();
+        let with_space: Vec<&PoolPerson> = candidates
+            .iter()
+            .copied()
+            .filter(|p| p.cjk() && p.name.contains([' ', '\u{3000}']))
+            .collect();
+        let candidates = if with_space.is_empty() || !rng.random_bool(spaced) {
+            candidates
+        } else {
+            with_space
+        };
+        match candidates.choose(rng) {
+            Some(p) => Ok((*p).clone()),
+            None => self.person(rng),
+        }
     }
 
     fn person(&self, rng: &mut ChaCha8Rng) -> anyhow::Result<PoolPerson> {
@@ -629,22 +743,57 @@ impl<'a> Ctx<'a> {
         acronym
     }
 
-    /// `address` with, one time in ten, a room, suite, or mail stop line before it, which
-    /// real addresses carry and gold includes.
-    fn with_room(&self, address: String, sep: &str, rng: &mut ChaCha8Rng) -> String {
-        if self.plain || !rng.random_bool(0.1) {
+    /// `address` shaped as the country's documents write it. Gold includes a room, suite, mail
+    /// stop, or building line directly before the street, which a quarter of British and
+    /// American addresses carry; American federal addresses are often Washington quadrant
+    /// addresses with ZIP+4; German ones rarely end in a country line, often abbreviate
+    /// `Straße`, and give house-number ranges.
+    fn shaped(&self, address: String, sep: &str, rng: &mut ChaCha8Rng) -> String {
+        if self.plain {
+            return address;
+        }
+        let mut address = address;
+        match self.country {
+            "US" => {
+                if rng.random_bool(0.12) {
+                    address = washington(sep, rng);
+                }
+                if rng.random_bool(0.2) {
+                    address = with_zip4(&address, rng);
+                }
+            }
+            "DE" => {
+                if rng.random_bool(0.8) {
+                    address = without_last_line(&address, &["Deutschland", "Germany"], sep);
+                }
+                if rng.random_bool(0.2) {
+                    address = address.replace("straße", "str.").replace("Straße", "Str.");
+                }
+                if rng.random_bool(0.1) {
+                    address = with_number_range(&address, rng);
+                }
+            }
+            _ => {}
+        }
+        let rate = match self.country {
+            "US" | "GB" => 0.25,
+            "DE" => 0.1,
+            _ => 0.0,
+        };
+        if !rng.random_bool(rate) {
             return address;
         }
         let n = rng.random_range(2..=950);
         let room = match self.country {
-            "US" | "GB" => match rng.random_range(0..5) {
+            "US" | "GB" => match rng.random_range(0..7) {
                 0 => format!("Suite {n}"),
                 1 => format!("Room {}{}", n, ["", "A", "B"][rng.random_range(0..3)]),
                 2 => format!("Mail Stop {}", rng.random_range(1000..9999)),
                 3 => format!("Floor {}", rng.random_range(2..=30)),
-                _ => pick(templates::BUILDINGS, rng).to_string(),
+                4 => format!("Unit {}, {}", rng.random_range(1..=40), building_name(rng)),
+                _ => building_name(rng),
             },
-            "DE" => match rng.random_range(0..3) {
+            _ => match rng.random_range(0..3) {
                 0 => format!(
                     "Raum {}.{}",
                     rng.random_range(0..6),
@@ -653,7 +802,6 @@ impl<'a> Ctx<'a> {
                 1 => format!("Gebäude {}", ["A", "B", "C", "D"][rng.random_range(0..4)]),
                 _ => format!("{}. OG", rng.random_range(1..=6)),
             },
-            _ => return address,
         };
         format!("{room}{sep}{address}")
     }
@@ -671,7 +819,13 @@ impl<'a> Ctx<'a> {
             return Ok(name);
         }
         if rng.random_bool(0.25) {
-            return Ok(self.pools.bodies.body(false, rng).name);
+            let body = self.pools.bodies.body(false, rng);
+            // Documents name most bodies by their acronym once they have introduced them, and
+            // many never write the full name at all (`Contact HMRC`).
+            return Ok(match body.acronym {
+                Some(acronym) if rng.random_bool(0.3) => acronym,
+                _ => body.name,
+            });
         }
         // Registers store names in capitals; documents mostly do not, but some still print them.
         if rng.random_bool(0.65) && name.chars().any(char::is_alphabetic) && !has_lowercase(&name) {
@@ -780,6 +934,171 @@ fn capitalized(name: &str, rng: &mut ChaCha8Rng) -> String {
         Some((given, surnames)) if roll < 12 => format!("{given} {}", surnames.to_uppercase()),
         _ => name.to_string(),
     }
+}
+
+/// A building or site line: `Marine House`, `The Law Courts`, `Riverside Campus`.
+fn building_name(rng: &mut ChaCha8Rng) -> String {
+    if rng.random_bool(0.3) {
+        return pick(templates::BUILDINGS, rng).to_string();
+    }
+    let name = pick(
+        &[
+            "Anchor",
+            "Crown",
+            "Victoria",
+            "Riverside",
+            "Harbour",
+            "Albion",
+            "Kingsway",
+            "Wellington",
+            "Beaumont",
+            "Castle",
+            "Priory",
+            "Bridgewater",
+            "Lancaster",
+            "Endeavour",
+            "Mercury",
+        ],
+        rng,
+    );
+    let kind = pick(
+        &[
+            "House",
+            "Court",
+            "Building",
+            "Centre",
+            "Campus",
+            "Hall",
+            "Lodge",
+            "Plaza",
+            "Tower",
+            "Chambers",
+            "Business Park",
+            "Justice Centre",
+        ],
+        rng,
+    );
+    format!("{name} {kind}")
+}
+
+/// A federal address in Washington: `1200 New Jersey Avenue SE, West Building, Room
+/// W12-140, Washington, DC 20590-0001`.
+fn washington(sep: &str, rng: &mut ChaCha8Rng) -> String {
+    let avenue = pick(
+        &[
+            "New Jersey Avenue",
+            "Pennsylvania Avenue",
+            "Constitution Avenue",
+            "Independence Avenue",
+            "Massachusetts Avenue",
+            "Maryland Avenue",
+            "Virginia Avenue",
+            "Delaware Avenue",
+        ],
+        rng,
+    );
+    let quadrant = pick(&["NW", "SE", "SW", "NE"], rng);
+    let number = rng.random_range(1..=2500);
+    let street = format!("{number} {avenue} {quadrant}");
+    let zip = rng.random_range(20001..=20599);
+    let mut lines = vec![street];
+    if rng.random_bool(0.5) {
+        lines.push(format!(
+            "{}, Room {}{}-{}",
+            pick(
+                &["West Building", "East Building", "Main Building", "Annex"],
+                rng
+            ),
+            pick(&["W", "E", ""], rng),
+            rng.random_range(1..=12),
+            rng.random_range(100..=499)
+        ));
+    }
+    lines.push(format!("Washington, DC {zip}"));
+    lines.join(sep)
+}
+
+/// `address` with a ZIP+4 in place of its five-digit ZIP.
+fn with_zip4(address: &str, rng: &mut ChaCha8Rng) -> String {
+    let bytes = address.as_bytes();
+    let zip = (0..bytes.len().saturating_sub(4)).rev().find(|&i| {
+        bytes[i..i + 5].iter().all(u8::is_ascii_digit)
+            && (i == 0 || !bytes[i - 1].is_ascii_digit())
+            && bytes.get(i + 5).is_none_or(|b| !b.is_ascii_digit())
+            && !(bytes.get(i + 5) == Some(&b'-')
+                && bytes.get(i + 6).is_some_and(u8::is_ascii_digit))
+    });
+    match zip {
+        Some(i) => format!(
+            "{}-{:04}{}",
+            &address[..i + 5],
+            rng.random_range(1..=9999),
+            &address[i + 5..]
+        ),
+        None => address.to_string(),
+    }
+}
+
+/// `address` without a last line (or last comma-separated part) that is one of `names`.
+fn without_last_line(address: &str, names: &[&str], sep: &str) -> String {
+    match address.rsplit_once(sep) {
+        Some((head, last)) if names.contains(&last.trim()) => head.to_string(),
+        _ => address.to_string(),
+    }
+}
+
+/// `address` with its first house number turned into a range: `Heidestraße 26–28`.
+fn with_number_range(address: &str, rng: &mut ChaCha8Rng) -> String {
+    let bytes = address.as_bytes();
+    let Some(start) = (1..bytes.len()).find(|&i| bytes[i].is_ascii_digit() && bytes[i - 1] == b' ')
+    else {
+        return address.to_string();
+    };
+    let end = (start..bytes.len())
+        .find(|&i| !bytes[i].is_ascii_digit())
+        .unwrap_or(bytes.len());
+    // Five digits are a postcode and a following '.' makes an ordinal or a date, not a number.
+    if end - start >= 5 || bytes.get(end) == Some(&b'.') {
+        return address.to_string();
+    }
+    let Ok(n) = address[start..end].parse::<u32>() else {
+        return address.to_string();
+    };
+    let dash = pick(&["–", "-", " – "], rng);
+    format!(
+        "{}{dash}{}{}",
+        &address[..end],
+        n + rng.random_range(1..=4),
+        &address[end..]
+    )
+}
+
+/// The family name alone: the last word of a Latin or Georgian name, the first word of a
+/// spaced Japanese one, and the part after `・` of a katakana one. An unspaced kanji name,
+/// whose family name may be two or three characters long, stays whole.
+fn family_name(p: &PoolPerson) -> String {
+    if p.cjk() {
+        return match p.name.split_once([' ', '\u{3000}']) {
+            Some((family, _)) => family.to_string(),
+            None => match p.name.rsplit_once('・') {
+                Some((_, family)) => family.to_string(),
+                None => p.name.clone(),
+            },
+        };
+    }
+    p.name
+        .split_whitespace()
+        .rev()
+        .find(|w| !is_suffix_or_initial(w))
+        .unwrap_or(&p.name)
+        .trim_end_matches(',')
+        .to_string()
+}
+
+/// A generational suffix or an initial, which never stands alone for the family name.
+fn is_suffix_or_initial(word: &str) -> bool {
+    let bare = word.trim_end_matches([',', '.']);
+    matches!(bare, "Jr" | "Sr" | "II" | "III" | "IV") || bare.chars().count() == 1
 }
 
 /// The first word of a name, or the whole name in Japanese script.
@@ -975,14 +1294,31 @@ pub fn render(template: &Template, ctx: &mut Ctx, rng: &mut ChaCha8Rng) -> anyho
     let mut entities = Vec::new();
     let mut links = Vec::new();
     let mut phones_fixture_safe = true;
-    let mut rest = template.text;
-    for (slot, group) in template.slots()? {
+    let expanded = expand_lists(template.text, ctx.country, rng);
+    let refs = templates::parse_slots(&expanded)?;
+    ctx.acronym_groups = refs
+        .iter()
+        .filter(|r| r.slot == Slot::OrgAcronym && r.group > 0)
+        .map(|r| r.group)
+        .collect();
+    let mut rest = expanded.as_str();
+    for SlotRef { slot, group, form } in refs {
         let open = rest
             .find('{')
             .context("slot list and template text disagree")?;
         let close = open + rest[open..].find('}').context("unclosed slot")?;
         text.push_str(&rest[..open]);
-        let filled = ctx.fill(slot, group, rng)?;
+        let mut filled = ctx.fill(slot, group, rng)?;
+        // A case ending or possessive goes on the name itself, never after a post-nominal.
+        if form != inflect::Form::Plain {
+            filled.suffix = None;
+        }
+        let (value, outside) =
+            inflect::apply(&filled.value, form, slot.kind() == Some(Kind::Person), rng);
+        filled.value = value;
+        if outside.is_some() {
+            filled.suffix = outside;
+        }
         phones_fixture_safe &= filled.fixture_safe;
         if let Some(prefix) = filled.prefix {
             text.push_str(prefix);
@@ -1019,6 +1355,32 @@ pub fn render(template: &Template, ctx: &mut Ctx, rng: &mut ChaCha8Rng) -> anyho
         country: ctx.country,
         phones_fixture_safe,
     })
+}
+
+/// `text` with each list macro written out as several slots of its kind: `{person_list}`
+/// becomes two to twelve `{person}` slots (a few runs are longer) joined by commas, line
+/// breaks, or `und`/`and`, as mastheads, boards, and staff pages list people; `{org_list}`
+/// does the same for organizations.
+fn expand_lists(text: &str, country: &str, rng: &mut ChaCha8Rng) -> String {
+    let mut out = text.to_string();
+    for (list, slot) in [("{person_list}", "{person}"), ("{org_list}", "{org}")] {
+        while let Some(at) = out.find(list) {
+            let n = if rng.random_bool(0.15) {
+                rng.random_range(12..=30)
+            } else {
+                rng.random_range(2..=12)
+            };
+            let sep = *pick(&[", ", "\n", "\n\n", "; ", " · "], rng);
+            let mut items = vec![slot; n].join(sep);
+            if sep == ", " && rng.random_bool(0.4) {
+                let last = items.rfind(", ").unwrap_or(0);
+                let and = if country == "DE" { " und " } else { " and " };
+                items.replace_range(last..last + 2, and);
+            }
+            out.replace_range(at..at + list.len(), &items);
+        }
+    }
+    out
 }
 
 /// `doc` padded with filler text in its country's language (see `filler`), or `doc` as it was
@@ -1147,7 +1509,10 @@ pub fn run(config_path: &Path, sample: Option<usize>, family: Option<&str>) -> a
         };
         for _ in 0..n {
             let country = *countries.choose(&mut rng).context("no countries")?;
-            let template = chosen.choose(&mut rng).context("no templates")?;
+            let fitting: Vec<&&Template> = chosen.iter().filter(|t| t.fits(country)).collect();
+            let Some(template) = fitting.choose(&mut rng) else {
+                continue;
+            };
             let mut ctx = Ctx::new(country, &pools[&(Split::Train, country)]);
             let doc = render(template, &mut ctx, &mut rng)?;
             let doc = wrapped(doc, &ctx, usize::MAX, &mut rng)?;
@@ -1271,8 +1636,10 @@ fn generate(
                 if attempts > 100 {
                     bail!("100 rendered documents in a row failed the checks; see `dropped`");
                 }
-                let template = choose_template(&pool, subset, rng)?;
                 let country = *countries.choose(rng).context("no countries")?;
+                let fitting: Vec<&Template> =
+                    pool.iter().copied().filter(|t| t.fits(country)).collect();
+                let template = choose_template(&fitting, subset, rng)?;
                 let mut ctx = Ctx::new(country, &pools[&(split, country)]);
                 let doc = wrapped(render(template, &mut ctx, rng)?, &ctx, cfg.max_tokens, rng)?;
                 match check(&doc, cfg.max_tokens) {
@@ -1617,8 +1984,6 @@ fn print_summary(rows: &[Row], dropped: &Dropped) {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
-
     use super::*;
 
     fn stub_pools(people: &[(&str, &str)]) -> Pools {
@@ -1654,6 +2019,7 @@ mod tests {
             family: Family::Prose,
             id: 0,
             category: Category::Nothing,
+            countries: &[],
             text,
         }
     }
@@ -1739,7 +2105,7 @@ mod tests {
         let pools = stub_pools(&[("Nino Beridze", "latin"), ("山田太郎", "han")]);
         let all = templates::all().unwrap();
         for country in ["US", "GB", "DE", "GE", "JP"] {
-            for (i, t) in all.iter().enumerate() {
+            for (i, t) in all.iter().enumerate().filter(|(_, t)| t.fits(country)) {
                 let mut ctx = Ctx::new(country, &pools);
                 let mut rng = ChaCha8Rng::seed_from_u64(i as u64);
                 let doc = render(t, &mut ctx, &mut rng).unwrap();
@@ -1875,6 +2241,42 @@ mod tests {
         assert!(forms.contains("MARAVILLAS ABADÍA JOVER"));
         assert_eq!(forms.len(), 3);
         assert_eq!(capitalized("Cher", &mut rng).to_lowercase(), "cher");
+    }
+
+    #[test]
+    fn address_shapes_keep_their_parts() {
+        let mut rng = ChaCha8Rng::seed_from_u64(4);
+        let dc = washington("\n", &mut rng);
+        assert!(dc.ends_with(|c: char| c.is_ascii_digit()) && dc.contains("Washington, DC 20"));
+        assert_eq!(
+            with_zip4("1 Main St, Albany, NY 12207", &mut rng).len(),
+            "1 Main St, Albany, NY 12207".len() + 5
+        );
+        assert_eq!(with_zip4("No zip here", &mut rng), "No zip here");
+        assert_eq!(
+            with_zip4("Washington, DC 20590-0001", &mut rng),
+            "Washington, DC 20590-0001"
+        );
+        let person = |name: &str, script: &str| PoolPerson {
+            name: name.to_string(),
+            script: script.to_string(),
+        };
+        assert_eq!(family_name(&person("John Smith Jr.", "latin")), "Smith");
+        assert_eq!(family_name(&person("Mary J. Blige", "latin")), "Blige");
+        assert_eq!(family_name(&person("佐々木 希", "han")), "佐々木");
+        assert_eq!(family_name(&person("佐々木希", "han")), "佐々木希");
+        assert_eq!(family_name(&person("ジョン・スミス", "katakana")), "スミス");
+        assert_eq!(
+            without_last_line(
+                "Hauptstraße 5\n10115 Berlin\nDeutschland",
+                &["Deutschland"],
+                "\n"
+            ),
+            "Hauptstraße 5\n10115 Berlin"
+        );
+        let range = with_number_range("Heidestraße 26, 10557 Berlin", &mut rng);
+        assert!(range.starts_with("Heidestraße 26") && range.ends_with(", 10557 Berlin"));
+        assert_ne!(range, "Heidestraße 26, 10557 Berlin");
     }
 
     #[test]

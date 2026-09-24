@@ -432,14 +432,16 @@ pub fn with_local_country(e: &LabelledExample, text: &str) -> String {
 }
 
 /// Whether the row is an address a letter could be sent to, as the review guidelines define
-/// one: a house number, a PO box, or a unit or floor on a named street. A town, a postcode
-/// with its town, or a street without a number is a place, and labelling it as an address
-/// would teach the detector the opposite of what it is measured against.
+/// one: a house number, a PO box, a unit or floor on a named street, or a street with its
+/// town and postcode (`FitzRoy Road, Exeter, EX1 3PB`). A town, a postcode with its town, or
+/// a street alone is a place, and labelling it as an address would teach the detector the
+/// opposite of what it is measured against.
 pub fn postal(e: &LabelledExample) -> bool {
     let has = |label: AddressLabel| e.spans.iter().any(|s| s.label == label);
     has(AddressLabel::HouseNumber)
         || has(AddressLabel::PoBox)
         || ((has(AddressLabel::Unit) || has(AddressLabel::Level)) && has(AddressLabel::Road))
+        || (has(AddressLabel::Road) && has(AddressLabel::Postcode) && has(AddressLabel::City))
 }
 
 /// `name` without a leading English article, which the guidelines keep outside an org span.

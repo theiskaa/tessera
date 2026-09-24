@@ -2,7 +2,7 @@
   "source": "tessera-generator",
   "version": 1,
   "seed": 42,
-  "templates": 129,
+  "templates": 213,
   "max_tokens": 900,
   "names": "data/processed/names",
   "addresses": "data/processed/parser",
@@ -34,192 +34,199 @@
     },
     "family": {
       "email_body": {
-        "test": 2106,
-        "train": 24496,
-        "valid": 1395
+        "test": 2124,
+        "train": 23484,
+        "valid": 1383
       },
       "invoice": {
-        "test": 2158,
-        "train": 24525,
-        "valid": 1401
+        "test": 1658,
+        "train": 20266,
+        "valid": 1178
       },
       "letterhead": {
-        "test": 2096,
-        "train": 24101,
-        "valid": 1457
+        "test": 2437,
+        "train": 28146,
+        "valid": 1708
       },
       "markdown": {
         "test": 5000
       },
       "prose": {
-        "test": 2214,
-        "train": 24360,
-        "valid": 1448
+        "test": 2645,
+        "train": 28154,
+        "valid": 1658
       },
       "signature": {
-        "test": 2156,
-        "train": 24233,
-        "valid": 1462
+        "test": 2128,
+        "train": 24607,
+        "valid": 1447
       },
       "support": {
-        "test": 2094,
-        "train": 24429,
-        "valid": 1430
+        "test": 1593,
+        "train": 19421,
+        "valid": 1107
       },
       "table": {
-        "test": 2176,
-        "train": 23856,
-        "valid": 1407
+        "test": 1854,
+        "train": 19882,
+        "valid": 1164
+      },
+      "technical": {
+        "test": 561,
+        "train": 6040,
+        "valid": 355
       }
     },
     "category": {
       "both": {
-        "test": 12165,
-        "train": 84552,
-        "valid": 5003
+        "test": 11138,
+        "train": 85100,
+        "valid": 5083
       },
       "no_address_with_person": {
-        "test": 2845,
-        "train": 28641,
-        "valid": 1666
+        "test": 3792,
+        "train": 28291,
+        "valid": 1607
       },
       "no_person_with_address": {
-        "test": 2536,
-        "train": 28235,
-        "valid": 1712
+        "test": 2553,
+        "train": 28424,
+        "valid": 1666
       },
       "nothing": {
-        "test": 2454,
-        "train": 28572,
-        "valid": 1619
+        "test": 2517,
+        "train": 28185,
+        "valid": 1644
       }
     },
     "country": {
       "DE": {
-        "test": 4049,
-        "train": 33899,
-        "valid": 2083
+        "test": 4065,
+        "train": 34208,
+        "valid": 2039
       },
       "GB": {
-        "test": 3977,
-        "train": 34092,
-        "valid": 1975
+        "test": 4112,
+        "train": 34081,
+        "valid": 2001
       },
       "GE": {
-        "test": 3959,
-        "train": 33911,
-        "valid": 1988
+        "test": 4006,
+        "train": 34034,
+        "valid": 1943
       },
       "JP": {
-        "test": 4070,
-        "train": 34061,
-        "valid": 1974
+        "test": 3798,
+        "train": 33743,
+        "valid": 1987
       },
       "US": {
-        "test": 3945,
-        "train": 34037,
-        "valid": 1980
+        "test": 4019,
+        "train": 33934,
+        "valid": 2030
       }
     }
   },
   "train_category_share": {
-    "both": 0.49736470588235293,
-    "no_address_with_person": 0.16847647058823528,
-    "no_person_with_address": 0.16608823529411765,
-    "nothing": 0.1680705882352941
+    "both": 0.5005882352941177,
+    "no_address_with_person": 0.16641764705882353,
+    "no_person_with_address": 0.1672,
+    "nothing": 0.16579411764705881
   },
-  "dropped": {},
+  "dropped": {
+    "boundary_misaligned": 86
+  },
   "pools": {
     "DE/test": {
       "people": 956,
-      "orgs": 967,
+      "orgs": 954,
       "borrowed_orgs": 0,
-      "addresses": 3000
+      "addresses": 2345
     },
     "DE/train": {
       "people": 18006,
-      "orgs": 18017,
+      "orgs": 17743,
       "borrowed_orgs": 0,
-      "addresses": 30000
+      "addresses": 23542
     },
     "DE/valid": {
       "people": 1038,
-      "orgs": 1016,
+      "orgs": 1001,
       "borrowed_orgs": 0,
-      "addresses": 3000
+      "addresses": 2384
     },
     "GB/test": {
       "people": 998,
-      "orgs": 970,
+      "orgs": 562,
       "borrowed_orgs": 0,
-      "addresses": 3000
+      "addresses": 2083
     },
     "GB/train": {
       "people": 18006,
-      "orgs": 18011,
+      "orgs": 10591,
       "borrowed_orgs": 0,
-      "addresses": 30000
+      "addresses": 20969
     },
     "GB/valid": {
       "people": 996,
-      "orgs": 1019,
+      "orgs": 590,
       "borrowed_orgs": 0,
-      "addresses": 3000
+      "addresses": 2110
     },
     "GE/test": {
       "people": 465,
       "orgs": 200,
       "borrowed_orgs": 165,
-      "addresses": 3000
+      "addresses": 1416
     },
     "GE/train": {
-      "people": 8253,
-      "orgs": 2000,
-      "borrowed_orgs": 1344,
-      "addresses": 30000
+      "people": 8252,
+      "orgs": 1312,
+      "borrowed_orgs": 656,
+      "addresses": 14622
     },
     "GE/valid": {
       "people": 441,
       "orgs": 200,
       "borrowed_orgs": 156,
-      "addresses": 3000
+      "addresses": 1391
     },
     "JP/test": {
       "people": 1010,
-      "orgs": 1004,
+      "orgs": 1002,
       "borrowed_orgs": 0,
-      "addresses": 2918
+      "addresses": 1847
     },
     "JP/train": {
-      "people": 17998,
-      "orgs": 17974,
+      "people": 17995,
+      "orgs": 17937,
       "borrowed_orgs": 0,
-      "addresses": 29828
+      "addresses": 19324
     },
     "JP/valid": {
       "people": 992,
-      "orgs": 1022,
+      "orgs": 1021,
       "borrowed_orgs": 0,
-      "addresses": 2927
+      "addresses": 1978
     },
     "US/test": {
       "people": 979,
-      "orgs": 938,
+      "orgs": 889,
       "borrowed_orgs": 0,
-      "addresses": 3000
+      "addresses": 2385
     },
     "US/train": {
-      "people": 18026,
-      "orgs": 18097,
+      "people": 18022,
+      "orgs": 17021,
       "borrowed_orgs": 0,
-      "addresses": 30000
+      "addresses": 23912
     },
     "US/valid": {
       "people": 995,
-      "orgs": 965,
+      "orgs": 911,
       "borrowed_orgs": 0,
-      "addresses": 3000
+      "addresses": 2396
     }
   },
-  "phones_fixture_safe_ratio": 0.80651
+  "phones_fixture_safe_ratio": 0.805565
 }

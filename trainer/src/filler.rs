@@ -232,6 +232,108 @@ const UNNAMED_HEADERS: &[(&str, &[&str])] = &[
     ("JP", &["2026年9月15日(月) 9:12 のメッセージ:"]),
 ];
 
+/// Press, notice, and imprint prose in the document's language, with no names, places, or
+/// organizations: long German sentences full of capitalized nouns, and Japanese and Georgian
+/// sentences as ministries and city halls write them.
+const PROSE: &[(&str, &[&str])] = &[
+    (
+        "DE",
+        &[
+            "Die Veranstaltung richtet sich an Eltern, Fachkräfte und alle Interessierten.",
+            "Eine Anmeldung ist bis zum Freitag der Vorwoche erforderlich.",
+            "Die Teilnahme ist kostenfrei, die Zahl der Plätze ist begrenzt.",
+            "Die Ergebnisse der Befragung werden im Frühjahr veröffentlicht.",
+            "Für die Dauer der Bauarbeiten wird eine Umleitung eingerichtet.",
+            "Die Sprechstunde findet an jedem ersten Mittwoch im Monat statt.",
+            "Die Inhalte unserer Seiten wurden mit größter Sorgfalt erstellt.",
+            "Für die Richtigkeit, Vollständigkeit und Aktualität der Inhalte können wir jedoch keine Gewähr übernehmen.",
+            "Die durch die Seitenbetreiber erstellten Inhalte und Werke unterliegen dem Urheberrecht.",
+            "Beiträge Dritter sind als solche gekennzeichnet.",
+            "Die Nutzung unserer Webseite ist in der Regel ohne Angabe personenbezogener Daten möglich.",
+            "Wir sind nicht bereit oder verpflichtet, an Streitbeilegungsverfahren vor einer Verbraucherschlichtungsstelle teilzunehmen.",
+            "Die Ausstellung ist dienstags bis sonntags von zehn bis achtzehn Uhr geöffnet.",
+            "Der Eintritt ist frei, Spenden sind willkommen.",
+            "Die Förderung erfolgt im Rahmen des Programms zur Stärkung der Nachbarschaften.",
+            "Anträge können ab sofort online gestellt werden.",
+            "Die Bürgerinnen und Bürger werden gebeten, den Bereich weiträumig zu umfahren.",
+            "Das Angebot wird aus Mitteln der Senatsverwaltung gefördert.",
+            "Weitere Informationen folgen in einer gesonderten Mitteilung.",
+            "Die Pressemitteilung ist zur Veröffentlichung freigegeben.",
+            "Im Anschluss an die Vorträge besteht Gelegenheit zum Austausch.",
+            "Die Wahl der Mitglieder erfolgt für die Dauer der Wahlperiode.",
+            "Bei Fragen zur Barrierefreiheit wenden Sie sich bitte an die Pressestelle.",
+            "Die Unterlagen stehen zum Herunterladen bereit.",
+            "Hinweise nimmt jede Polizeidienststelle entgegen.",
+            "Die Ermittlungen dauern an.",
+            "Der Ausschuss tagt öffentlich.",
+            "Die Kosten für die Sanierung belaufen sich auf rund zwei Millionen Euro.",
+            "Das Projekt läuft bis zum Ende des kommenden Jahres.",
+            "Die Kinder erwartet ein buntes Programm mit Spiel, Sport und Musik.",
+        ],
+    ),
+    (
+        "JP",
+        &[
+            "本件について、下記のとおりお知らせします。",
+            "詳細は別添資料を御参照ください。",
+            "今後とも関係機関と連携し、取組を進めてまいります。",
+            "会議は公開で行います。",
+            "傍聴を希望される方は、事前に登録をお願いします。",
+            "当日の模様は後日ウェブサイトで公開する予定です。",
+            "募集期間は本日から来月末までです。",
+            "意見の提出方法は別紙のとおりです。",
+            "取りまとめ結果については、改めて公表します。",
+            "申込みは先着順で受け付けます。",
+            "定員に達し次第、受付を終了します。",
+            "取材を希望される場合は、事前に御連絡ください。",
+            "報道関係者の皆様におかれましては、御協力をお願いいたします。",
+            "本調査は統計法に基づく基幹統計調査です。",
+            "調査結果の概要は次のとおりです。",
+            "対象期間は昨年四月から本年三月までです。",
+            "引き続き、情報収集に努めてまいります。",
+            "安全確保に万全を期してまいります。",
+            "御理解と御協力をお願いいたします。",
+            "詳しくは、担当までお問い合わせください。",
+        ],
+    ),
+    (
+        "GE",
+        &[
+            "შეხვედრაზე ორმხრივი თანამშრომლობის პერსპექტივები განიხილეს.",
+            "მხარეებმა თანამშრომლობის გაღრმავების მნიშვნელობა აღნიშნეს.",
+            "ღონისძიებას სტუდენტები და ახალგაზრდა მკვლევრები დაესწრნენ.",
+            "პროექტის განხორციელება მომავალ წელს დასრულდება.",
+            "სამუშაოები რამდენიმე ეტაპად წარიმართება.",
+            "განაცხადების მიღება მიმდინარე თვის ბოლომდე გაგრძელდება.",
+            "დეტალური ინფორმაცია ოფიციალურ ვებგვერდზეა განთავსებული.",
+            "შეხვედრა საქმიან ვითარებაში წარიმართა.",
+            "მონაწილეებმა მიმდინარე და დაგეგმილი პროექტები მიმოიხილეს.",
+            "ღონისძიება ყოველწლიურად იმართება.",
+            "კონკურსში მონაწილეობა ყველა მსურველს შეუძლია.",
+            "სამუშაოების დასრულება წლის ბოლოსთვისაა დაგეგმილი.",
+            "საქმიანობა საერთაშორისო სტანდარტების შესაბამისად წარიმართება.",
+            "პროგრამა ახალგაზრდების დასაქმების ხელშეწყობას ისახავს მიზნად.",
+            "საგზაო მოძრაობა დროებით შეიზღუდება.",
+            "მოსახლეობას მოთმინებისთვის მადლობას ვუხდით.",
+            "დამატებითი ინფორმაციისთვის შეგიძლიათ დაგვიკავშირდეთ.",
+            "ვიზიტის ფარგლებში რამდენიმე სამუშაო შეხვედრა გაიმართება.",
+            "სემინარი ორი დღის განმავლობაში გაგრძელდება.",
+            "მიღწეული შედეგები მომავალი წლის გეგმის საფუძველი გახდება.",
+        ],
+    ),
+];
+
+/// A sentence in the document's own language, falling back to English.
+pub fn sentence_local(country: &str, rng: &mut ChaCha8Rng) -> &'static str {
+    let prose = PROSE.iter().find(|(c, _)| *c == country).map(|(_, l)| *l);
+    match (prose, own_sentences(country)) {
+        (Some(p), _) if rng.random_bool(0.6) => pick(p, rng),
+        (_, Some(own)) => pick(own, rng),
+        (Some(p), None) => pick(p, rng),
+        (None, None) => english(rng),
+    }
+}
+
 /// A neutral sentence: the document's language half the time when there is a list for it,
 /// otherwise English, with or without numbers.
 pub fn sentence(country: &str, rng: &mut ChaCha8Rng) -> &'static str {

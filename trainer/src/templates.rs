@@ -5,9 +5,11 @@
 //! `family_index * 100 + n`. The negative lists hold words that look like entities but are
 //! not labelled: places and months that are also first names, companies named after people.
 
-use anyhow::bail;
+use anyhow::{Context, bail};
 
 use crate::generate::{Category, Family, Slot};
+use crate::inflect::Form;
+use crate::local_templates;
 use Category::{Both, NoAddressWithPerson as NoAddr, NoPersonWithAddress as NoPers, Nothing};
 use Family::*;
 
@@ -17,7 +19,48 @@ pub struct Template {
     pub family: Family,
     pub id: u32,
     pub category: Category,
+    /// The countries a template is written for; empty for every country.
+    pub countries: &'static [&'static str],
     pub text: &'static str,
+}
+
+/// One placeholder of a template: the slot, its link group (0 when unlinked), and the word
+/// form its value takes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SlotRef {
+    pub slot: Slot,
+    pub group: u8,
+    pub form: Form,
+}
+
+/// The placeholders of template text in order: `{slot}`, `{slot#n}`, `{slot:form}`, or
+/// `{slot:form#n}`.
+pub fn parse_slots(text: &str) -> anyhow::Result<Vec<SlotRef>> {
+    let mut out = Vec::new();
+    let mut rest = text;
+    while let Some(open) = rest.find('{') {
+        let Some(len) = rest[open..].find('}') else {
+            bail!("unclosed slot in {text:?}");
+        };
+        let inner = &rest[open + 1..open + len];
+        let (name, group) = match inner.split_once('#') {
+            Some((n, g)) => (n, g.parse::<u8>()?),
+            None => (inner, 0),
+        };
+        let (name, form) = match name.split_once(':') {
+            Some((n, f)) => match Form::parse(f) {
+                Some(form) => (n, form),
+                None => bail!("unknown form {f} in {text:?}"),
+            },
+            None => (name, Form::Plain),
+        };
+        let Some(slot) = Slot::parse(name) else {
+            bail!("unknown slot {name} in {text:?}");
+        };
+        out.push(SlotRef { slot, group, form });
+        rest = &rest[open + len + 1..];
+    }
+    Ok(out)
 }
 
 const TEMPLATES: &[(Family, u32, Category, &str)] = &[
@@ -1056,26 +1099,14 @@ impl Template {
         self.family.held_out() || self.id % 10 == 9
     }
 
-    /// The slots in order, each with its link group (0 when unlinked).
-    pub fn slots(&self) -> anyhow::Result<Vec<(Slot, u8)>> {
-        let mut out = Vec::new();
-        let mut rest = self.text;
-        while let Some(open) = rest.find('{') {
-            let Some(len) = rest[open..].find('}') else {
-                bail!("unclosed slot in template {}", self.id);
-            };
-            let inner = &rest[open + 1..open + len];
-            let (name, group) = match inner.split_once('#') {
-                Some((n, g)) => (n, g.parse::<u8>()?),
-                None => (inner, 0),
-            };
-            let Some(slot) = Slot::parse(name) else {
-                bail!("unknown slot {name} in template {}", self.id);
-            };
-            out.push((slot, group));
-            rest = &rest[open + len + 1..];
-        }
-        Ok(out)
+    /// The slots in order.
+    pub fn slots(&self) -> anyhow::Result<Vec<SlotRef>> {
+        parse_slots(self.text).with_context(|| format!("template {}", self.id))
+    }
+
+    /// Whether this template may be rendered for `country`.
+    pub fn fits(&self, country: &str) -> bool {
+        self.countries.is_empty() || self.countries.contains(&country)
     }
 
     /// The category the slots imply: whether any slot yields a person and any an address.
@@ -1083,7 +1114,7 @@ impl Template {
         let kinds: Vec<_> = self
             .slots()?
             .into_iter()
-            .filter_map(|(s, _)| s.kind())
+            .filter_map(|r| r.slot.kind())
             .collect();
         let person = kinds.contains(&tessera::Kind::Person);
         let address = kinds.contains(&tessera::Kind::Address);
@@ -1101,11 +1132,14 @@ impl Template {
 pub fn all() -> anyhow::Result<Vec<Template>> {
     TEMPLATES
         .iter()
-        .map(|&(family, id, category, text)| {
+        .map(|&(family, id, category, text)| (family, id, category, &[][..], text))
+        .chain(local_templates::TEMPLATES.iter().copied())
+        .map(|(family, id, category, countries, text)| {
             let t = Template {
                 family,
                 id,
                 category,
+                countries,
                 text,
             };
             let derived = t.derived_category()?;
@@ -1731,6 +1765,69 @@ pub const TITLES: &[(&str, &[&str])] = &[
     ),
 ];
 
+/// Places named in lists and tables that are not addresses or organizations: prefectures and
+/// cities, regions, districts.
+pub const PLACES: &[(&str, &[&str])] = &[
+    (
+        "en",
+        &[
+            "Yorkshire",
+            "Kent",
+            "Cornwall",
+            "Ohio",
+            "Texas",
+            "Oregon",
+            "Scotland",
+            "Wales",
+        ],
+    ),
+    (
+        "JP",
+        &[
+            "北海道",
+            "青森県",
+            "長野県",
+            "大分県",
+            "熊本県",
+            "大分市",
+            "松本市",
+            "函館市",
+            "那覇市",
+            "高知県",
+        ],
+    ),
+];
+
+/// Headings above lists of people: mastheads, boards, staff pages.
+pub const ROLE_HEADINGS: &[(&str, &[&str])] = &[
+    (
+        "en",
+        &[
+            "Our people",
+            "Our management",
+            "Board of Trustees",
+            "Editorial team",
+            "Leadership",
+            "Directors",
+        ],
+    ),
+    (
+        "DE",
+        &[
+            "Chefredaktion",
+            "Redaktion",
+            "Leitende Redakteure",
+            "Geschäftsführung",
+            "Vorstand",
+            "Aufsichtsrat",
+            "Herausgeber",
+            "Autorinnen und Autoren",
+            "Vertreten durch",
+            "Verantwortlich i.S.d. § 18 Abs. 2 MStV",
+        ],
+    ),
+];
+
 /// Neutral sentences with no proper nouns and no digits; only the first word is capitalized.
 pub const FILLER_SENTENCES: &[&str] = &[
     "Thanks again for the quick turnaround on this.",
@@ -1787,11 +1884,11 @@ mod tests {
     #[test]
     fn every_template_parses_with_its_declared_category_and_a_unique_id() {
         let all = all().unwrap();
-        assert_eq!(all.len(), 171);
+        assert_eq!(all.len(), 213);
         let mut ids: Vec<u32> = all.iter().map(|t| t.id).collect();
         ids.sort_unstable();
         ids.dedup();
-        assert_eq!(ids.len(), 171);
+        assert_eq!(ids.len(), 213);
         for t in &all {
             assert_eq!(t.id / 100, t.family as u32, "template {}", t.id);
         }
@@ -1800,7 +1897,7 @@ mod tests {
     #[test]
     fn test_only_templates_are_held_out_families_and_ids_ending_in_nine() {
         let all = all().unwrap();
-        assert_eq!(all.iter().filter(|t| t.test_only()).count(), 30);
+        assert_eq!(all.iter().filter(|t| t.test_only()).count(), 35);
         assert!(
             all.iter()
                 .filter(|t| !t.test_only())

@@ -16,6 +16,8 @@ mod filler;
 mod fixtures;
 mod generate;
 mod group_eval;
+mod inflect;
+mod local_templates;
 mod model_eval;
 mod names;
 mod negatives;

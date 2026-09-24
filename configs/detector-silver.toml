@@ -1,0 +1,62 @@
+name = "detector-silver"
+task = "detector"
+seed = 42
+
+[data]
+countries = ["US", "GB", "DE", "GE", "JP"]
+train_per_country = 30000
+valid_per_country = 3000
+test_per_country = 3000
+manifests = "data/manifests"
+processed = "data/processed/detector"
+
+[features]
+ngram_sizes = [2, 3, 4]
+hash_buckets = 32768
+hash_seed = 0
+ngram_dim = 48
+shape_dim = 16
+
+[net]
+hidden = 96
+kernel = 3
+dilations = [1, 2, 4, 8, 16, 1]
+dropout = 0.1
+max_params = 1000000
+ngram_from = "runs/parser-small"
+
+[train]
+epochs = 10
+batch_size = 32
+learning_rate = 0.001
+warmup_steps = 500
+patience = 2
+
+[detector]
+class_weights = [1.0, 3.0, 2.0, 3.0, 2.0, 2.0, 1.5]
+silver = [
+    "data/interim/silver/r1/train.jsonl",
+    "data/interim/silver/r3/train.jsonl",
+    "data/interim/silver/r5/train.jsonl",
+    "data/interim/silver/r7/train.jsonl",
+]
+silver_repeat = 10
+
+[names]
+countries = ["US", "GB", "DE", "GE", "JP"]
+people_per_country = 20000
+orgs_per_country = 20000
+raw = "data/raw"
+interim = "data/interim"
+out = "data/processed/names"
+sample_seed = 42
+birth_years = [1930, 2005]
+
+[generate]
+train = 170000
+valid = 10000
+test_seen = 10000
+test_heldout_templates = 5000
+test_heldout_families = 5000
+addresses = "data/processed/parser"
+max_tokens = 900
