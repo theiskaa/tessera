@@ -27,6 +27,22 @@ mod model;
 mod policy;
 #[cfg(feature = "profile")]
 pub mod profile;
+
+/// The dense kernel's simd128 and scalar paths, for the test that they agree bit for bit. Not a
+/// stable API.
+#[cfg(feature = "profile")]
+#[doc(hidden)]
+pub mod kernel_probe {
+    /// Adds `sum_i weights[i, o] * x[i]` to `y[o]` on the path this build uses.
+    pub fn accumulate(weights: &[f32], x: &[f32], y: &mut [f32]) {
+        crate::model::kernels::accumulate(weights, x, y);
+    }
+
+    /// The same on the scalar reference path.
+    pub fn accumulate_scalar(weights: &[f32], x: &[f32], y: &mut [f32]) {
+        crate::model::kernels::accumulate_scalar(weights, x, y);
+    }
+}
 mod rules;
 mod token;
 #[cfg(feature = "wasm")]

@@ -79,16 +79,119 @@ impl Dense {
     /// Adds `sum_i w[tap, i, o] * x[i]` to `y[o]` for every output.
     fn accumulate(&self, tap: usize, x: &[f32], y: &mut [f32]) {
         let weights = &self.w[tap * self.input * self.output..(tap + 1) * self.input * self.output];
-        for (&v, row) in x.iter().zip(weights.chunks_exact(self.output)) {
-            for (acc, &w) in y.iter_mut().zip(row) {
-                *acc += w * v;
-            }
-        }
+        accumulate(weights, x, y);
     }
 
     fn finish(&self, y: &mut [f32]) {
         for ((acc, &s), &b) in y.iter_mut().zip(&self.scales).zip(&self.bias) {
             *acc = b + s * *acc;
+        }
+    }
+}
+
+/// Adds `sum_i weights[i, o] * x[i]` to `y[o]`, `weights` holding one row of `y.len()` per
+/// input. Every output sums `acc + w * v` over the inputs in order, in both paths: the simd128
+/// path does four outputs per instruction with the same IEEE multiply and add, so its bits
+/// equal the scalar path's.
+pub(crate) fn accumulate(weights: &[f32], x: &[f32], y: &mut [f32]) {
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    accumulate_simd(weights, x, y);
+    #[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
+    accumulate_scalar(weights, x, y);
+}
+
+/// The reference for [`accumulate`], and its implementation without simd128.
+#[cfg_attr(
+    all(
+        target_arch = "wasm32",
+        target_feature = "simd128",
+        not(any(test, feature = "profile"))
+    ),
+    expect(
+        dead_code,
+        reason = "with simd128 only the kernel probe calls the scalar path"
+    )
+)]
+pub(crate) fn accumulate_scalar(weights: &[f32], x: &[f32], y: &mut [f32]) {
+    if y.is_empty() {
+        return;
+    }
+    for (&v, row) in x.iter().zip(weights.chunks_exact(y.len())) {
+        for (acc, &w) in y.iter_mut().zip(row) {
+            *acc += w * v;
+        }
+    }
+}
+
+/// [`accumulate`] on simd128: sixteen outputs at a time held in four registers across every
+/// input, then four at a time, then the rest as in the scalar path.
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+fn accumulate_simd(weights: &[f32], x: &[f32], y: &mut [f32]) {
+    use core::arch::wasm32::{f32x4_add, f32x4_mul, f32x4_splat, v128, v128_load, v128_store};
+
+    let output = y.len();
+    if output == 0 {
+        return;
+    }
+    let rows = || x.iter().zip(weights.chunks_exact(output));
+    let mut o = 0;
+    while o + 16 <= output {
+        let out = &mut y[o..o + 16];
+        // SAFETY: `out` holds sixteen f32, the bytes of four `v128`, and `v128_load` permits
+        // unaligned reads.
+        let mut acc = unsafe {
+            let p = out.as_ptr() as *const v128;
+            [
+                v128_load(p),
+                v128_load(p.add(1)),
+                v128_load(p.add(2)),
+                v128_load(p.add(3)),
+            ]
+        };
+        for (&v, row) in rows() {
+            let v = f32x4_splat(v);
+            let w = &row[o..o + 16];
+            // SAFETY: `w` holds sixteen f32, as above.
+            let w = unsafe {
+                let p = w.as_ptr() as *const v128;
+                [
+                    v128_load(p),
+                    v128_load(p.add(1)),
+                    v128_load(p.add(2)),
+                    v128_load(p.add(3)),
+                ]
+            };
+            for (a, w) in acc.iter_mut().zip(w) {
+                *a = f32x4_add(*a, f32x4_mul(w, v));
+            }
+        }
+        // SAFETY: `out` holds sixteen f32 and `v128_store` permits unaligned writes.
+        unsafe {
+            let p = out.as_mut_ptr() as *mut v128;
+            for (i, a) in acc.into_iter().enumerate() {
+                v128_store(p.add(i), a);
+            }
+        }
+        o += 16;
+    }
+    while o + 4 <= output {
+        let out = &mut y[o..o + 4];
+        // SAFETY: `out` holds four f32, the bytes of one `v128`.
+        let mut acc = unsafe { v128_load(out.as_ptr() as *const v128) };
+        for (&v, row) in rows() {
+            // SAFETY: the slice holds four f32.
+            let w = unsafe { v128_load(row[o..o + 4].as_ptr() as *const v128) };
+            acc = f32x4_add(acc, f32x4_mul(w, f32x4_splat(v)));
+        }
+        // SAFETY: `out` holds four f32.
+        unsafe { v128_store(out.as_mut_ptr() as *mut v128, acc) };
+        o += 4;
+    }
+    if o < output {
+        for (&v, row) in rows() {
+            for (acc, &w) in y[o..].iter_mut().zip(&row[o..]) {
+                *acc += w * v;
+            }
         }
     }
 }
