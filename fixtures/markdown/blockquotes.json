@@ -1,0 +1,22 @@
+{
+  "cases": [
+    {
+      "name": "quoted_signature_nested_quote",
+      "options": {"include_code": false, "include_html": false, "gfm_tables": true},
+      "input": "> Nino Beridze\n> nino@kavkaz-freight.example\n>\n> > +44 20 7946 0958\n\nOn Monday, Ana wrote:\n> ana@kavkaz-freight.example\n",
+      "blocks": [
+        {"start": 2, "end": 44},
+        {"start": 51, "end": 67},
+        {"start": 69, "end": 90},
+        {"start": 93, "end": 119}
+      ],
+      "skip": [],
+      "links": [],
+      "expected": [
+        {"kind": "email", "text": "nino@kavkaz-freight.example", "start": 17, "end": 44, "normalized": "nino@kavkaz-freight.example", "region": null, "min_confidence": 0.9},
+        {"kind": "phone", "text": "+44 20 7946 0958", "start": 51, "end": 67, "normalized": "+442079460958", "region": "GB", "min_confidence": 0.9},
+        {"kind": "email", "text": "ana@kavkaz-freight.example", "start": 93, "end": 119, "normalized": "ana@kavkaz-freight.example", "region": null, "min_confidence": 0.9}
+      ]
+    }
+  ]
+}

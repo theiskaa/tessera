@@ -1,0 +1,40 @@
+{
+  "cases": [
+    {
+      "name": "yaml_front_matter",
+      "options": {"include_code": false, "include_html": false, "gfm_tables": true},
+      "input": "---\ntitle: Contacts\nemail: fm@kavkaz-freight.example\n---\n\nBody nino@kavkaz-freight.example\n",
+      "blocks": [
+        {"start": 58, "end": 90}
+      ],
+      "skip": [
+        {"start": 0, "end": 56}
+      ],
+      "links": [],
+      "expected": [
+        {"kind": "email", "text": "nino@kavkaz-freight.example", "start": 63, "end": 90, "normalized": "nino@kavkaz-freight.example", "region": null, "min_confidence": 0.9}
+      ],
+      "must_not": [
+        {"kind": "email", "text": "fm@kavkaz-freight.example"}
+      ]
+    },
+    {
+      "name": "toml_front_matter",
+      "options": {"include_code": false, "include_html": false, "gfm_tables": true},
+      "input": "+++\nemail = \"fm@kavkaz-freight.example\"\n+++\n\nBody nino@kavkaz-freight.example\n",
+      "blocks": [
+        {"start": 45, "end": 77}
+      ],
+      "skip": [
+        {"start": 0, "end": 43}
+      ],
+      "links": [],
+      "expected": [
+        {"kind": "email", "text": "nino@kavkaz-freight.example", "start": 50, "end": 77, "normalized": "nino@kavkaz-freight.example", "region": null, "min_confidence": 0.9}
+      ],
+      "must_not": [
+        {"kind": "email", "text": "fm@kavkaz-freight.example"}
+      ]
+    }
+  ]
+}

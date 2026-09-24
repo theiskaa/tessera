@@ -1,0 +1,33 @@
+{
+  "cases": [
+    {
+      "name": "emphasis_softbreak_hardbreak_escape",
+      "options": {"include_code": false, "include_html": false, "gfm_tables": true},
+      "input": "Hello **Nino Beridze**,\n\nSend the invoice to *billing@kavkaz-freight.example* and\ncopy ops@kavkaz-freight.example on the thread.  \nThanks\\, Ana\n",
+      "blocks": [
+        {"start": 0, "end": 23},
+        {"start": 25, "end": 143}
+      ],
+      "skip": [],
+      "links": [],
+      "expected": [
+        {"kind": "email", "text": "billing@kavkaz-freight.example", "start": 46, "end": 76, "normalized": "billing@kavkaz-freight.example", "region": null, "min_confidence": 0.9},
+        {"kind": "email", "text": "ops@kavkaz-freight.example", "start": 87, "end": 113, "normalized": "ops@kavkaz-freight.example", "region": null, "min_confidence": 0.9}
+      ]
+    },
+    {
+      "name": "multibyte_prose_keeps_byte_offsets",
+      "options": {"include_code": false, "include_html": false, "gfm_tables": true},
+      "input": "**ნინო ბერიძე** — ფოსტა nino@kavkaz-freight.example、電話 +995 32 212 3456\n",
+      "blocks": [
+        {"start": 0, "end": 109}
+      ],
+      "skip": [],
+      "links": [],
+      "expected": [
+        {"kind": "email", "text": "nino@kavkaz-freight.example", "start": 56, "end": 83, "normalized": "nino@kavkaz-freight.example", "region": null, "min_confidence": 0.9},
+        {"kind": "phone", "text": "+995 32 212 3456", "start": 93, "end": 109, "normalized": "+995322123456", "region": "GE", "min_confidence": 0.9}
+      ]
+    }
+  ]
+}

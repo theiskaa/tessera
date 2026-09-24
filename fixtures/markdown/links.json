@@ -1,0 +1,41 @@
+{
+  "cases": [
+    {
+      "name": "mailto_tel_autolink_url_reference_precedence",
+      "options": {"include_code": false, "include_html": false, "gfm_tables": true},
+      "input": "Write to [Nino](mailto:nino@kavkaz-freight.example?subject=Hi) or call [the office](tel:+44-20-7946-0958).\nAutolink <ops@kavkaz-freight.example> and site [Kavkaz](https://kavkaz-freight.example/contact).\nReference [billing][b] here, and [old@kavkaz-freight.example](mailto:new@kavkaz-freight.example) moved.\n\n[b]: mailto:billing@kavkaz-freight.example\n",
+      "blocks": [
+        {"start": 0, "end": 307}
+      ],
+      "skip": [
+        {"start": 9, "end": 10},
+        {"start": 14, "end": 62},
+        {"start": 71, "end": 72},
+        {"start": 82, "end": 105},
+        {"start": 116, "end": 117},
+        {"start": 143, "end": 144},
+        {"start": 154, "end": 155},
+        {"start": 161, "end": 202},
+        {"start": 214, "end": 215},
+        {"start": 222, "end": 226},
+        {"start": 237, "end": 238},
+        {"start": 264, "end": 300}
+      ],
+      "links": [
+        {"target": "mailto:nino@kavkaz-freight.example?subject=Hi", "start": 9, "end": 62, "text_start": 10, "text_end": 14},
+        {"target": "tel:+44-20-7946-0958", "start": 71, "end": 105, "text_start": 72, "text_end": 82},
+        {"target": "mailto:ops@kavkaz-freight.example", "start": 116, "end": 144, "text_start": 117, "text_end": 143},
+        {"target": "https://kavkaz-freight.example/contact", "start": 154, "end": 202, "text_start": 155, "text_end": 161},
+        {"target": "mailto:billing@kavkaz-freight.example", "start": 214, "end": 226, "text_start": 215, "text_end": 222},
+        {"target": "mailto:new@kavkaz-freight.example", "start": 237, "end": 300, "text_start": 238, "text_end": 264}
+      ],
+      "expected": [
+        {"kind": "email", "text": "Nino", "start": 10, "end": 14, "normalized": "nino@kavkaz-freight.example", "region": null, "min_confidence": 0.9},
+        {"kind": "phone", "text": "the office", "start": 72, "end": 82, "normalized": "+442079460958", "region": "GB", "min_confidence": 0.9},
+        {"kind": "email", "text": "ops@kavkaz-freight.example", "start": 117, "end": 143, "normalized": "ops@kavkaz-freight.example", "region": null, "min_confidence": 0.9},
+        {"kind": "email", "text": "billing", "start": 215, "end": 222, "normalized": "billing@kavkaz-freight.example", "region": null, "min_confidence": 0.9},
+        {"kind": "email", "text": "old@kavkaz-freight.example", "start": 238, "end": 264, "normalized": "new@kavkaz-freight.example", "region": null, "min_confidence": 0.9}
+      ]
+    }
+  ]
+}

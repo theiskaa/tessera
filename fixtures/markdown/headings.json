@@ -1,0 +1,22 @@
+{
+  "cases": [
+    {
+      "name": "heading_paragraph_heading",
+      "options": {"include_code": false, "include_html": false, "gfm_tables": true},
+      "input": "# Kavkaz Freight LLC\n\n## Contact\n\nNino Beridze  \nnino@kavkaz-freight.example\n\n### Phone\n\n+44 20 7946 0958\n",
+      "blocks": [
+        {"start": 2, "end": 20},
+        {"start": 25, "end": 32},
+        {"start": 34, "end": 76},
+        {"start": 82, "end": 87},
+        {"start": 89, "end": 105}
+      ],
+      "skip": [],
+      "links": [],
+      "expected": [
+        {"kind": "email", "text": "nino@kavkaz-freight.example", "start": 49, "end": 76, "normalized": "nino@kavkaz-freight.example", "region": null, "min_confidence": 0.9},
+        {"kind": "phone", "text": "+44 20 7946 0958", "start": 89, "end": 105, "normalized": "+442079460958", "region": "GB", "min_confidence": 0.9}
+      ]
+    }
+  ]
+}

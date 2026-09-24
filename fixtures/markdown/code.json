@@ -1,0 +1,46 @@
+{
+  "cases": [
+    {
+      "name": "code_excluded_by_default",
+      "options": {"include_code": false, "include_html": false, "gfm_tables": true},
+      "input": "Contact nino@kavkaz-freight.example.\n\n```text\nhidden@kavkaz-freight.example\n```\n\n    indented@kavkaz-freight.example\n\nUse `inline@kavkaz-freight.example` for tests.\n",
+      "blocks": [
+        {"start": 0, "end": 36},
+        {"start": 118, "end": 164}
+      ],
+      "skip": [
+        {"start": 38, "end": 79},
+        {"start": 85, "end": 117},
+        {"start": 122, "end": 153}
+      ],
+      "links": [],
+      "expected": [
+        {"kind": "email", "text": "nino@kavkaz-freight.example", "start": 8, "end": 35, "normalized": "nino@kavkaz-freight.example", "region": null, "min_confidence": 0.9}
+      ],
+      "must_not": [
+        {"kind": "email", "text": "hidden@kavkaz-freight.example"},
+        {"kind": "email", "text": "indented@kavkaz-freight.example"},
+        {"kind": "email", "text": "inline@kavkaz-freight.example"}
+      ]
+    },
+    {
+      "name": "code_included",
+      "options": {"include_code": true, "include_html": false, "gfm_tables": true},
+      "input": "Contact nino@kavkaz-freight.example.\n\n```text\nhidden@kavkaz-freight.example\n```\n\n    indented@kavkaz-freight.example\n\nUse `inline@kavkaz-freight.example` for tests.\n",
+      "blocks": [
+        {"start": 0, "end": 36},
+        {"start": 46, "end": 76},
+        {"start": 85, "end": 117},
+        {"start": 118, "end": 164}
+      ],
+      "skip": [],
+      "links": [],
+      "expected": [
+        {"kind": "email", "text": "nino@kavkaz-freight.example", "start": 8, "end": 35, "normalized": "nino@kavkaz-freight.example", "region": null, "min_confidence": 0.9},
+        {"kind": "email", "text": "hidden@kavkaz-freight.example", "start": 46, "end": 75, "normalized": "hidden@kavkaz-freight.example", "region": null, "min_confidence": 0.9},
+        {"kind": "email", "text": "indented@kavkaz-freight.example", "start": 85, "end": 116, "normalized": "indented@kavkaz-freight.example", "region": null, "min_confidence": 0.9},
+        {"kind": "email", "text": "inline@kavkaz-freight.example", "start": 123, "end": 152, "normalized": "inline@kavkaz-freight.example", "region": null, "min_confidence": 0.9}
+      ]
+    }
+  ]
+}

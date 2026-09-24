@@ -48,7 +48,7 @@ wasm-size: wasm
 # test binary including the browser's start, and the worker tests compile the debug test module
 # once per worker, which leaves Firefox close to that edge.
 wasm-test +browsers="chrome firefox":
-    WASM_BINDGEN_TEST_TIMEOUT=120 wasm-pack test --headless {{prepend("--", browsers)}} tessera --features wasm
+    WASM_BINDGEN_TEST_TIMEOUT=120 wasm-pack test --headless {{prepend("--", browsers)}} tessera --features wasm,markdown
 
 # The built package in Node and Bun: loading from disk, UTF-16 offsets, typed errors, and
 # extractContacts on the spec's worked example.

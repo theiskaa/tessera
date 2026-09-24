@@ -1,0 +1,38 @@
+{
+  "cases": [
+    {
+      "name": "html_excluded_by_default",
+      "options": {"include_code": false, "include_html": false, "gfm_tables": true},
+      "input": "<div class=\"card\">\nNino Beridze<br>\nhtml@kavkaz-freight.example\n</div>\n\nLine<br>break with inline@kavkaz-freight.example.\n",
+      "blocks": [
+        {"start": 72, "end": 121}
+      ],
+      "skip": [
+        {"start": 0, "end": 71},
+        {"start": 76, "end": 80}
+      ],
+      "links": [],
+      "expected": [
+        {"kind": "email", "text": "inline@kavkaz-freight.example", "start": 91, "end": 120, "normalized": "inline@kavkaz-freight.example", "region": null, "min_confidence": 0.9}
+      ],
+      "must_not": [
+        {"kind": "email", "text": "html@kavkaz-freight.example"}
+      ]
+    },
+    {
+      "name": "html_included",
+      "options": {"include_code": false, "include_html": true, "gfm_tables": true},
+      "input": "<div class=\"card\">\nNino Beridze<br>\nhtml@kavkaz-freight.example\n</div>\n\nLine<br>break with inline@kavkaz-freight.example.\n",
+      "blocks": [
+        {"start": 0, "end": 71},
+        {"start": 72, "end": 121}
+      ],
+      "skip": [],
+      "links": [],
+      "expected": [
+        {"kind": "email", "text": "html@kavkaz-freight.example", "start": 36, "end": 63, "normalized": "html@kavkaz-freight.example", "region": null, "min_confidence": 0.9},
+        {"kind": "email", "text": "inline@kavkaz-freight.example", "start": 91, "end": 120, "normalized": "inline@kavkaz-freight.example", "region": null, "min_confidence": 0.9}
+      ]
+    }
+  ]
+}

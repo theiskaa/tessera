@@ -1,0 +1,28 @@
+{
+  "cases": [
+    {
+      "name": "tight_nested_loose_task",
+      "options": {"include_code": false, "include_html": false, "gfm_tables": true},
+      "input": "- Nino Beridze\n- nino@kavkaz-freight.example\n  continuation +44 20 7946 0958\n- Team\n  - lead@kavkaz-freight.example\n\n1. First\n\n   ana@kavkaz-freight.example\n\n- [ ] call +1 202 555 0143\n- [x] done\n",
+      "blocks": [
+        {"start": 2, "end": 14},
+        {"start": 17, "end": 76},
+        {"start": 79, "end": 83},
+        {"start": 88, "end": 115},
+        {"start": 120, "end": 125},
+        {"start": 130, "end": 156},
+        {"start": 160, "end": 184},
+        {"start": 187, "end": 195}
+      ],
+      "skip": [],
+      "links": [],
+      "expected": [
+        {"kind": "email", "text": "nino@kavkaz-freight.example", "start": 17, "end": 44, "normalized": "nino@kavkaz-freight.example", "region": null, "min_confidence": 0.9},
+        {"kind": "phone", "text": "+44 20 7946 0958", "start": 60, "end": 76, "normalized": "+442079460958", "region": "GB", "min_confidence": 0.9},
+        {"kind": "email", "text": "lead@kavkaz-freight.example", "start": 88, "end": 115, "normalized": "lead@kavkaz-freight.example", "region": null, "min_confidence": 0.9},
+        {"kind": "email", "text": "ana@kavkaz-freight.example", "start": 130, "end": 156, "normalized": "ana@kavkaz-freight.example", "region": null, "min_confidence": 0.9},
+        {"kind": "phone", "text": "+1 202 555 0143", "start": 169, "end": 184, "normalized": "+12025550143", "region": "US", "min_confidence": 0.9}
+      ]
+    }
+  ]
+}

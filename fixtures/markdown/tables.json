@@ -1,0 +1,44 @@
+{
+  "cases": [
+    {
+      "name": "gfm_table_cells",
+      "options": {"include_code": false, "include_html": false, "gfm_tables": true},
+      "input": "| Name | Email | Phone |\n| --- | --- | --- |\n| Nino Beridze | nino@kavkaz-freight.example | +44 20 7946 0958 |\n| Ana Kapanadze | ana@kavkaz-freight.example | +1 202 555 0143 |\n",
+      "blocks": [
+        {"start": 2, "end": 6},
+        {"start": 9, "end": 14},
+        {"start": 17, "end": 22},
+        {"start": 47, "end": 59},
+        {"start": 62, "end": 89},
+        {"start": 92, "end": 108},
+        {"start": 113, "end": 126},
+        {"start": 129, "end": 155},
+        {"start": 158, "end": 173}
+      ],
+      "skip": [],
+      "links": [],
+      "expected": [
+        {"kind": "email", "text": "nino@kavkaz-freight.example", "start": 62, "end": 89, "normalized": "nino@kavkaz-freight.example", "region": null, "min_confidence": 0.9},
+        {"kind": "phone", "text": "+44 20 7946 0958", "start": 92, "end": 108, "normalized": "+442079460958", "region": "GB", "min_confidence": 0.9},
+        {"kind": "email", "text": "ana@kavkaz-freight.example", "start": 129, "end": 155, "normalized": "ana@kavkaz-freight.example", "region": null, "min_confidence": 0.9},
+        {"kind": "phone", "text": "+1 202 555 0143", "start": 158, "end": 173, "normalized": "+12025550143", "region": "US", "min_confidence": 0.9}
+      ]
+    },
+    {
+      "name": "gfm_tables_disabled_is_one_paragraph",
+      "options": {"include_code": false, "include_html": false, "gfm_tables": false},
+      "input": "| Name | Email | Phone |\n| --- | --- | --- |\n| Nino Beridze | nino@kavkaz-freight.example | +44 20 7946 0958 |\n| Ana Kapanadze | ana@kavkaz-freight.example | +1 202 555 0143 |\n",
+      "blocks": [
+        {"start": 0, "end": 175}
+      ],
+      "skip": [],
+      "links": [],
+      "expected": [
+        {"kind": "email", "text": "nino@kavkaz-freight.example", "start": 62, "end": 89, "normalized": "nino@kavkaz-freight.example", "region": null, "min_confidence": 0.9},
+        {"kind": "phone", "text": "+44 20 7946 0958", "start": 92, "end": 108, "normalized": "+442079460958", "region": "GB", "min_confidence": 0.9},
+        {"kind": "email", "text": "ana@kavkaz-freight.example", "start": 129, "end": 155, "normalized": "ana@kavkaz-freight.example", "region": null, "min_confidence": 0.9},
+        {"kind": "phone", "text": "+1 202 555 0143", "start": 158, "end": 173, "normalized": "+12025550143", "region": "US", "min_confidence": 0.9}
+      ]
+    }
+  ]
+}
