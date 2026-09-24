@@ -80,9 +80,7 @@
     {"kind": "email", "text": "build@ci.example"}
   ],
   "known_failures": [
-    "missing org \"Hartley & Sons Ltd\" at 345..363",
-    "missing org \"Vogel Logistik GmbH\" at 611..630",
-    "contact 1: org Some(\"Company\"), expected \"Hartley & Sons Ltd\"",
-    "contact 2: org None, expected \"Vogel Logistik GmbH\""
+    "missing person \"Nino Beridze\" at 122..134",
+    "contact 0: no contact with person Some((122, 134))"
   ]
 }

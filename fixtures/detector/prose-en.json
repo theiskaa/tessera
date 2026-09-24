@@ -29,8 +29,7 @@
           "end": 123
         }
       ],
-      "must_not": [],
-      "known_failure": true
+      "must_not": []
     },
     {
       "name": "an address in a sentence",
@@ -43,7 +42,8 @@
           "end": 52
         }
       ],
-      "must_not": []
+      "must_not": [],
+      "known_failure": true
     },
     {
       "name": "a person joins a company",

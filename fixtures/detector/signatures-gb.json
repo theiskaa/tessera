@@ -93,8 +93,7 @@
           "end": 55
         }
       ],
-      "must_not": [],
-      "known_failure": true
+      "must_not": []
     },
     {
       "name": "two signatures in one thread",
@@ -132,8 +131,7 @@
           "end": 221
         }
       ],
-      "must_not": [],
-      "known_failure": true
+      "must_not": []
     },
     {
       "name": "an eponymous company in a signature",

@@ -146,14 +146,14 @@ pub(crate) const SOURCE_BYTES: u64 = 8033490172;
 pub(crate) const AUGMENT_COPIES: u32 = 2;
 
 /// `gzip -9` bytes of `models/tessera-v1.safetensors`.
-pub(crate) const BUNDLE_GZIP: u64 = 3050609;
+pub(crate) const BUNDLE_GZIP: u64 = 1665850;
 /// `gzip -9` bytes of the library's baseline wasm: rules, detector, and parser.
-pub(crate) const WASM_GZIP: u64 = 107172;
+pub(crate) const WASM_GZIP: u64 = 137753;
 /// `gzip -9` bytes of the same library built with simd128.
-pub(crate) const WASM_SIMD_GZIP: u64 = 106914;
+pub(crate) const WASM_SIMD_GZIP: u64 = 137935;
 /// `gzip -9` bytes the generated phone tables add to the wasm: the baseline with them, less the
-/// baseline without them (92,332), as `just wasm-size` prints both.
-pub(crate) const PHONE_TABLES_GZIP: u64 = 14840;
+/// baseline without them (122,427), as `just wasm-size` measures.
+pub(crate) const PHONE_TABLES_GZIP: u64 = 15326;
 /// `gzip -9` bytes libphonenumber's metadata cost before the tables replaced it.
 pub(crate) const PHONE_METADATA_GZIP: u64 = 508357;
 /// Regions the generated phone tables cover.

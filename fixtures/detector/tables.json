@@ -258,8 +258,7 @@
           "end": 74
         }
       ],
-      "must_not": [],
-      "known_failure": true
+      "must_not": []
     }
   ]
 }

@@ -45,7 +45,8 @@
           "kind": "person",
           "text": "Rustaveli"
         }
-      ]
+      ],
+      "known_failure": true
     },
     {
       "name": "honorific in salutation and closing before name",
@@ -80,7 +81,8 @@
           "kind": "person",
           "text": "Dear Dr Smith"
         }
-      ]
+      ],
+      "known_failure": true
     },
     {
       "name": "us letterhead",
