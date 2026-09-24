@@ -418,8 +418,13 @@ impl<'a> Ctx<'a> {
                 if group > 0 {
                     self.bound_person.insert(group, p.clone());
                 }
+                let value = if self.plain || !p.latin() {
+                    p.name
+                } else {
+                    capitalized(&p.name, rng)
+                };
                 Filled {
-                    value: p.name,
+                    value,
                     prefix,
                     suffix,
                     fixture_safe: true,
@@ -761,6 +766,19 @@ pub(crate) fn localized(
     match own_list {
         Some(list) if rng.random_bool(own) => pick(list, rng),
         _ => pick(english, rng),
+    }
+}
+
+/// `name` as directories and forms print it now and then: surnames in capitals
+/// (`Maravillas ABADÍA JOVER`, one in ten) or the whole name in capitals (one in fifty).
+fn capitalized(name: &str, rng: &mut ChaCha8Rng) -> String {
+    let roll = rng.random_range(0..100);
+    if roll < 2 {
+        return name.to_uppercase();
+    }
+    match name.split_once(' ') {
+        Some((given, surnames)) if roll < 12 => format!("{given} {}", surnames.to_uppercase()),
+        _ => name.to_string(),
     }
 }
 
@@ -1599,6 +1617,8 @@ fn print_summary(rows: &[Row], dropped: &Dropped) {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+
     use super::*;
 
     fn stub_pools(people: &[(&str, &str)]) -> Pools {
@@ -1708,7 +1728,7 @@ mod tests {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
             let doc = render(&t, &mut ctx, &mut rng).unwrap();
             let e = &doc.entities[0];
-            assert_eq!(&doc.text[e.start..e.end], "Nino Beridze");
+            assert_eq!(doc.text[e.start..e.end].to_lowercase(), "nino beridze");
             seen |= e.start > "Dear ".len();
         }
         assert!(seen, "no honorific in 50 renders");
@@ -1842,6 +1862,19 @@ mod tests {
         );
         assert_eq!(strip_legal_form("LLC", "LLC"), None);
         assert_eq!(strip_legal_form("LLC Partners", "LLC"), None);
+    }
+
+    #[test]
+    fn capitalized_names_keep_the_given_name_and_their_words() {
+        let mut rng = ChaCha8Rng::seed_from_u64(1);
+        let forms: HashSet<String> = (0..500)
+            .map(|_| capitalized("Maravillas Abadía Jover", &mut rng))
+            .collect();
+        assert!(forms.contains("Maravillas Abadía Jover"));
+        assert!(forms.contains("Maravillas ABADÍA JOVER"));
+        assert!(forms.contains("MARAVILLAS ABADÍA JOVER"));
+        assert_eq!(forms.len(), 3);
+        assert_eq!(capitalized("Cher", &mut rng).to_lowercase(), "cher");
     }
 
     #[test]
