@@ -23,7 +23,7 @@ kernel = 3
 dilations = [1, 2, 4, 8, 16, 1]
 dropout = 0.1
 max_params = 1000000
-ngram_from = "runs/parser-small"
+ngram_from = "runs/parser-small-v2"
 
 [train]
 epochs = 10
@@ -39,6 +39,9 @@ silver = [
     "data/interim/silver/r3/train.jsonl",
     "data/interim/silver/r5/train.jsonl",
     "data/interim/silver/r7/train.jsonl",
+    "data/interim/silver/r9/train.jsonl",
+    "data/interim/silver/r11/train.jsonl",
+    "data/interim/silver/r13/train.jsonl",
 ]
 silver_repeat = 10
 

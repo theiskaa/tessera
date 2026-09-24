@@ -1884,11 +1884,11 @@ mod tests {
     #[test]
     fn every_template_parses_with_its_declared_category_and_a_unique_id() {
         let all = all().unwrap();
-        assert_eq!(all.len(), 213);
+        assert_eq!(all.len(), 216);
         let mut ids: Vec<u32> = all.iter().map(|t| t.id).collect();
         ids.sort_unstable();
         ids.dedup();
-        assert_eq!(ids.len(), 213);
+        assert_eq!(ids.len(), 216);
         for t in &all {
             assert_eq!(t.id / 100, t.family as u32, "template {}", t.id);
         }

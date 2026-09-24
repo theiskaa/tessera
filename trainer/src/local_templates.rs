@@ -84,6 +84,13 @@ pub const TEMPLATES: &[Local] = &[
         "{org_gov:erg#1} {person_native:dat#2} მადლობა გადაუხადა. {sentence_local} შეხვედრას {org_chain:gen#3} წარმომადგენლებიც ესწრებოდნენ.",
     ),
     (
+        Prose,
+        48,
+        Both,
+        GE,
+        "{sentence_local}\n\nანგარიშ-ფაქტურა {neg_order}, თარიღი {neg_date}. გადასახდელია {neg_price}, ხოლო ავანსად უკვე ჩაირიცხა {neg_price}.\n\n{person_native#1}\n{org#2}\n{address#3}\n{phone#1}",
+    ),
+    (
         Signature,
         240,
         Both,
@@ -196,6 +203,13 @@ pub const TEMPLATES: &[Local] = &[
         "{org_gov#1}は、{org_council#2}に諮問しました。\n\n問合せ先\n{org_chain#3}\n担当：{person_last#4}{title_local}\n電話：{phone#5}",
     ),
     (
+        Prose,
+        67,
+        Both,
+        JP,
+        "{org#1}御中\n\n請求書番号 {neg_order}\n請求金額 {neg_price}\nお支払期限 {neg_date}\n\n{org#2}\n〒{address#3}\n担当：{person_last#4}",
+    ),
+    (
         Letterhead,
         360,
         Both,
@@ -257,6 +271,13 @@ pub const TEMPLATES: &[Local] = &[
         NoAddr,
         DE,
         "Agenturen: {org_list}\n\n{sentence_local}\n\nVerantwortlich: {person#1}",
+    ),
+    (
+        Letterhead,
+        378,
+        Both,
+        DE,
+        "{org#1}\n{address_ml#2}\n\nRechnung {neg_order} vom {neg_date}\n{product} {neg_price}\nGesamtbetrag {neg_price}\n\nBei Fragen: {person#3}, {phone#3}",
     ),
     (
         Letterhead,

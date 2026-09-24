@@ -597,8 +597,14 @@ impl<'a> Ctx<'a> {
             Slot::NegHandle => Filled::plain(*pick(templates::NEG_HANDLES, rng)),
             Slot::NegUrl => Filled::plain(*pick(templates::NEG_URLS, rng)),
             Slot::NegDate => Filled::plain(*pick(templates::NEG_DATES, rng)),
-            Slot::NegPrice => Filled::plain(*pick(templates::NEG_PRICES, rng)),
-            Slot::NegOrder => Filled::plain(*pick(templates::NEG_ORDERS, rng)),
+            Slot::NegPrice if rng.random_bool(0.2) => {
+                Filled::plain(*pick(templates::NEG_PRICES, rng))
+            }
+            Slot::NegPrice => Filled::plain(negatives::money(self.country, false, rng)),
+            Slot::NegOrder if rng.random_bool(0.2) => {
+                Filled::plain(*pick(templates::NEG_ORDERS, rng))
+            }
+            Slot::NegOrder => Filled::plain(negatives::order(self.country, rng)),
             Slot::NegIban => Filled::plain(*pick(templates::NEG_IBANS, rng)),
             Slot::NegIp => Filled::plain(format!(
                 "{}.{}.{}.{}",

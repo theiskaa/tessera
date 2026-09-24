@@ -1,6 +1,6 @@
 //! Text that looks like an entity and is not one: all-caps section headings, legal citations,
 //! names of laws, programmes, and forms, Title Case label lines, opening hours, acronyms that
-//! name no organization, and code and log lines. Real documents are full of these; without
+//! name no organization, money amounts and order numbers, and code and log lines. Real documents are full of these; without
 //! them a detector learns that any capitalized run, and any line with numbers and commas, is
 //! a name or an address.
 //!
@@ -375,7 +375,8 @@ pub fn register_no(country: &str, rng: &mut ChaCha8Rng) -> String {
 /// One negative line for filler blocks and the `neg_*` slots: a heading, a law or form, a
 /// label line, opening hours, a citation, or a Title Case sentence.
 pub fn line(country: &str, rng: &mut ChaCha8Rng) -> String {
-    match rng.random_range(0..6) {
+    match rng.random_range(0..7) {
+        6 => money(country, true, rng),
         0 => localized(CAPS_HEADINGS, country, 0.4, rng).to_string(),
         1 => localized(LAWS, country, 0.4, rng).to_string(),
         2 => localized(LABELS, country, 0.4, rng).to_string(),
@@ -386,6 +387,144 @@ pub fn line(country: &str, rng: &mut ChaCha8Rng) -> String {
             .copied()
             .unwrap_or("")
             .to_string(),
+    }
+}
+
+/// `n` with its thousands separated by `sep`: `4 250`, `4.250`, `4,250`.
+fn grouped(n: u64, sep: &str) -> String {
+    let digits = n.to_string();
+    let mut out = String::new();
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push_str(sep);
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// A money amount written the way `country` writes one, most often in its own currency:
+/// `4 250,00 ₾`, `1 240 ლარი`, `1.250,00 €`, `$4,250.00`, `£12.50`, `4,250円`, `３万円`. With
+/// `lead`, a word such as `თანხა`, `Betrag`, `Total`, or `合計` often comes before it. Amounts
+/// sit beside order numbers, dates, and addresses in invoices and letters, and their digit
+/// groups look like house numbers and postcodes.
+pub fn money(country: &str, lead: bool, rng: &mut ChaCha8Rng) -> String {
+    let n: u64 = match rng.random_range(0..4) {
+        0 => rng.random_range(1..100),
+        1 => rng.random_range(100..10_000),
+        2 => rng.random_range(10_000..1_000_000),
+        _ => rng.random_range(1_000_000..50_000_000),
+    };
+    let cents = rng.random_range(0..100u32);
+    let country = if rng.random_bool(0.85) { country } else { "US" };
+    let pick = |list: &[&'static str], rng: &mut ChaCha8Rng| -> &'static str {
+        list.choose(rng).copied().unwrap_or("")
+    };
+    let (amount, leads): (String, &[&str]) = match country {
+        "GE" => {
+            let g = grouped(n, if rng.random_bool(0.6) { " " } else { "" });
+            let amount = match rng.random_range(0..9) {
+                0 => format!("{g},{cents:02} ₾"),
+                1 => format!("{g} ₾"),
+                2 => format!("₾{g}"),
+                3 => format!("{g} ლარი"),
+                4 => format!("{g} ლარს"),
+                5 => format!("{g} ლარის"),
+                6 => format!("{g},{cents:02} ლარი"),
+                7 => format!("{g} ლარი და {cents} თეთრი"),
+                _ => format!("{g} GEL"),
+            };
+            let leads: &[&str] = &[
+                "თანხა",
+                "ღირებულება",
+                "ჯამი",
+                "ავანსი",
+                "გადასახდელი თანხა",
+                "ბიუჯეტი",
+                "ჯარიმა",
+                "ფასი",
+                "ხელფასი",
+            ];
+            (amount, leads)
+        }
+        "DE" => {
+            let g = grouped(n, if rng.random_bool(0.7) { "." } else { "" });
+            let amount = match rng.random_range(0..6) {
+                0 => format!("{g},{cents:02} €"),
+                1 => format!("{g} €"),
+                2 => format!("€ {g},{cents:02}"),
+                3 => format!("{g},{cents:02} EUR"),
+                4 => format!("EUR {g}"),
+                _ => format!("{g} Euro"),
+            };
+            let leads: &[&str] = &[
+                "Betrag",
+                "Gesamtbetrag",
+                "Rechnungsbetrag",
+                "Summe",
+                "Preis",
+                "Kosten",
+                "Honorar",
+            ];
+            (amount, leads)
+        }
+        "GB" => {
+            let g = grouped(n, ",");
+            let amount = match rng.random_range(0..4) {
+                0 => format!("£{g}.{cents:02}"),
+                1 => format!("£{g}"),
+                2 => format!("{g} GBP"),
+                _ => format!("£{g} (inc. VAT)"),
+            };
+            let leads: &[&str] = &["Total", "Amount due", "Price", "Fee", "Balance", "Cost"];
+            (amount, leads)
+        }
+        "JP" => {
+            let g = grouped(n, ",");
+            let amount = match rng.random_range(0..5) {
+                0 => format!("{g}円"),
+                1 => format!("￥{g}"),
+                2 => format!("{g}円（税込）"),
+                3 => format!("{}万円", (n / 10_000).max(1)),
+                _ => format!("{g} 円"),
+            };
+            let leads: &[&str] = &["合計", "金額", "請求額", "税込価格", "費用", "予算額"];
+            (amount, leads)
+        }
+        _ => {
+            let g = grouped(n, ",");
+            let amount = match rng.random_range(0..4) {
+                0 => format!("${g}.{cents:02}"),
+                1 => format!("${g}"),
+                2 => format!("USD {g}"),
+                _ => format!("{g} dollars"),
+            };
+            let leads: &[&str] = &["Total", "Amount due", "Balance", "Fee", "Cost", "Award"];
+            (amount, leads)
+        }
+    };
+    if !lead || rng.random_bool(0.4) {
+        return amount;
+    }
+    let colon = if rng.random_bool(0.5) { ":" } else { "" };
+    format!("{}{colon} {amount}", pick(leads, rng))
+}
+
+/// An order, invoice, or case number the way `country` writes one: `№7781`, `INV-2026-0412`,
+/// `Nr. 20417`, `No. 2026-118`, `第1204号`.
+pub fn order(country: &str, rng: &mut ChaCha8Rng) -> String {
+    let n = rng.random_range(10..99_999);
+    let year = rng.random_range(2019..=2027);
+    match (country, rng.random_range(0..4)) {
+        ("GE", 0 | 1) => format!("№{n}"),
+        ("GE", 2) => format!("№ {n}"),
+        ("DE", 0 | 1) => format!("Nr. {n}"),
+        ("JP", 0) => format!("第{n}号"),
+        ("JP", 1) => format!("No. {year}-{n}"),
+        (_, 0) => format!("INV-{year}-{n:04}"),
+        (_, 1) => format!("#{n}"),
+        (_, 2) => format!("{year}/{n:04}"),
+        _ => format!("PO {n}"),
     }
 }
 
@@ -403,6 +542,32 @@ pub fn code_block(rng: &mut ChaCha8Rng) -> String {
 mod tests {
     use super::*;
     use rand::SeedableRng;
+
+    #[test]
+    fn money_is_written_in_each_country_s_currency() {
+        assert_eq!(grouped(4250, " "), "4 250");
+        assert_eq!(grouped(1234567, "."), "1.234.567");
+        assert_eq!(grouped(999, ","), "999");
+        let mut rng = ChaCha8Rng::seed_from_u64(5);
+        let marks = [
+            ("GE", &["₾", "ლარ", "GEL", "$", "USD", "dollars"][..]),
+            ("DE", &["€", "EUR", "Euro", "$", "USD", "dollars"][..]),
+            ("JP", &["円", "￥", "$", "USD", "dollars"][..]),
+        ];
+        for (country, marks) in marks {
+            let mut native = 0;
+            for _ in 0..200 {
+                let m = money(country, true, &mut rng);
+                assert!(marks.iter().any(|k| m.contains(k)), "{country}: {m}");
+                native +=
+                    usize::from(!m.contains('$') && !m.contains("USD") && !m.contains("dollars"));
+            }
+            assert!(native > 150, "{country}: {native}");
+        }
+        for country in ["US", "GB", "DE", "GE", "JP"] {
+            assert!(!order(country, &mut rng).is_empty());
+        }
+    }
 
     #[test]
     fn negative_lines_are_never_empty_and_hold_no_slot_braces() {

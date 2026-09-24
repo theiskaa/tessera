@@ -66,6 +66,9 @@ PLAN = {
     11: {"federal-register": 200, **{s: None for s in (
         "de-sachsen", "de-nrw", "de-bmg", "de-behoerden", "gb-govuk-orgs", "gb-govuk-world",
         "gb-govuk-about", "gb-scotgov")}},
+    13: {"federal-register": 150, "govuk": 150, **{s: None for s in (
+        "ge-govge", "ge-govge-en", "ge-mfa", "ge-mfa-en", "jp-mhlw", "jp-mlit", "jp-fsa", "jp-mext",
+        "de-sachsen", "de-nrw", "de-bmg", "gb-scotgov")}},
 }
 CONTACT = re.compile(r"@|\b\d{3}[-. ]\d{3}[-. ]\d{4}\b|\b0\d{2,4} ?\d{3} ?\d{3,4}\b|\b(Street|Avenue|Road|Room|Suite)\b")
 
