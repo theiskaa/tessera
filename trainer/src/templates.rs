@@ -795,6 +795,258 @@ const TEMPLATES: &[(Family, u32, Category, &str)] = &[
         Both,
         "Ticket {neg_order} · {neg_department}\n\nRequester: {person#1}\nOrganisation: {org#1}\nShipping address: {address_ml#1}\nCallback: {phone#1}",
     ),
+    (
+        Prose,
+        20,
+        Both,
+        "{neg_caps}\n{person#1}, {title}, {org_unit#2}, {org_gov#3}, {address#4}; telephone: {phone#1}; email: {email#1}. {sentence}",
+    ),
+    (
+        Prose,
+        21,
+        NoPers,
+        "{sentence} The {org_gov#1} ({org_acr#1}) will publish the results on {neg_date}. Comments should reach the {org_acr#1} at {address#2} by {neg_date}. {neg_line}",
+    ),
+    (
+        Prose,
+        22,
+        Nothing,
+        "{neg_caps}\n{neg_line} See {neg_citation}. {sentence}\n\n{neg_label}\n{neg_label}",
+    ),
+    (
+        Prose,
+        23,
+        NoAddr,
+        "{sentence} Under the {neg_law}, the {org_gov#1} must reply within thirty days ({org_acr#1} Control Number {neg_digits}). Contact {person#2} at {email#2}.",
+    ),
+    (
+        Prose,
+        24,
+        Both,
+        "{sentence} {person#1} of the {org_unit#2} at {org_acr#3} said the {neg_law} does not apply. Write to {org_unit#2}, {org_gov#3}, {address_ml#4}.",
+    ),
+    (
+        Prose,
+        29,
+        Both,
+        "{neg_caps}\n{person#1}, {org_unit#2}, {org_gov#3} ({org_acr#3}), {address#4}; {phone#1}. {neg_citation}.",
+    ),
+    (
+        EmailBody,
+        120,
+        Both,
+        "{sentence} {sentence}\n\n{person#1}\n{org#1}\n{address#1}\n{phone#1}\n{email#1}",
+    ),
+    (
+        EmailBody,
+        121,
+        NoAddr,
+        "{greeting},\n\n{sentence}\n\n{person#1}\n{title}\n{org#1}\n{phone#1}",
+    ),
+    (
+        EmailBody,
+        122,
+        Both,
+        "{sentence}\n\n{person#1}\n{address_ml#1}\n{phone#1}",
+    ),
+    (
+        EmailBody,
+        123,
+        NoAddr,
+        "{greeting} {person_first#1},\n\n{sentence} The {org_acr#2} replied to {person#3} ({email#3}) on {date}.\n\n{closing},\n{person#4}\n{org_unit#5}\n{org_gov#6}",
+    ),
+    (
+        EmailBody,
+        124,
+        Nothing,
+        "{greeting},\n\n{neg_line}\n{neg_line}\n\n{sentence}\n\n{closing},\n{neg_department}",
+    ),
+    (
+        EmailBody,
+        129,
+        Both,
+        "{sentence}\n\n{person#1}\n{title}\n{org_unit#2}\n{org#1}\n{address_ml#1}\n{phone#1}",
+    ),
+    (
+        Signature,
+        220,
+        Both,
+        "{person#1}\n{org#1}\n{address#1}\n{phone#1}\n{email#1}",
+    ),
+    (
+        Signature,
+        221,
+        NoAddr,
+        "{person#1}\n{title}\n{org_unit#2}\n{org#1}\n{phone#1} | {email#1}",
+    ),
+    (
+        Signature,
+        222,
+        Both,
+        "{person#1}\n{title}, {org_gov#2}\n{address_ml#3}\n{phone#1}",
+    ),
+    (
+        Signature,
+        223,
+        NoAddr,
+        "{sentence}\n\nThanks,\n{person_first#1}\n\n-- \n{person#1} <{email#1}>\n{org_unit#2}, {org#3}",
+    ),
+    (
+        Signature,
+        224,
+        NoAddr,
+        "{person#1}\n{neg_department}\n{org#1}\n{phone#1}\n{email#1}",
+    ),
+    (
+        Signature,
+        225,
+        NoPers,
+        "{org_unit#1}\n{org#2}\n{address#2}\n{neg_hours}\n{phone#2}",
+    ),
+    (
+        Signature,
+        229,
+        Both,
+        "{person#1}\n{org#1}\n{address_ml#1}\n{phone#1}",
+    ),
+    (
+        Letterhead,
+        320,
+        NoPers,
+        "{org_gov#1}\n{org_unit#2}\n{address_ml#3}\n\n{neg_caps}\n{neg_line}\n{sentence}",
+    ),
+    (
+        Letterhead,
+        321,
+        NoAddr,
+        "{org_gov#1} > {org_unit#2} > {org_unit#3}\n\nMembers\n{person#4}\n{title}\n{phone#4}\n{person#5}\n{title}\n{phone#5}",
+    ),
+    (
+        Letterhead,
+        322,
+        NoPers,
+        "{org_gov#1} > {org_unit#2} > Reporting directly to the Director-General\n\n[{neg_unit_code}] {org_unit#3}\n{address_ml#4}\n{phone#5}",
+    ),
+    (
+        Letterhead,
+        323,
+        Both,
+        "{sentence}\n\n{org#1}\n{address#1}\n{officers}: {person#2}, {person#3}\n{register}: {org_registry#4}, {neg_register_no}",
+    ),
+    (
+        Letterhead,
+        324,
+        Nothing,
+        "{neg_caps}\n\n{neg_line}\n{neg_citation}\n\n{neg_label}\n{neg_label}\n{neg_hours}",
+    ),
+    (
+        Letterhead,
+        325,
+        Both,
+        "{neg_caps}\n{org_gov#1}\n\n{neg_caps}\n{sentence}\n\n{neg_caps} {person#2}, {org_unit#3}, {org_acr#1}, {address#4}; {phone#2}; {email#2}.",
+    ),
+    (
+        Letterhead,
+        329,
+        NoAddr,
+        "{org_gov#1} > {org_unit#2}\n\n{person#3}\n{title}\n{phone#3}",
+    ),
+    (
+        Invoice,
+        420,
+        NoPers,
+        "Invoice {neg_order}\nIssued by: {org#1}\n{address_ml#1}\n\nPayable to: {org_gov#2} ({org_acr#2})\n{neg_label}\n{neg_citation}\nTotal {neg_price}",
+    ),
+    (
+        Invoice,
+        421,
+        Nothing,
+        "{neg_caps}\n{neg_label}\n{neg_label}\n{neg_law}\n{neg_hours}\nTotal {neg_price}",
+    ),
+    (
+        Table,
+        620,
+        NoAddr,
+        "{neg_heading}\n\n{person#1}\n{title}\n\n{person#2}\n{title}\n\n{person#3}\n{title}",
+    ),
+    (
+        Table,
+        621,
+        NoAddr,
+        "Name\tUnit\tPhone\n{person#1}\t{org_unit#2}\t{phone#1}\n{person#3}\t{org_unit#4}\t{phone#3}",
+    ),
+    (
+        Table,
+        622,
+        NoPers,
+        "{org_gov#1} ({org_acr#1})\n\n[{neg_unit_code}] {org_unit#2}\n[{neg_unit_code}] {org_unit#3}\n[{neg_unit_code}] {org_unit#4}\n\n{address_ml#5}",
+    ),
+    (
+        Table,
+        629,
+        NoAddr,
+        "{person#1}\n{title}\n{phone#1}\n\n{person#2}\n{title}\n{phone#2}",
+    ),
+    (
+        Support,
+        720,
+        NoAddr,
+        "Customer: {sentence} I got a letter from the {org_acr#1} about my {neg_law} claim.\nAgent: {sentence} Am I speaking with {person#2}?\nCustomer: Yes. {neg_hours} works for a call back.",
+    ),
+    (
+        Support,
+        721,
+        Nothing,
+        "Agent: {neg_line}\nCustomer: {sentence}\nAgent: {neg_label}",
+    ),
+    (
+        Technical,
+        800,
+        NoAddr,
+        "On {date}, {person#1} wrote:\n> {neg_code}\n\n{sentence}\n\n{neg_code}\n\nThanks,\n{person_first#2}",
+    ),
+    (
+        Technical,
+        801,
+        NoAddr,
+        "{sentence}\n\n{neg_code}\n\nSigned-off-by: {person#1} <{email#1}>\nReviewed-by: {person#2} <{email#2}>",
+    ),
+    (
+        Technical,
+        802,
+        NoAddr,
+        "{person#1} via {neg_list} <{email#3}> writes:\n> {sentence}\n\n{neg_code}\n\n-- \n{person_first#2}",
+    ),
+    (
+        Technical,
+        803,
+        Nothing,
+        "{neg_code}\n\n{sentence}\n\n{neg_code}",
+    ),
+    (
+        Technical,
+        804,
+        NoAddr,
+        "{person#1} (3):\n{neg_code}\n\n{person#2} (1):\n{neg_code}",
+    ),
+    (
+        Technical,
+        805,
+        Both,
+        "Hi {person_first#1},\n\n{neg_code}\n\n{sentence}\n\n-- \n{person#2}\n{org_unit#3}, {org#4}\n{address#4}",
+    ),
+    (
+        Technical,
+        806,
+        NoAddr,
+        "@{person_first#1}: {sentence}\n\n{neg_code}\n\nCc: {person#2} <{email#2}>",
+    ),
+    (
+        Technical,
+        809,
+        NoAddr,
+        "On {date}, {person#1} wrote:\n> {sentence}\n\n{neg_code}\n\nCheers,\n{person_first#2}",
+    ),
 ];
 
 impl Template {
@@ -1242,7 +1494,90 @@ pub const NEG_HEADINGS: &[(&str, &[&str])] = &[
     ("JP", &["関西", "九州", "拠点一覧", "担当者"]),
 ];
 
-pub const HONORIFICS: &[&str] = &["Mr", "Ms", "Mrs", "Dr", "Prof."];
+/// Honorifics written before a name and never part of the person span, per country.
+pub const HONORIFICS: &[(&str, &[&str])] = &[
+    (
+        "en",
+        &[
+            "Mr",
+            "Ms",
+            "Mrs",
+            "Dr",
+            "Prof.",
+            "Mr.",
+            "Ms.",
+            "Mrs.",
+            "Dr.",
+            "Sir",
+            "Dame",
+            "The Rt Hon",
+            "Rt Hon",
+            "Professor",
+            "Cllr",
+            "Rev.",
+            "Judge",
+        ],
+    ),
+    (
+        "DE",
+        &[
+            "Herr",
+            "Frau",
+            "Dr.",
+            "Prof. Dr.",
+            "Herr Dr.",
+            "Frau Dr.",
+            "Dipl.-Ing.",
+        ],
+    ),
+];
+
+pub const HONORIFICS_GE: &[&str] = &["ბატონი", "ქალბატონი"];
+
+/// Post-nominals after a Latin-script name, with their separator; outside the span.
+pub const POSTNOMINALS: &[&str] = &[
+    " MP", " OBE", " CBE", " MBE", " KC", " CB", ", PhD", ", Esq.", ", P.E.", ", CPA", " MdB",
+];
+
+/// Suffixes written straight after a Japanese name; outside the span.
+pub const NAME_SUFFIXES_JP: &[&str] = &["様", "さん", "氏", "殿"];
+
+/// Building lines that open an address.
+pub const BUILDINGS: &[&str] = &[
+    "Marine House",
+    "Anchor Court",
+    "Riverside Building",
+    "Forrestal Building",
+    "Crown House",
+    "Victoria Plaza",
+    "Harbour Exchange",
+    "Wexford Tower",
+];
+
+/// Labels before the officers of a company in an imprint or footer.
+pub const OFFICERS: &[(&str, &[&str])] = &[
+    (
+        "en",
+        &["Directors", "Managing Directors", "Board of Directors"],
+    ),
+    ("DE", &["Geschäftsführer", "Geschäftsführung", "Vorstand"]),
+    ("GE", &["დირექტორი", "ხელმძღვანელი"]),
+    ("JP", &["代表取締役", "代表者"]),
+];
+
+/// Labels before the register a company is entered in.
+pub const REGISTERS: &[(&str, &[&str])] = &[
+    (
+        "en",
+        &["Registered with", "Company registration", "Registrar"],
+    ),
+    (
+        "DE",
+        &["Registergericht", "Handelsregister", "Eingetragen beim"],
+    ),
+    ("GE", &["რეგისტრაცია", "მარეგისტრირებელი ორგანო"]),
+    ("JP", &["登記", "管轄法務局"]),
+];
 
 /// Greetings, closings, and job titles per country; English is mixed into every country.
 pub const GREETINGS: &[(&str, &[&str])] = &[
@@ -1262,6 +1597,7 @@ pub const CLOSINGS: &[(&str, &[&str])] = &[
     ("JP", &["よろしくお願いいたします", "敬具"]),
 ];
 
+/// Job titles and roles, written next to a name and never an org themselves.
 pub const TITLES: &[(&str, &[&str])] = &[
     (
         "en",
@@ -1270,11 +1606,129 @@ pub const TITLES: &[(&str, &[&str])] = &[
             "Head of Operations",
             "Office manager",
             "Senior accountant",
+            "Regulatory Counsel",
+            "Acting Director of Grants Management",
+            "Information Collection Clearance Officer",
+            "Deputy Head of Mission",
+            "Parliamentary Under-Secretary of State",
+            "Minister of State",
+            "Permanent Secretary",
+            "Chief Executive",
+            "Chief Financial Officer",
+            "Chief Technology Officer",
+            "Data Protection Officer",
+            "Press Officer",
+            "Policy Advisor",
+            "Senior Policy Analyst",
+            "Program Analyst",
+            "Management Analyst",
+            "Supervisory Attorney",
+            "Assistant General Counsel",
+            "Deputy Director",
+            "Assistant Director",
+            "Branch Chief",
+            "Team Leader",
+            "Head of Unit",
+            "Principal Adviser",
+            "Director-General",
+            "Deputy Director-General",
+            "Secretary-General",
+            "Ambassador",
+            "Consul General",
+            "Commissioner",
+            "Executive Director",
+            "Operations Director",
+            "Finance Director",
+            "Project Manager",
+            "Programme Manager",
+            "Account Manager",
+            "Customer Success Manager",
+            "Procurement Officer",
+            "Compliance Officer",
+            "Contracts Specialist",
+            "Environmental Engineer",
+            "Fishery Biologist",
+            "Economist",
+            "Statistician",
+            "Software Engineer",
+            "Senior Software Engineer",
+            "Principal Engineer",
+            "Staff Engineer",
+            "Kernel Maintainer",
+            "Engineering Manager",
+            "Product Manager",
+            "Research Scientist",
+            "Legal Assistant",
+            "Paralegal",
+            "Executive Assistant",
+            "Office Administrator",
+            "Receptionist",
+            "Case Officer",
+            "Caseworker",
+            "Planning Officer",
+            "Licensing Officer",
+            "Head of Communications",
+            "Communications Manager",
+            "Media Relations Manager",
+            "HR Business Partner",
+            "Payroll Specialist",
+            "Credit Controller",
+            "Logistics Coordinator",
+            "Warehouse Supervisor",
+            "Founder",
+            "Co-founder and CEO",
+            "Managing Partner",
+            "Associate",
+            "Intern",
         ],
     ),
-    ("DE", &["Geschäftsführer", "Vertriebsleiterin"]),
-    ("GE", &["მთავარი ბუღალტერი", "დირექტორი"]),
-    ("JP", &["営業部長", "総務課長"]),
+    (
+        "DE",
+        &[
+            "Geschäftsführer",
+            "Vertriebsleiterin",
+            "Sachbearbeiterin",
+            "Sachbearbeiter",
+            "Referatsleiter",
+            "Abteilungsleiterin",
+            "Pressesprecher",
+            "Datenschutzbeauftragter",
+            "Projektleiterin",
+            "Prokurist",
+            "Leiterin Einkauf",
+            "Teamleiter Buchhaltung",
+            "Bürgermeisterin",
+            "Rechtsanwalt",
+        ],
+    ),
+    (
+        "GE",
+        &[
+            "მთავარი ბუღალტერი",
+            "დირექტორი",
+            "დირექტორის მოადგილე",
+            "პროექტის მენეჯერი",
+            "იურისტი",
+            "გაყიდვების მენეჯერი",
+            "დეპარტამენტის უფროსი",
+        ],
+    ),
+    (
+        "JP",
+        &[
+            "営業部長",
+            "総務課長",
+            "代表取締役社長",
+            "取締役",
+            "課長補佐",
+            "主任",
+            "係長",
+            "室長",
+            "広報担当",
+            "技術顧問",
+            "事務局長",
+        ],
+    ),
 ];
 
 /// Neutral sentences with no proper nouns and no digits; only the first word is capitalized.
@@ -1333,11 +1787,11 @@ mod tests {
     #[test]
     fn every_template_parses_with_its_declared_category_and_a_unique_id() {
         let all = all().unwrap();
-        assert_eq!(all.len(), 129);
+        assert_eq!(all.len(), 171);
         let mut ids: Vec<u32> = all.iter().map(|t| t.id).collect();
         ids.sort_unstable();
         ids.dedup();
-        assert_eq!(ids.len(), 129);
+        assert_eq!(ids.len(), 171);
         for t in &all {
             assert_eq!(t.id / 100, t.family as u32, "template {}", t.id);
         }
@@ -1346,7 +1800,7 @@ mod tests {
     #[test]
     fn test_only_templates_are_held_out_families_and_ids_ending_in_nine() {
         let all = all().unwrap();
-        assert_eq!(all.iter().filter(|t| t.test_only()).count(), 24);
+        assert_eq!(all.iter().filter(|t| t.test_only()).count(), 30);
         assert!(
             all.iter()
                 .filter(|t| !t.test_only())

@@ -20,9 +20,11 @@ use tessera::internal::{fnv1a, is_content, tokenize};
 use tessera::{AddressLabel, Kind};
 use unicode_normalization::UnicodeNormalization;
 
+use crate::bodies::Bodies;
 use crate::config::{self, Config, GenerateConfig};
 use crate::data::{LabelledExample, Split, read_shard};
 use crate::filler;
+use crate::negatives;
 use crate::pool_filter;
 use crate::templates::{self, Template};
 
@@ -38,10 +40,11 @@ pub enum Family {
     Markdown,
     Table,
     Support,
+    Technical,
 }
 
 impl Family {
-    pub const ALL: [Family; 8] = [
+    pub const ALL: [Family; 9] = [
         Family::Prose,
         Family::EmailBody,
         Family::Signature,
@@ -50,6 +53,7 @@ impl Family {
         Family::Markdown,
         Family::Table,
         Family::Support,
+        Family::Technical,
     ];
 
     pub fn name(self) -> &'static str {
@@ -62,6 +66,7 @@ impl Family {
             Family::Markdown => "markdown",
             Family::Table => "table",
             Family::Support => "support",
+            Family::Technical => "technical",
         }
     }
 
@@ -118,6 +123,10 @@ pub enum Slot {
     Org,
     OrgEponymous,
     OrgSchool,
+    OrgGov,
+    OrgAcronym,
+    OrgUnit,
+    OrgRegistry,
     Address,
     AddressMultiline,
     AddressPersonStreet,
@@ -140,6 +149,18 @@ pub enum Slot {
     NegDepartment,
     NegPrompt,
     NegHeading,
+    NegCaps,
+    NegLaw,
+    NegLabel,
+    NegHours,
+    NegCitation,
+    NegLine,
+    NegCode,
+    NegList,
+    NegUnitCode,
+    NegRegisterNo,
+    Officers,
+    Register,
     Greeting,
     Closing,
     Sentence,
@@ -154,7 +175,9 @@ impl Slot {
         use Slot::*;
         match self {
             Person | PersonFirst | PersonEponymous => Some(Kind::Person),
-            Org | OrgEponymous | OrgSchool => Some(Kind::Org),
+            Org | OrgEponymous | OrgSchool | OrgGov | OrgAcronym | OrgUnit | OrgRegistry => {
+                Some(Kind::Org)
+            }
             Address | AddressMultiline | AddressPersonStreet => Some(Kind::Address),
             Email => Some(Kind::Email),
             Phone | PhoneLocal => Some(Kind::Phone),
@@ -171,6 +194,10 @@ impl Slot {
             "org" => Org,
             "org_eponymous" => OrgEponymous,
             "org_school" => OrgSchool,
+            "org_gov" => OrgGov,
+            "org_acr" => OrgAcronym,
+            "org_unit" => OrgUnit,
+            "org_registry" => OrgRegistry,
             "address" => Address,
             "address_ml" => AddressMultiline,
             "address_person_street" => AddressPersonStreet,
@@ -193,6 +220,18 @@ impl Slot {
             "neg_department" => NegDepartment,
             "neg_prompt" => NegPrompt,
             "neg_heading" => NegHeading,
+            "neg_caps" => NegCaps,
+            "neg_law" => NegLaw,
+            "neg_label" => NegLabel,
+            "neg_hours" => NegHours,
+            "neg_citation" => NegCitation,
+            "neg_line" => NegLine,
+            "neg_code" => NegCode,
+            "neg_list" => NegList,
+            "neg_unit_code" => NegUnitCode,
+            "neg_register_no" => NegRegisterNo,
+            "officers" => Officers,
+            "register" => Register,
             "greeting" => Greeting,
             "closing" => Closing,
             "sentence" => Sentence,
@@ -203,12 +242,14 @@ impl Slot {
         })
     }
 
-    /// Slots whose value is reused when the same link group appears again in a document.
+    /// Slots whose value is reused when the same link group appears again in a document. An
+    /// acronym is bound with its body's name instead (see `Ctx::acronym`).
     fn bindable(self) -> bool {
-        matches!(
-            self.kind(),
-            Some(Kind::Person | Kind::Org | Kind::Address | Kind::Email)
-        )
+        self != Slot::OrgAcronym
+            && matches!(
+                self.kind(),
+                Some(Kind::Person | Kind::Org | Kind::Address | Kind::Email)
+            )
     }
 }
 
@@ -242,10 +283,12 @@ pub struct Doc {
 }
 
 /// What `Ctx::fill` produced for one slot: the value, an optional honorific written before
-/// the span, and whether any phone in it comes from a range reserved for fiction.
+/// the span and post-nominal or name suffix after it, and whether any phone in it comes from a
+/// range reserved for fiction.
 struct Filled {
     value: String,
     prefix: Option<&'static str>,
+    suffix: Option<&'static str>,
     fixture_safe: bool,
 }
 
@@ -254,6 +297,7 @@ impl Filled {
         Filled {
             value: value.into(),
             prefix: None,
+            suffix: None,
             fixture_safe: true,
         }
     }
@@ -326,6 +370,7 @@ pub struct Pools {
     pub addresses: Vec<PoolAddress>,
     /// Orgs added from other countries because the country's own pool was too small.
     pub borrowed_orgs: usize,
+    pub bodies: Bodies,
 }
 
 /// Per-document fill state: the pools of the document's split and country, and the values
@@ -335,6 +380,7 @@ pub struct Ctx<'a> {
     pools: &'a Pools,
     bound: HashMap<(Kind, u8), String>,
     bound_person: HashMap<u8, PoolPerson>,
+    bound_acronym: HashMap<u8, String>,
     /// Turns off every optional variation (honorifics, casing, email patterns and digits),
     /// for tests that need exact text.
     plain: bool,
@@ -347,6 +393,7 @@ impl<'a> Ctx<'a> {
             pools,
             bound: HashMap::new(),
             bound_person: HashMap::new(),
+            bound_acronym: HashMap::new(),
             plain: false,
         }
     }
@@ -363,14 +410,18 @@ impl<'a> Ctx<'a> {
         let filled = match slot {
             Slot::Person => {
                 let p = self.person(rng)?;
-                let prefix = (!self.plain && p.latin() && rng.random_bool(0.3))
-                    .then(|| *pick(templates::HONORIFICS, rng));
+                let (prefix, suffix) = if self.plain {
+                    (None, None)
+                } else {
+                    self.honorifics(&p, rng)
+                };
                 if group > 0 {
                     self.bound_person.insert(group, p.clone());
                 }
                 Filled {
                     value: p.name,
                     prefix,
+                    suffix,
                     fixture_safe: true,
                 }
             }
@@ -404,8 +455,24 @@ impl<'a> Ctx<'a> {
             Slot::Org => Filled::plain(self.org(rng)?),
             Slot::OrgEponymous => Filled::plain(*pick(templates::EPONYMOUS_COMPANIES, rng)),
             Slot::OrgSchool => Filled::plain(*pick(templates::PERSON_NAMED_INSTITUTIONS, rng)),
-            Slot::Address => Filled::plain(self.address(false, rng)?.one_line()),
-            Slot::AddressMultiline => Filled::plain(self.address(true, rng)?.text.clone()),
+            Slot::OrgGov => {
+                let body = self.pools.bodies.body(group > 0, rng);
+                if let Some(acronym) = body.acronym.filter(|_| group > 0) {
+                    self.bound_acronym.insert(group, acronym);
+                }
+                Filled::plain(body.name)
+            }
+            Slot::OrgAcronym => Filled::plain(self.acronym(group, rng)),
+            Slot::OrgUnit => Filled::plain(self.pools.bodies.unit(rng)),
+            Slot::OrgRegistry => Filled::plain(self.pools.bodies.registry(rng)),
+            Slot::Address => {
+                let a = self.address(false, rng)?.one_line();
+                Filled::plain(self.with_room(a, ", ", rng))
+            }
+            Slot::AddressMultiline => {
+                let a = self.address(true, rng)?.text.clone();
+                Filled::plain(self.with_room(a, "\n", rng))
+            }
             Slot::AddressPersonStreet => {
                 let (_, capital, streets) = templates::PERSON_NAMED_STREETS
                     .iter()
@@ -425,6 +492,7 @@ impl<'a> Ctx<'a> {
                 Filled {
                     value,
                     prefix: None,
+                    suffix: None,
                     fixture_safe: safe,
                 }
             }
@@ -433,6 +501,7 @@ impl<'a> Ctx<'a> {
                 Filled {
                     value,
                     prefix: None,
+                    suffix: None,
                     fixture_safe: safe,
                 }
             }
@@ -469,6 +538,22 @@ impl<'a> Ctx<'a> {
             Slot::NegHeading => {
                 Filled::plain(localized(templates::NEG_HEADINGS, self.country, 0.5, rng))
             }
+            Slot::NegCaps => {
+                Filled::plain(localized(negatives::CAPS_HEADINGS, self.country, 0.4, rng))
+            }
+            Slot::NegLaw => Filled::plain(localized(negatives::LAWS, self.country, 0.4, rng)),
+            Slot::NegLabel => Filled::plain(localized(negatives::LABELS, self.country, 0.4, rng)),
+            Slot::NegHours => Filled::plain(localized(negatives::HOURS, self.country, 0.5, rng)),
+            Slot::NegCitation => Filled::plain(negatives::citation(self.country, rng)),
+            Slot::NegLine => Filled::plain(negatives::line(self.country, rng)),
+            Slot::NegCode => Filled::plain(negatives::code_block(rng)),
+            Slot::NegList => Filled::plain(*pick(negatives::LISTS, rng)),
+            Slot::NegUnitCode => Filled::plain(negatives::unit_code(rng)),
+            Slot::NegRegisterNo => Filled::plain(negatives::register_no(self.country, rng)),
+            Slot::Officers => Filled::plain(localized(templates::OFFICERS, self.country, 0.7, rng)),
+            Slot::Register => {
+                Filled::plain(localized(templates::REGISTERS, self.country, 0.7, rng))
+            }
             Slot::Greeting => {
                 Filled::plain(localized(templates::GREETINGS, self.country, 0.5, rng))
             }
@@ -497,6 +582,77 @@ impl<'a> Ctx<'a> {
             .with_context(|| format!("no people for {}", self.country))
     }
 
+    /// An honorific before a person's name and a post-nominal or name suffix after it, each
+    /// drawn in the script and country the name fits: `Dr`, `Herr`, `ქალბატონი`, `OBE`, `様`.
+    fn honorifics(
+        &self,
+        p: &PoolPerson,
+        rng: &mut ChaCha8Rng,
+    ) -> (Option<&'static str>, Option<&'static str>) {
+        if p.cjk() {
+            let suffix = rng
+                .random_bool(0.3)
+                .then(|| *pick(templates::NAME_SUFFIXES_JP, rng));
+            return (None, suffix);
+        }
+        if !p.latin() {
+            let prefix = (p.script == "georgian" && rng.random_bool(0.2))
+                .then(|| *pick(templates::HONORIFICS_GE, rng));
+            return (prefix, None);
+        }
+        let prefix = rng
+            .random_bool(0.3)
+            .then(|| localized(templates::HONORIFICS, self.country, 0.6, rng));
+        let suffix = rng
+            .random_bool(0.06)
+            .then(|| *pick(templates::POSTNOMINALS, rng));
+        (prefix, suffix)
+    }
+
+    /// The acronym bound to `group`, or a fresh body's, bound with its name so a later
+    /// `{org_gov#n}` names the same body.
+    fn acronym(&mut self, group: u8, rng: &mut ChaCha8Rng) -> String {
+        if let Some(a) = self.bound_acronym.get(&group) {
+            return a.clone();
+        }
+        let body = self.pools.bodies.body(true, rng);
+        let acronym = body.acronym.unwrap_or_else(|| body.name.clone());
+        if group > 0 {
+            self.bound_acronym.insert(group, acronym.clone());
+            self.bound.entry((Kind::Org, group)).or_insert(body.name);
+        }
+        acronym
+    }
+
+    /// `address` with, one time in ten, a room, suite, or mail stop line before it, which
+    /// real addresses carry and gold includes.
+    fn with_room(&self, address: String, sep: &str, rng: &mut ChaCha8Rng) -> String {
+        if self.plain || !rng.random_bool(0.1) {
+            return address;
+        }
+        let n = rng.random_range(2..=950);
+        let room = match self.country {
+            "US" | "GB" => match rng.random_range(0..5) {
+                0 => format!("Suite {n}"),
+                1 => format!("Room {}{}", n, ["", "A", "B"][rng.random_range(0..3)]),
+                2 => format!("Mail Stop {}", rng.random_range(1000..9999)),
+                3 => format!("Floor {}", rng.random_range(2..=30)),
+                _ => pick(templates::BUILDINGS, rng).to_string(),
+            },
+            "DE" => match rng.random_range(0..3) {
+                0 => format!(
+                    "Raum {}.{}",
+                    rng.random_range(0..6),
+                    rng.random_range(1..40)
+                ),
+                1 => format!("Gebäude {}", ["A", "B", "C", "D"][rng.random_range(0..4)]),
+                _ => format!("{}. OG", rng.random_range(1..=6)),
+            },
+            _ => return address,
+        };
+        format!("{room}{sep}{address}")
+    }
+
     /// A random org, 30% of all-caps names title-cased and 20% with a trailing legal form
     /// dropped, as documents write them both ways.
     fn org(&self, rng: &mut ChaCha8Rng) -> anyhow::Result<String> {
@@ -508,6 +664,9 @@ impl<'a> Ctx<'a> {
         let mut name = org.name.clone();
         if self.plain {
             return Ok(name);
+        }
+        if rng.random_bool(0.25) {
+            return Ok(self.pools.bodies.body(false, rng).name);
         }
         // Registers store names in capitals; documents mostly do not, but some still print them.
         if rng.random_bool(0.65) && name.chars().any(char::is_alphabetic) && !has_lowercase(&name) {
@@ -565,7 +724,11 @@ impl<'a> Ctx<'a> {
             _ => pick(templates::LOCAL_PARTS, rng).to_string(),
         };
         let org_slug = (group > 0)
-            .then(|| self.bound.get(&(Kind::Org, group)))
+            .then(|| {
+                self.bound_acronym
+                    .get(&group)
+                    .or_else(|| self.bound.get(&(Kind::Org, group)))
+            })
             .flatten()
             .map(|o| slug(o))
             .filter(|s| !s.is_empty());
@@ -810,6 +973,9 @@ pub fn render(template: &Template, ctx: &mut Ctx, rng: &mut ChaCha8Rng) -> anyho
         let start = text.len();
         text.push_str(&filled.value);
         let end = text.len();
+        if let Some(suffix) = filled.suffix {
+            text.push_str(suffix);
+        }
         if let Some(kind) = slot.kind() {
             links.push(Link {
                 kind: kind.as_str(),
@@ -1120,7 +1286,13 @@ fn load_pools(
     let mut pools: HashMap<(Split, &'static str), Pools> = HashMap::new();
     for &c in countries {
         for split in Split::ALL {
-            pools.insert((split, c), Pools::default());
+            pools.insert(
+                (split, c),
+                Pools {
+                    bodies: Bodies::new(c, split),
+                    ..Pools::default()
+                },
+            );
         }
     }
     let people = read_table(
@@ -1453,6 +1625,7 @@ mod tests {
                 },
             ],
             borrowed_orgs: 0,
+            bodies: Bodies::new("GE", Split::Train),
         }
     }
 

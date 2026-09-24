@@ -9,6 +9,7 @@ use rand::seq::IndexedRandom;
 use rand_chacha::ChaCha8Rng;
 
 use crate::generate::{Doc, Gold, Link, localized};
+use crate::negatives;
 use crate::templates;
 
 /// English sentences with times, amounts, counts, and reference numbers, and no names.
@@ -263,10 +264,19 @@ fn pick(items: &[&'static str], rng: &mut ChaCha8Rng) -> &'static str {
     items.choose(rng).copied().unwrap_or("")
 }
 
-/// A block of filler: a paragraph of one to four sentences in one language, or one to three
-/// lines.
+/// A block of filler: a paragraph of one to four sentences in one language, one to three
+/// lines, one to three negative lines (see `negatives`), or now and then a few lines of code.
 fn block(country: &str, rng: &mut ChaCha8Rng) -> String {
     let n = rng.random_range(1..=4);
+    if rng.random_bool(0.03) {
+        return negatives::code_block(rng);
+    }
+    if rng.random_bool(0.2) {
+        return (0..n.min(3))
+            .map(|_| negatives::line(country, rng))
+            .collect::<Vec<_>>()
+            .join("\n");
+    }
     if rng.random_bool(0.4) {
         let n = n.min(3);
         return (0..n)

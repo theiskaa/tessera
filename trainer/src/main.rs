@@ -3,6 +3,7 @@
 
 mod baselines;
 mod bench;
+mod bodies;
 mod check;
 mod config;
 mod data;
@@ -17,6 +18,7 @@ mod generate;
 mod group_eval;
 mod model_eval;
 mod names;
+mod negatives;
 mod net;
 mod pool_filter;
 mod quantize;
