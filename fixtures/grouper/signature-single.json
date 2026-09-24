@@ -1,0 +1,279 @@
+{
+  "cases": [
+    {
+      "name": "spec_example",
+      "input": "Thanks, see you on Monday.\n\nNino Beridze\nKavkaz Freight LLC\n14 Rustaveli Avenue, Tbilisi 0108, Georgia\n+995 32 212 3456\nnino@kavkaz-freight.example",
+      "entities": [
+        {
+          "kind": "person",
+          "text": "Nino Beridze",
+          "start": 28,
+          "end": 40
+        },
+        {
+          "kind": "org",
+          "text": "Kavkaz Freight LLC",
+          "start": 41,
+          "end": 59
+        },
+        {
+          "kind": "address",
+          "text": "14 Rustaveli Avenue, Tbilisi 0108, Georgia",
+          "start": 60,
+          "end": 102
+        },
+        {
+          "kind": "phone",
+          "text": "+995 32 212 3456",
+          "start": 103,
+          "end": 119
+        },
+        {
+          "kind": "email",
+          "text": "nino@kavkaz-freight.example",
+          "start": 120,
+          "end": 147
+        }
+      ],
+      "contacts": [
+        {
+          "person": 0,
+          "org": 1,
+          "addresses": [
+            2
+          ],
+          "emails": [
+            4
+          ],
+          "phones": [
+            3
+          ]
+        }
+      ],
+      "unassigned": []
+    },
+    {
+      "name": "closing_then_signature",
+      "input": "Let me know if Thursday works.\n\nKind regards,\nDr Amelia Okafor\nSenior Buyer, Northgate Textiles Ltd\n+44 20 7946 0123\namelia.okafor@northgate.example",
+      "entities": [
+        {
+          "kind": "person",
+          "text": "Amelia Okafor",
+          "start": 49,
+          "end": 62
+        },
+        {
+          "kind": "org",
+          "text": "Northgate Textiles Ltd",
+          "start": 77,
+          "end": 99
+        },
+        {
+          "kind": "phone",
+          "text": "+44 20 7946 0123",
+          "start": 100,
+          "end": 116
+        },
+        {
+          "kind": "email",
+          "text": "amelia.okafor@northgate.example",
+          "start": 117,
+          "end": 148
+        }
+      ],
+      "contacts": [
+        {
+          "person": 0,
+          "org": 1,
+          "addresses": [],
+          "emails": [
+            3
+          ],
+          "phones": [
+            2
+          ]
+        }
+      ],
+      "unassigned": []
+    },
+    {
+      "name": "org_only_signature",
+      "input": "Your order has shipped.\n\nCustomer Care\nHelios Lighting GmbH\nsupport@helios-lighting.example\n+49 30 23125 400",
+      "entities": [
+        {
+          "kind": "org",
+          "text": "Helios Lighting GmbH",
+          "start": 39,
+          "end": 59
+        },
+        {
+          "kind": "email",
+          "text": "support@helios-lighting.example",
+          "start": 60,
+          "end": 91
+        },
+        {
+          "kind": "phone",
+          "text": "+49 30 23125 400",
+          "start": 92,
+          "end": 108
+        }
+      ],
+      "contacts": [
+        {
+          "person": null,
+          "org": 0,
+          "addresses": [],
+          "emails": [
+            1
+          ],
+          "phones": [
+            2
+          ]
+        }
+      ],
+      "unassigned": []
+    },
+    {
+      "name": "orphan_block_adopted",
+      "input": "Nino Beridze\nKavkaz Freight LLC\n\n14 Rustaveli Avenue, Tbilisi 0108, Georgia\n+995 32 212 3456",
+      "entities": [
+        {
+          "kind": "person",
+          "text": "Nino Beridze",
+          "start": 0,
+          "end": 12
+        },
+        {
+          "kind": "org",
+          "text": "Kavkaz Freight LLC",
+          "start": 13,
+          "end": 31
+        },
+        {
+          "kind": "address",
+          "text": "14 Rustaveli Avenue, Tbilisi 0108, Georgia",
+          "start": 33,
+          "end": 75
+        },
+        {
+          "kind": "phone",
+          "text": "+995 32 212 3456",
+          "start": 76,
+          "end": 92
+        }
+      ],
+      "contacts": [
+        {
+          "person": 0,
+          "org": 1,
+          "addresses": [
+            2
+          ],
+          "emails": [],
+          "phones": [
+            3
+          ]
+        }
+      ],
+      "unassigned": []
+    },
+    {
+      "name": "prose_entities_stay_unassigned",
+      "input": "Please send the invoice to accounts@northgate.example by Friday.\n\nThe warehouse at 12 Mill Lane, Leeds LS1 4AB is closed on Monday.\n\nBest,\nTom",
+      "entities": [
+        {
+          "kind": "email",
+          "text": "accounts@northgate.example",
+          "start": 27,
+          "end": 53
+        },
+        {
+          "kind": "address",
+          "text": "12 Mill Lane, Leeds LS1 4AB",
+          "start": 83,
+          "end": 110
+        },
+        {
+          "kind": "person",
+          "text": "Tom",
+          "start": 139,
+          "end": 142
+        }
+      ],
+      "contacts": [],
+      "unassigned": [
+        0,
+        1,
+        2
+      ]
+    },
+    {
+      "name": "email_match_overrides_nearest",
+      "input": "Amelia Okafor\nNino Beridze\nnino@kavkaz-freight.example\n+995 32 212 3456\namelia.okafor@northgate.example\n+44 20 7946 0123",
+      "entities": [
+        {
+          "kind": "person",
+          "text": "Amelia Okafor",
+          "start": 0,
+          "end": 13
+        },
+        {
+          "kind": "person",
+          "text": "Nino Beridze",
+          "start": 14,
+          "end": 26
+        },
+        {
+          "kind": "email",
+          "text": "nino@kavkaz-freight.example",
+          "start": 27,
+          "end": 54
+        },
+        {
+          "kind": "phone",
+          "text": "+995 32 212 3456",
+          "start": 55,
+          "end": 71
+        },
+        {
+          "kind": "email",
+          "text": "amelia.okafor@northgate.example",
+          "start": 72,
+          "end": 103
+        },
+        {
+          "kind": "phone",
+          "text": "+44 20 7946 0123",
+          "start": 104,
+          "end": 120
+        }
+      ],
+      "contacts": [
+        {
+          "person": 0,
+          "org": null,
+          "addresses": [],
+          "emails": [
+            4
+          ],
+          "phones": [
+            5
+          ]
+        },
+        {
+          "person": 1,
+          "org": null,
+          "addresses": [],
+          "emails": [
+            2
+          ],
+          "phones": [
+            3
+          ]
+        }
+      ],
+      "unassigned": []
+    }
+  ]
+}

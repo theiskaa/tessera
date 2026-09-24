@@ -705,7 +705,7 @@ fn keeps_lone_anchor(block: &Block) -> bool {
 /// block with no person, with details attached by the rules above. A contact's confidence is
 /// the minimum of its anchor's and its assignments'. Everything left over is `unassigned`.
 /// No confidence policy is applied here.
-pub(crate) fn group(text: &str, tokens: &[Token], entities: Vec<Entity>) -> Extraction {
+pub fn group(text: &str, tokens: &[Token], entities: Vec<Entity>) -> Extraction {
     let blocks = split_blocks(text, tokens);
     let placed = place(&blocks, &entities);
     let mut build = anchors(&blocks, &entities, &placed);

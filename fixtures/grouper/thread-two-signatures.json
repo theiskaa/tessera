@@ -1,0 +1,162 @@
+{
+  "cases": [
+    {
+      "name": "reply_and_quoted_signature",
+      "input": "Hi Nino,\n\nConfirmed for Monday, the crates will be ready at 9.\n\nBest,\nAmelia Okafor\nNorthgate Textiles Ltd\n+44 20 7946 0123\n\nOn Fri, 12 Sep 2026 at 10:02, Nino Beridze <nino@kavkaz-freight.example> wrote:\n> Hello Amelia,\n>\n> Can we move pickup to Monday?\n>\n> Nino Beridze\n> Kavkaz Freight LLC\n> +995 32 212 3456\n",
+      "entities": [
+        {
+          "kind": "person",
+          "text": "Nino",
+          "start": 3,
+          "end": 7
+        },
+        {
+          "kind": "person",
+          "text": "Amelia Okafor",
+          "start": 70,
+          "end": 83
+        },
+        {
+          "kind": "org",
+          "text": "Northgate Textiles Ltd",
+          "start": 84,
+          "end": 106
+        },
+        {
+          "kind": "phone",
+          "text": "+44 20 7946 0123",
+          "start": 107,
+          "end": 123
+        },
+        {
+          "kind": "person",
+          "text": "Nino Beridze",
+          "start": 155,
+          "end": 167
+        },
+        {
+          "kind": "email",
+          "text": "nino@kavkaz-freight.example",
+          "start": 169,
+          "end": 196
+        },
+        {
+          "kind": "person",
+          "text": "Amelia",
+          "start": 213,
+          "end": 219
+        },
+        {
+          "kind": "person",
+          "text": "Nino Beridze",
+          "start": 259,
+          "end": 271
+        },
+        {
+          "kind": "org",
+          "text": "Kavkaz Freight LLC",
+          "start": 274,
+          "end": 292
+        },
+        {
+          "kind": "phone",
+          "text": "+995 32 212 3456",
+          "start": 295,
+          "end": 311
+        }
+      ],
+      "contacts": [
+        {
+          "person": 1,
+          "org": 2,
+          "addresses": [],
+          "emails": [],
+          "phones": [
+            3
+          ]
+        },
+        {
+          "person": 4,
+          "org": null,
+          "addresses": [],
+          "emails": [
+            5
+          ],
+          "phones": []
+        },
+        {
+          "person": 7,
+          "org": 8,
+          "addresses": [],
+          "emails": [],
+          "phones": [
+            9
+          ]
+        }
+      ],
+      "unassigned": [
+        0,
+        6
+      ]
+    },
+    {
+      "name": "outlook_header_block",
+      "input": "From: Amelia Okafor <amelia.okafor@northgate.example>\nSent: Friday, 12 September 2026 10:02\nTo: Nino Beridze <nino@kavkaz-freight.example>\nSubject: Pickup\n\nAll set for Monday.\n\nAmelia",
+      "entities": [
+        {
+          "kind": "person",
+          "text": "Amelia Okafor",
+          "start": 6,
+          "end": 19
+        },
+        {
+          "kind": "email",
+          "text": "amelia.okafor@northgate.example",
+          "start": 21,
+          "end": 52
+        },
+        {
+          "kind": "person",
+          "text": "Nino Beridze",
+          "start": 96,
+          "end": 108
+        },
+        {
+          "kind": "email",
+          "text": "nino@kavkaz-freight.example",
+          "start": 110,
+          "end": 137
+        },
+        {
+          "kind": "person",
+          "text": "Amelia",
+          "start": 177,
+          "end": 183
+        }
+      ],
+      "contacts": [
+        {
+          "person": 0,
+          "org": null,
+          "addresses": [],
+          "emails": [
+            1
+          ],
+          "phones": []
+        },
+        {
+          "person": 2,
+          "org": null,
+          "addresses": [],
+          "emails": [
+            3
+          ],
+          "phones": []
+        }
+      ],
+      "unassigned": [
+        4
+      ]
+    }
+  ]
+}

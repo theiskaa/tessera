@@ -369,3 +369,87 @@ pub fn detector_fixtures() -> Vec<(&'static str, DetectorFixture)> {
     })
     .collect()
 }
+
+#[derive(Deserialize)]
+pub struct GrouperFixture {
+    pub cases: Vec<GrouperCase>,
+}
+
+#[derive(Deserialize)]
+pub struct GrouperCase {
+    pub name: String,
+    pub input: String,
+    pub entities: Vec<GoldEntity>,
+    pub contacts: Vec<ExpectedContact>,
+    pub unassigned: Vec<usize>,
+}
+
+#[derive(Deserialize)]
+pub struct GoldEntity {
+    pub kind: String,
+    pub text: String,
+    pub start: usize,
+    pub end: usize,
+}
+
+/// A contact as indices into the case's `entities`.
+#[derive(Deserialize)]
+pub struct ExpectedContact {
+    pub person: Option<usize>,
+    pub org: Option<usize>,
+    pub addresses: Vec<usize>,
+    pub emails: Vec<usize>,
+    pub phones: Vec<usize>,
+}
+
+/// Grouper fixtures, with every gold entity's `text` checked against its offsets.
+pub fn grouper_fixtures() -> Vec<(&'static str, GrouperFixture)> {
+    [
+        (
+            "blocks",
+            include_str!("../../../fixtures/grouper/blocks.json"),
+        ),
+        (
+            "letterhead",
+            include_str!("../../../fixtures/grouper/letterhead.json"),
+        ),
+        (
+            "signature-georgian",
+            include_str!("../../../fixtures/grouper/signature-georgian.json"),
+        ),
+        (
+            "signature-single",
+            include_str!("../../../fixtures/grouper/signature-single.json"),
+        ),
+        (
+            "support-conversation",
+            include_str!("../../../fixtures/grouper/support-conversation.json"),
+        ),
+        (
+            "table",
+            include_str!("../../../fixtures/grouper/table.json"),
+        ),
+        (
+            "thread-two-signatures",
+            include_str!("../../../fixtures/grouper/thread-two-signatures.json"),
+        ),
+    ]
+    .into_iter()
+    .map(|(name, src)| {
+        let fixture: GrouperFixture = parse(name, src);
+        for case in &fixture.cases {
+            for e in &case.entities {
+                assert_eq!(
+                    case.input.get(e.start..e.end),
+                    Some(e.text.as_str()),
+                    "fixture {name}: `{}` offsets of {} {:?}",
+                    case.name,
+                    e.kind,
+                    e.text
+                );
+            }
+        }
+        (name, fixture)
+    })
+    .collect()
+}

@@ -1,0 +1,56 @@
+{
+  "cases": [
+    {
+      "name": "georgian_signature",
+      "input": "მადლობა, ორშაბათს შევხვდებით.\n\nნინო ბერიძე\nშპს კავკაზ ფრეითი\nრუსთაველის გამზირი 14, თბილისი 0108, საქართველო\n+995 32 212 3456\nnino@kavkaz-freight.example",
+      "entities": [
+        {
+          "kind": "person",
+          "text": "ნინო ბერიძე",
+          "start": 81,
+          "end": 112
+        },
+        {
+          "kind": "org",
+          "text": "შპს კავკაზ ფრეითი",
+          "start": 113,
+          "end": 160
+        },
+        {
+          "kind": "address",
+          "text": "რუსთაველის გამზირი 14, თბილისი 0108, საქართველო",
+          "start": 161,
+          "end": 276
+        },
+        {
+          "kind": "phone",
+          "text": "+995 32 212 3456",
+          "start": 277,
+          "end": 293
+        },
+        {
+          "kind": "email",
+          "text": "nino@kavkaz-freight.example",
+          "start": 294,
+          "end": 321
+        }
+      ],
+      "contacts": [
+        {
+          "person": 0,
+          "org": 1,
+          "addresses": [
+            2
+          ],
+          "emails": [
+            4
+          ],
+          "phones": [
+            3
+          ]
+        }
+      ],
+      "unassigned": []
+    }
+  ]
+}

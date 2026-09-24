@@ -1,0 +1,126 @@
+{
+  "cases": [
+    {
+      "name": "uk_letterhead",
+      "input": "Northgate Textiles Ltd\nUnit 4, Riverside Mills\nLeeds LS1 4AB\nUnited Kingdom\nTel +44 113 496 0123\nhello@northgate.example\n\n12 September 2026\n\nDear Ms Beridze,\n\nPlease find attached our quotation for the autumn order.\n\nYours sincerely,\n\nAmelia Okafor\nSenior Buyer",
+      "entities": [
+        {
+          "kind": "org",
+          "text": "Northgate Textiles Ltd",
+          "start": 0,
+          "end": 22
+        },
+        {
+          "kind": "address",
+          "text": "Unit 4, Riverside Mills\nLeeds LS1 4AB\nUnited Kingdom",
+          "start": 23,
+          "end": 75
+        },
+        {
+          "kind": "phone",
+          "text": "+44 113 496 0123",
+          "start": 80,
+          "end": 96
+        },
+        {
+          "kind": "email",
+          "text": "hello@northgate.example",
+          "start": 97,
+          "end": 120
+        },
+        {
+          "kind": "person",
+          "text": "Beridze",
+          "start": 149,
+          "end": 156
+        },
+        {
+          "kind": "person",
+          "text": "Amelia Okafor",
+          "start": 235,
+          "end": 248
+        }
+      ],
+      "contacts": [
+        {
+          "person": null,
+          "org": 0,
+          "addresses": [
+            1
+          ],
+          "emails": [
+            3
+          ],
+          "phones": [
+            2
+          ]
+        },
+        {
+          "person": 5,
+          "org": null,
+          "addresses": [],
+          "emails": [],
+          "phones": []
+        }
+      ],
+      "unassigned": [
+        4
+      ]
+    },
+    {
+      "name": "japanese_letterhead",
+      "input": "株式会社ヘリオス照明\n〒100-0005 東京都千代田区丸の内1-1-1\n電話 03-5555-0123\ninfo@helios-lighting.example\n\n田中 太郎 様\n\nお世話になっております。",
+      "synthetic_invalid": true,
+      "entities": [
+        {
+          "kind": "org",
+          "text": "株式会社ヘリオス照明",
+          "start": 0,
+          "end": 30
+        },
+        {
+          "kind": "address",
+          "text": "〒100-0005 東京都千代田区丸の内1-1-1",
+          "start": 31,
+          "end": 78
+        },
+        {
+          "kind": "phone",
+          "text": "03-5555-0123",
+          "start": 86,
+          "end": 98
+        },
+        {
+          "kind": "email",
+          "text": "info@helios-lighting.example",
+          "start": 99,
+          "end": 127
+        },
+        {
+          "kind": "person",
+          "text": "田中 太郎",
+          "start": 129,
+          "end": 142
+        }
+      ],
+      "contacts": [
+        {
+          "person": null,
+          "org": 0,
+          "addresses": [
+            1
+          ],
+          "emails": [
+            3
+          ],
+          "phones": [
+            2
+          ]
+        }
+      ],
+      "unassigned": [
+        4
+      ]
+    }
+  ]
+}

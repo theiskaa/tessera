@@ -1,0 +1,179 @@
+{
+  "cases": [
+    {
+      "name": "pipe_table_three_rows",
+      "input": "Name | Company | Email | Phone\n--- | --- | --- | ---\nNino Beridze | Kavkaz Freight LLC | nino@kavkaz-freight.example | +995 32 212 3456\nAmelia Okafor | Northgate Textiles Ltd | amelia.okafor@northgate.example | +44 20 7946 0123\nHelios Lighting GmbH | | support@helios-lighting.example | +49 30 23125 400\n",
+      "entities": [
+        {
+          "kind": "person",
+          "text": "Nino Beridze",
+          "start": 53,
+          "end": 65
+        },
+        {
+          "kind": "org",
+          "text": "Kavkaz Freight LLC",
+          "start": 68,
+          "end": 86
+        },
+        {
+          "kind": "email",
+          "text": "nino@kavkaz-freight.example",
+          "start": 89,
+          "end": 116
+        },
+        {
+          "kind": "phone",
+          "text": "+995 32 212 3456",
+          "start": 119,
+          "end": 135
+        },
+        {
+          "kind": "person",
+          "text": "Amelia Okafor",
+          "start": 136,
+          "end": 149
+        },
+        {
+          "kind": "org",
+          "text": "Northgate Textiles Ltd",
+          "start": 152,
+          "end": 174
+        },
+        {
+          "kind": "email",
+          "text": "amelia.okafor@northgate.example",
+          "start": 177,
+          "end": 208
+        },
+        {
+          "kind": "phone",
+          "text": "+44 20 7946 0123",
+          "start": 211,
+          "end": 227
+        },
+        {
+          "kind": "org",
+          "text": "Helios Lighting GmbH",
+          "start": 228,
+          "end": 248
+        },
+        {
+          "kind": "email",
+          "text": "support@helios-lighting.example",
+          "start": 253,
+          "end": 284
+        },
+        {
+          "kind": "phone",
+          "text": "+49 30 23125 400",
+          "start": 287,
+          "end": 303
+        }
+      ],
+      "contacts": [
+        {
+          "person": 0,
+          "org": 1,
+          "addresses": [],
+          "emails": [
+            2
+          ],
+          "phones": [
+            3
+          ]
+        },
+        {
+          "person": 4,
+          "org": 5,
+          "addresses": [],
+          "emails": [
+            6
+          ],
+          "phones": [
+            7
+          ]
+        },
+        {
+          "person": null,
+          "org": 8,
+          "addresses": [],
+          "emails": [
+            9
+          ],
+          "phones": [
+            10
+          ]
+        }
+      ],
+      "unassigned": []
+    },
+    {
+      "name": "tab_separated_rows",
+      "input": "Nino Beridze\tnino@kavkaz-freight.example\t+995 32 212 3456\nAmelia Okafor\tamelia.okafor@northgate.example\t+44 20 7946 0123\n",
+      "entities": [
+        {
+          "kind": "person",
+          "text": "Nino Beridze",
+          "start": 0,
+          "end": 12
+        },
+        {
+          "kind": "email",
+          "text": "nino@kavkaz-freight.example",
+          "start": 13,
+          "end": 40
+        },
+        {
+          "kind": "phone",
+          "text": "+995 32 212 3456",
+          "start": 41,
+          "end": 57
+        },
+        {
+          "kind": "person",
+          "text": "Amelia Okafor",
+          "start": 58,
+          "end": 71
+        },
+        {
+          "kind": "email",
+          "text": "amelia.okafor@northgate.example",
+          "start": 72,
+          "end": 103
+        },
+        {
+          "kind": "phone",
+          "text": "+44 20 7946 0123",
+          "start": 104,
+          "end": 120
+        }
+      ],
+      "contacts": [
+        {
+          "person": 0,
+          "org": null,
+          "addresses": [],
+          "emails": [
+            1
+          ],
+          "phones": [
+            2
+          ]
+        },
+        {
+          "person": 3,
+          "org": null,
+          "addresses": [],
+          "emails": [
+            4
+          ],
+          "phones": [
+            5
+          ]
+        }
+      ],
+      "unassigned": []
+    }
+  ]
+}

@@ -25,6 +25,7 @@ pub mod internal {
         FeatureConfig, MAX_NGRAMS_PER_TOKEN, TokenFeatures, featurize, flag, fnv1a, is_content,
         line_ranges,
     };
+    pub use crate::group::group;
     pub use crate::model::bio::{
         DETECTOR_KINDS, DetectedSpan, argmax, decode_detector, detector_label_strings,
         parser_label_strings,

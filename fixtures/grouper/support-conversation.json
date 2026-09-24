@@ -1,0 +1,63 @@
+{
+  "cases": [
+    {
+      "name": "two_speakers_timestamped",
+      "input": "[10:02] Agent (Priya Raman): Hi, I can help with the delivery. Which address should we use?\n[10:03] Customer: Please ship to 45 Queen Street, Manchester M2 5HX. My number is 07700 900123.\n[10:04] Agent (Priya Raman): Thanks. And the invoice email?\n[10:05] Customer: billing@okafor-consulting.example, attention Amelia Okafor.\n",
+      "entities": [
+        {
+          "kind": "person",
+          "text": "Priya Raman",
+          "start": 15,
+          "end": 26
+        },
+        {
+          "kind": "address",
+          "text": "45 Queen Street, Manchester M2 5HX",
+          "start": 125,
+          "end": 159
+        },
+        {
+          "kind": "phone",
+          "text": "07700 900123",
+          "start": 174,
+          "end": 186
+        },
+        {
+          "kind": "person",
+          "text": "Priya Raman",
+          "start": 203,
+          "end": 214
+        },
+        {
+          "kind": "email",
+          "text": "billing@okafor-consulting.example",
+          "start": 266,
+          "end": 299
+        },
+        {
+          "kind": "person",
+          "text": "Amelia Okafor",
+          "start": 311,
+          "end": 324
+        }
+      ],
+      "contacts": [
+        {
+          "person": 5,
+          "org": null,
+          "addresses": [],
+          "emails": [
+            4
+          ],
+          "phones": []
+        }
+      ],
+      "unassigned": [
+        0,
+        1,
+        2,
+        3
+      ]
+    }
+  ]
+}
