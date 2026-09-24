@@ -6,6 +6,7 @@ pub(crate) mod email;
 pub(crate) mod phone;
 #[cfg(feature = "phone-metadata")]
 mod phone_tables;
+pub(crate) mod region;
 
 use crate::Entity;
 #[cfg(feature = "markdown")]

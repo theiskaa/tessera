@@ -464,7 +464,10 @@ pub struct Config<'a> {
 /// Per-call options.
 #[derive(Debug, Clone, Default)]
 pub struct Query<'a> {
-    /// Default regions for phone numbers written without a country code. `parse_address`
+    /// Regions for phone numbers written without a country code, tried in order. When empty,
+    /// the regions are inferred from the document itself: numbers in it written with a country
+    /// code, email domains, postcodes, Georgian or Japanese script, and country names. A
+    /// document with no such evidence leaves its national numbers unread. `parse_address`
     /// ignores it.
     pub country_hint: &'a [&'a str],
     /// Return low-confidence results instead of omitting them. The detector's own per-kind
@@ -584,6 +587,18 @@ impl Tessera {
     /// is scanned and offsets index the Markdown source; a build without the `markdown` feature
     /// returns [`Error::UnsupportedFormat`] for it.
     pub fn detect(&self, text: &str, query: &Query<'_>) -> Result<Vec<Entity>, Error> {
+        let inferred: Vec<&str>;
+        let with_regions: Query<'_>;
+        let query = if query.country_hint.is_empty() {
+            inferred = rules::region::infer(text);
+            with_regions = Query {
+                country_hint: &inferred,
+                ..query.clone()
+            };
+            &with_regions
+        } else {
+            query
+        };
         match &query.format {
             Format::Text => self.detect_masked(text, query, None, Vec::new()),
             #[cfg(feature = "markdown")]
@@ -793,6 +808,40 @@ mod tests {
             format: Format::Markdown(MarkdownOptions::default()),
             ..Query::default()
         }
+    }
+
+    #[cfg(feature = "phone-metadata")]
+    #[test]
+    fn without_a_hint_the_document_names_its_region() {
+        let t = rules_only();
+        let phones = |text: &str, hint: &[&str]| -> Vec<(String, Option<String>)> {
+            let query = Query {
+                country_hint: hint,
+                ..Query::default()
+            };
+            t.detect(text, &query)
+                .unwrap()
+                .into_iter()
+                .filter(|e| e.kind == Kind::Phone)
+                .map(|e| (e.text(text).to_string(), e.region))
+                .collect()
+        };
+        let gb = "Head office +44 20 7946 0958, or the desk on 020 7946 0321.";
+        assert_eq!(
+            phones(gb, &[]),
+            [
+                ("+44 20 7946 0958".to_string(), Some("GB".to_string())),
+                ("020 7946 0321".to_string(), Some("GB".to_string()))
+            ]
+        );
+        assert!(phones("The desk is on 020 7946 0321.", &[]).is_empty());
+        let de = "Büro: 030 23125 480, Kontakt anna@kanzlei-weber.de";
+        assert_eq!(phones(de, &[])[0].1.as_deref(), Some("DE"));
+        assert_eq!(
+            phones(de, &["GB"])[0].1.as_deref(),
+            Some("GB"),
+            "an explicit hint wins"
+        );
     }
 
     #[cfg(feature = "markdown")]

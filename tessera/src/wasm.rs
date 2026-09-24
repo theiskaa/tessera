@@ -89,7 +89,8 @@ impl JsTessera {
     /// `detect(text, options?)`: every supported entity in `text`, in document order.
     ///
     /// `options.countryHint` is a `string[]` of regions for numbers written without a country
-    /// code; `options.includeUncertain` also returns low-confidence entities. `options.format`
+    /// code, inferred from the document when absent; `options.includeUncertain` also returns
+    /// low-confidence entities. `options.format`
     /// is `"text"` (the default) or `"markdown"`, which scans only prose and reads `mailto:` and
     /// `tel:` link destinations, tuned by `options.markdown` (`includeCode`, `includeHtml`,
     /// `gfmTables`); a build without the `markdown` feature rejects it with `UNSUPPORTED_FORMAT`.

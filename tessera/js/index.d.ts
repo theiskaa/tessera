@@ -114,7 +114,11 @@ export interface MarkdownOptions {
 }
 
 export interface QueryOptions {
-  /** Regions for phone numbers written without a country code. Ignored by `parseAddress`. */
+  /**
+   * Regions for phone numbers written without a country code, tried in order. When absent, the
+   * regions are inferred from the document: numbers in it written with a country code, email
+   * domains, postcodes, script, and country names. Ignored by `parseAddress`.
+   */
   countryHint?: string[];
   /** Return low-confidence results instead of omitting them. */
   includeUncertain?: boolean;
