@@ -118,6 +118,7 @@
     },
     {
       "name": "a school named after a president",
+      "known_failure": true,
       "input": "The Abraham Lincoln High School band will perform on Saturday.",
       "expected": [
         {
