@@ -45,10 +45,11 @@ COLLECTED = {
        for s in ("jp-soumu", "jp-maff", "jp-caa", "ge-economy", "ge-civil", "ge-tsu", "ge-contacts",
                  "de-berlin", "de-impressum", "gb-contacts", "gb-courts")},
     **{s: (f"data/raw/silver/{s}/*.json", s[:2].upper())
-       for s in ("jp-env", "ge-mepa", "ge-tbilisi", "ge-parliament", "de-bnetza")},
+       for s in ("jp-env", "ge-mepa", "ge-tbilisi", "ge-parliament", "de-bnetza", "jp-yokohama",
+                 "ge-tbilisi2")},
 }
-# Rounds 1, 3, and 5 are silver (training) rounds; round 2 is the GE and JP evaluation set, and
-# rounds 4 and 6 the DE and GB additions to the review set. A count of None takes every document of the source.
+# Rounds 1, 3, 5, and 7 are silver (training) rounds; round 2 is the GE and JP evaluation set,
+# and rounds 4 and 6 the DE and GB additions to the review set. No document is sampled twice. A count of None takes every document of the source.
 PLAN = {
     1: {"federal-register": 150, "govuk": 150},
     2: {s: None for s in ("jp-soumu", "jp-maff", "jp-caa", "ge-economy", "ge-civil", "ge-tsu",
@@ -57,6 +58,7 @@ PLAN = {
     4: {s: None for s in ("de-berlin", "de-impressum", "gb-contacts")},
     5: {"de-bnetza": None},
     6: {"gb-courts": None},
+    7: {"govuk": 150, "jp-yokohama": None, "ge-tbilisi2": None},
 }
 CONTACT = re.compile(r"@|\b\d{3}[-. ]\d{3}[-. ]\d{4}\b|\b0\d{2,4} ?\d{3} ?\d{3,4}\b|\b(Street|Avenue|Road|Room|Suite)\b")
 
@@ -74,13 +76,24 @@ def cut(text):
     return head[:at] if at > MAX_CHARS // 2 else head[: head.rfind("\n")]
 
 
+def used_ids(round_no):
+    """Ids of the documents every other round already sampled."""
+    ids = set()
+    for p in pathlib.Path("data/interim/silver").glob("r*/sample.jsonl"):
+        if p.parent.name != f"r{round_no}":
+            ids.update(json.loads(l)["id"] for l in p.read_text().splitlines() if l)
+    return ids
+
+
 def sample(round_no):
     rng = random.Random(1000 + round_no)
+    used = used_ids(round_no)
     out = []
     for source, n in PLAN[round_no].items():
         if source in COLLECTED:
             pattern, country = COLLECTED[source]
             docs = [json.loads(pathlib.Path(f).read_text()) for f in sorted(glob.glob(pattern))]
+            docs = [d for d in docs if d["id"] not in used]
             if n is None:
                 out.extend({"id": d["id"], "source": source, "country": country, "url": d["url"],
                             "date": d["date"], "doc_type": d.get("doc_type", ""), "text": d["text"]}
@@ -89,6 +102,7 @@ def sample(round_no):
         else:
             path, country = SOURCES[source]
             docs = [json.loads(l) for l in pathlib.Path(path).read_text().splitlines() if l]
+            docs = [d for d in docs if d["id"] not in used]
         # Two thirds from documents with contact details, where the entities are.
         contact = [d for d in docs if CONTACT.search(d["text"])]
         rest = [d for d in docs if not CONTACT.search(d["text"])]
