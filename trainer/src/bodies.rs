@@ -571,6 +571,76 @@ fn native_script(name: &str) -> bool {
         .any(|c| crate::inflect::georgian(c) || ('\u{3040}'..='\u{9FFF}').contains(&c))
 }
 
+const GB_CHARITIES: &[&str] = &[
+    "Save the Children",
+    "Christian Aid",
+    "Crisis",
+    "Mencap",
+    "Carers UK",
+    "The Children's Society",
+    "Refuge",
+    "Women's Aid",
+    "Parkinson's UK",
+    "Diabetes UK",
+    "Stroke Association",
+    "Asthma + Lung UK",
+    "Blue Cross",
+    "Dogs Trust",
+    "Cats Protection",
+    "WaterAid",
+    "Friends of the Earth",
+    "Sue Ryder",
+    "Leonard Cheshire",
+    "Turn2us",
+    "StepChange",
+    "YoungMinds",
+    "Hospice UK",
+    "Victim Support",
+    "Relate",
+    "Help for Heroes",
+    "The Royal British Legion",
+    "SSAFA",
+    "Combat Stress",
+    "Emmaus UK",
+    "The Trussell Trust",
+    "Cruse Bereavement Support",
+    "Action Aid",
+];
+
+const US_CHARITIES: &[&str] = &[
+    "United Way",
+    "Habitat for Humanity",
+    "American Red Cross",
+    "Feeding America",
+    "Goodwill Industries",
+    "The Salvation Army",
+    "YMCA of the USA",
+    "Boys & Girls Clubs of America",
+    "Big Brothers Big Sisters",
+    "March of Dimes",
+    "Special Olympics",
+    "Meals on Wheels America",
+    "St. Jude Children's Research Hospital",
+    "Direct Relief",
+    "Doctors Without Borders USA",
+];
+
+/// Services a UK public body names its contact centres after.
+const GB_SERVICES: &[&str] = &[
+    "Single Justice",
+    "Courts and Tribunals",
+    "Divorce",
+    "Probate",
+    "Civil Money Claims",
+    "Child Maintenance",
+    "Pension",
+    "Student Finance",
+    "Passport Advice",
+    "Blue Badge",
+    "Business Support",
+    "Tax Credit",
+];
+
 const GE_UNIVERSITIES: &[&str] = &[
     "ივანე ჯავახიშვილის სახელობის თბილისის სახელმწიფო უნივერსიტეტი",
     "თბილისის სახელმწიფო უნივერსიტეტი",
@@ -906,6 +976,18 @@ impl Bodies {
         }
     }
 
+    /// A charity or non-profit named without a head word, as English documents name them:
+    /// `Save the Children`, `Dogs Trust`, `Habitat for Humanity`. None of the organizations
+    /// whose pages are in the evaluation sets is listed.
+    pub fn charity(&self, rng: &mut ChaCha8Rng) -> String {
+        let list = if self.country == "US" {
+            US_CHARITIES
+        } else {
+            GB_CHARITIES
+        };
+        pick_str(list, rng)
+    }
+
     /// A university, faculty, or institute: `თბილისის სახელმწიფო უნივერსიტეტი`, `თსუ`,
     /// `University of Leeds`, `Freie Universität Berlin`.
     pub fn university(&self, rng: &mut ChaCha8Rng) -> String {
@@ -966,6 +1048,16 @@ impl Bodies {
         let split = self.split();
         let topic = split_pick(TOPICS, split, rng);
         match self.country {
+            // Public services answer through named centres: `Single Justice Service Centre`,
+            // `Probate Contact Centre`.
+            "GB" if rng.random_bool(0.3) => {
+                let service = pick_str(GB_SERVICES, rng);
+                match rng.random_range(0..3) {
+                    0 => format!("{service} Service Centre"),
+                    1 => format!("{service} Contact Centre"),
+                    _ => format!("{service} Centre"),
+                }
+            }
             "DE" if rng.random_bool(0.6) => {
                 let topic = split_pick(DE_TOPICS, split, rng);
                 match rng.random_range(0..3) {

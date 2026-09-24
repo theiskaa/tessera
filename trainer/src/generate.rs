@@ -164,6 +164,7 @@ pub enum Slot {
     NegCaps,
     NegLaw,
     NegLabel,
+    NegService,
     NegHours,
     NegCitation,
     NegLine,
@@ -248,6 +249,7 @@ impl Slot {
             "neg_caps" => NegCaps,
             "neg_law" => NegLaw,
             "neg_label" => NegLabel,
+            "neg_service" => NegService,
             "neg_hours" => NegHours,
             "neg_citation" => NegCitation,
             "neg_line" => NegLine,
@@ -659,6 +661,9 @@ impl<'a> Ctx<'a> {
             }
             Slot::NegLaw => Filled::plain(localized(negatives::LAWS, self.country, 0.4, rng)),
             Slot::NegLabel => Filled::plain(localized(negatives::LABELS, self.country, 0.4, rng)),
+            Slot::NegService => {
+                Filled::plain(localized(negatives::SERVICES, self.country, 0.6, rng))
+            }
             Slot::NegHours => Filled::plain(localized(negatives::HOURS, self.country, 0.5, rng)),
             Slot::NegCitation => Filled::plain(negatives::citation(self.country, rng)),
             Slot::NegLine => Filled::plain(negatives::line(self.country, rng)),
@@ -725,13 +730,13 @@ impl<'a> Ctx<'a> {
     /// `name` with a second given name or surname joined by a hyphen, drawn from another
     /// Latin name of the pool: `Jens-Uwe Walther`, `Florian Zick-Mayer`.
     fn hyphenated(&self, name: &str, rng: &mut ChaCha8Rng) -> String {
-        let other = self
-            .pools
-            .people
-            .iter()
-            .filter(|p| p.latin() && p.name != name)
-            .collect::<Vec<_>>()
-            .choose(rng)
+        if name.contains('-') {
+            return name.to_string();
+        }
+        // A few draws find an unhyphenated Latin donor without scanning the whole pool.
+        let other = (0..8)
+            .filter_map(|_| self.pools.people.choose(rng))
+            .find(|p| p.latin() && p.name != name && !p.name.contains('-'))
             .and_then(|p| p.name.split_once(' '));
         match (name.split_once(' '), other) {
             (Some((given, rest)), Some((other_given, _))) if rng.random_bool(0.5) => {
@@ -829,7 +834,7 @@ impl<'a> Ctx<'a> {
                 }
             }
             // Office pages print the postcode on a line of its own above the rest.
-            "JP" if rng.random_bool(0.3) => {
+            "JP" if sep == "\n" && rng.random_bool(0.3) => {
                 if let Some((code, rest)) = address.split_once(' ')
                     && code.chars().filter(char::is_ascii_digit).count() == 7
                 {
@@ -880,6 +885,10 @@ impl<'a> Ctx<'a> {
         let mut name = org.name.clone();
         if self.plain {
             return Ok(name);
+        }
+        // English documents name charities far more often than registered companies.
+        if matches!(self.country, "GB" | "US") && rng.random_bool(0.15) {
+            return Ok(self.pools.bodies.charity(rng));
         }
         if rng.random_bool(0.25) {
             let body = self.pools.bodies.body(false, rng);
@@ -1868,7 +1877,7 @@ fn load_pools(
             if e.augmented
                 || pool_filter::hydrant(&e.text)
                 || (e.country == "GE" && pool_filter::unusable_ge_address(&e))
-                || (e.country == "JP" && pool_filter::unusable_jp_address(&e.text))
+                || (e.country == "JP" && pool_filter::unusable_jp_address(&e))
             {
                 continue;
             }

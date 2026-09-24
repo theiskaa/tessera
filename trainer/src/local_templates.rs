@@ -358,6 +358,20 @@ pub const TEMPLATES: &[Local] = &[
     ),
     (
         Letterhead,
+        384,
+        NoPers,
+        GB,
+        "{org_acr#1}: {neg_service} enquiries\n\nTelephone: {phone#2}\nRelay UK: 18001 then {phone#2}\n{neg_hours}\n\nYou can also write to {org_acr#1} at:\n\n{org_gov#1}\n{address_ml#3}\n\nYou do not need to contact {org_acr#1} about {neg_service}.",
+    ),
+    (
+        Letterhead,
+        385,
+        Nothing,
+        GB,
+        "{org_unit#1}\n\nFor {neg_service} and {neg_service} questions, contact the {org_unit#1}.\n\nEmail\n{email#2}\n\nTelephone\n{phone#2}\n\n{org#3} can also help with {neg_service}.",
+    ),
+    (
+        Letterhead,
         389,
         NoPers,
         GB,

@@ -327,9 +327,17 @@ pub fn unusable_ge_address(e: &LabelledExample) -> bool {
 }
 
 /// A Japanese address row the pools leave out: one carrying a phone number (`0745-73-1138`)
-/// or a romanized word inside its Japanese text (`Nara Prefecture 三郷町…`), which the source
-/// sometimes merges into one field.
-pub fn unusable_jp_address(text: &str) -> bool {
+/// or a romanized word inside a labelled Japanese component (`Nara Prefecture 三郷町…`), which
+/// the source sometimes merges into one field. Venue lines and the country, which the pools
+/// drop anyway, are not looked at.
+pub fn unusable_jp_address(e: &LabelledExample) -> bool {
+    let text = e
+        .spans
+        .iter()
+        .filter(|s| s.label != AddressLabel::Country)
+        .map(|s| &e.text[s.start as usize..s.end as usize])
+        .collect::<Vec<_>>()
+        .join(" ");
     let japanese = text.chars().any(|c| ('\u{3040}'..='\u{9fff}').contains(&c));
     let latin_word = text
         .split(|c: char| !c.is_ascii_alphabetic())
@@ -481,13 +489,48 @@ mod tests {
 
     #[test]
     fn japanese_rows_with_phones_or_romanized_words_are_left_out() {
-        assert!(unusable_jp_address(
-            "636-0822 Nara Prefecture 三郷町立野南1-29-1 0745-73-1138号"
-        ));
-        assert!(unusable_jp_address("三郷町立野南1-29-1 0745-73-1138"));
-        assert!(!unusable_jp_address("100-8926 東京都千代田区霞が関2-1-2"));
-        assert!(!unusable_jp_address("北海道札幌市北区北8条西2-1-1"));
-        assert!(!unusable_jp_address("1-1 Marunouchi, Chiyoda-ku, Tokyo"));
+        use crate::data::{Span, Split};
+        let row = |text: &str, parts: &[(AddressLabel, &str)]| LabelledExample {
+            id: 0,
+            group_id: 0,
+            country: "JP".into(),
+            language: "ja".into(),
+            text: text.into(),
+            spans: parts
+                .iter()
+                .map(|(label, part)| {
+                    let start = text.find(part).unwrap_or(0);
+                    Span {
+                        label: *label,
+                        start: start as u32,
+                        end: (start + part.len()) as u32,
+                    }
+                })
+                .collect(),
+            split: Split::Train,
+            augmented: false,
+        };
+        use AddressLabel::{City, Country, HouseNumber, Postcode};
+        assert!(unusable_jp_address(&row(
+            "636-0822 Nara Prefecture 三郷町 1-29-1",
+            &[(Postcode, "636-0822"), (City, "Nara Prefecture 三郷町")]
+        )));
+        assert!(unusable_jp_address(&row(
+            "三郷町 0745-73-1138",
+            &[(City, "三郷町"), (HouseNumber, "0745-73-1138")]
+        )));
+        assert!(!unusable_jp_address(&row(
+            "100-8926 東京都千代田区\nSeven-Eleven\nJapan",
+            &[
+                (Postcode, "100-8926"),
+                (City, "東京都千代田区"),
+                (Country, "Japan")
+            ]
+        )));
+        assert!(!unusable_jp_address(&row(
+            "1-1 Marunouchi, Tokyo",
+            &[(HouseNumber, "1-1"), (City, "Tokyo")]
+        )));
     }
 
     #[test]

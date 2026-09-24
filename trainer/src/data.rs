@@ -2919,10 +2919,41 @@ pub(crate) mod augment {
     /// street and the town (`Hansastraße 19 • 80686 München`), `in` before a German postcode,
     /// and a federal building's name after the street (`, West Building,`).
     pub fn notes_between(country: &str, p: &mut Pieces, rng: &mut ChaCha8Rng) -> bool {
+        if country == "US" {
+            let Some(road) = position(p, L::Road) else {
+                return false;
+            };
+            let before_place = p.items.get(road + 1).is_some_and(|i| {
+                matches!(i.label, Some(L::City | L::Unit | L::Level | L::Postcode))
+            });
+            if !before_place {
+                return false;
+            }
+            let buildings = [
+                "West Building",
+                "South Building",
+                "Main Building",
+                "East Tower",
+                "Bldg. 51",
+            ];
+            let text = buildings[rng.random_range(0..buildings.len())];
+            p.items.insert(road + 1, piece(None, text));
+            p.seps.insert(road, ", ".into());
+            return true;
+        }
         let Some(k) = position(p, L::HouseNumber) else {
             return false;
         };
-        if k + 1 >= p.items.len() || japanese_script(p) {
+        // Only between a street (road then number) and the place that follows it.
+        let street_then_place = k > 0
+            && p.items[k - 1].label == Some(L::Road)
+            && p.items.get(k + 1).is_some_and(|i| {
+                matches!(
+                    i.label,
+                    Some(L::Postcode | L::City | L::Suburb | L::District | L::Level | L::Unit)
+                )
+            });
+        if !street_then_place || japanese_script(p) {
             return false;
         }
         let note =
@@ -2943,23 +2974,6 @@ pub(crate) mod augment {
                 p.seps.insert(k, " ".into());
             }
             ("DE", 1) => p.seps[k] = " in ".into(),
-            ("US", _) => {
-                let Some(road) = position(p, L::Road) else {
-                    return false;
-                };
-                let text = note(
-                    rng,
-                    &[
-                        "West Building",
-                        "South Building",
-                        "Main Building",
-                        "East Tower",
-                        "Bldg. 51",
-                    ],
-                );
-                p.items.insert(road + 1, piece(None, text));
-                p.seps.insert(road, ", ".into());
-            }
             _ => {
                 let bar = note(rng, &[" • ", " | ", " · ", " – "]);
                 p.seps[k] = bar.into();

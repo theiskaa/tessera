@@ -122,6 +122,63 @@ pub const LAWS: &[(&str, &[&str])] = &[
     ),
 ];
 
+/// Services, schemes, taxes, and help lines that public bodies name in Title Case or as
+/// acronyms and that are not organizations: `Relay UK`, `PAYE`, `Universal Credit`.
+pub const SERVICES: &[(&str, &[&str])] = &[
+    (
+        "en",
+        &[
+            "Relay UK",
+            "VAT",
+            "PAYE",
+            "National Insurance",
+            "Self Assessment",
+            "Universal Credit",
+            "Child Benefit",
+            "UTR",
+            "Council Tax",
+            "Blue Badge",
+            "Pension Credit",
+            "Tax Credits",
+            "Government Gateway",
+            "Direct Debit",
+            "Customer Service",
+            "Court Enquiries",
+            "Online Services",
+            "Help Desk",
+        ],
+    ),
+    (
+        "US",
+        &[
+            "Social Security",
+            "Medicare",
+            "Medicaid",
+            "SNAP",
+            "FAFSA",
+            "EIN",
+            "TTY",
+            "Help Desk",
+            "Customer Service",
+            "Direct Deposit",
+            "E-Verify",
+        ],
+    ),
+    (
+        "DE",
+        &[
+            "ELSTER",
+            "Kindergeld",
+            "Bürgergeld",
+            "Steuer-ID",
+            "Kundenservice",
+            "Bürgertelefon",
+            "Wohngeld",
+            "BAföG",
+        ],
+    ),
+];
+
 /// Label lines of forms and notices, in Title Case, with their value.
 pub const LABELS: &[(&str, &[&str])] = &[
     (
@@ -375,7 +432,8 @@ pub fn register_no(country: &str, rng: &mut ChaCha8Rng) -> String {
 /// One negative line for filler blocks and the `neg_*` slots: a heading, a law or form, a
 /// label line, opening hours, a citation, or a Title Case sentence.
 pub fn line(country: &str, rng: &mut ChaCha8Rng) -> String {
-    match rng.random_range(0..7) {
+    match rng.random_range(0..8) {
+        7 => localized(SERVICES, country, 0.5, rng).to_string(),
         6 => money(country, true, rng),
         0 => localized(CAPS_HEADINGS, country, 0.4, rng).to_string(),
         1 => localized(LAWS, country, 0.4, rng).to_string(),
