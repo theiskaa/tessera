@@ -381,7 +381,15 @@ pub fn tokenize(text: &str) -> Vec<Token> {
             },
             CharKind::Punct => {
                 let joiner = matches!(c, '\'' | '\u{2019}' | '-');
+                // A possessive (`HMRC's`) and a capitalized word after a hyphen (`KUHNKE-Member`,
+                // `Jean-Luc`) are tokens of their own, so a span can end or start at them.
+                let after_next = text[end..].chars().nth(1);
+                let possessive =
+                    c != '-' && next == Some('s') && !after_next.is_some_and(char::is_alphanumeric);
+                let capital = c == '-' && next.is_some_and(char::is_uppercase);
                 let joins_alpha = joiner
+                    && !possessive
+                    && !capital
                     && matches!(&cur, Some((t, _)) if t.class == TokenClass::Alpha && t.end == i)
                     && matches!(next.map(classify), Some(CharKind::Alpha(s)) if Some(s) == cur.as_ref().map(|(t, _)| t.script));
                 let joins_digit = c == '.'
@@ -610,7 +618,29 @@ mod tests {
     #[test]
     fn apostrophe_and_hyphen_join_same_script() {
         assert_eq!(parts("O'Brien"), vec![("O'Brien", Alpha, Latin)]);
-        assert_eq!(parts("Jean-Luc"), vec![("Jean-Luc", Alpha, Latin)]);
+        assert_eq!(
+            parts("self-employed"),
+            vec![("self-employed", Alpha, Latin)]
+        );
+        assert_eq!(
+            parts("Jean-Luc"),
+            vec![
+                ("Jean", Alpha, Latin),
+                ("-", Punct, Script::Other),
+                ("Luc", Alpha, Latin)
+            ]
+        );
+        assert_eq!(
+            parts("HMRC’s staff"),
+            vec![
+                ("HMRC", Alpha, Latin),
+                ("’", Punct, Script::Other),
+                ("s", Alpha, Latin),
+                (" ", Space, Script::Other),
+                ("staff", Alpha, Latin)
+            ]
+        );
+        assert_eq!(parts("O'Shea"), vec![("O'Shea", Alpha, Latin)]);
         assert_eq!(
             parts("Jean- Luc"),
             vec![

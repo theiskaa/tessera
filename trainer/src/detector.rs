@@ -543,10 +543,19 @@ mod tests {
                 start: 4,
                 end: 7,
             },
+            KindSpan {
+                kind: 1,
+                start: 10,
+                end: 13,
+            },
             span(1, text, "EPA staff"),
             span(1, text, "epa@epa.example"),
         ];
-        assert_eq!(reachable_spans(text, &gold), vec![gold[0], gold[2]]);
+        assert_eq!(
+            reachable_spans(text, &gold),
+            vec![gold[0], gold[1], gold[3]],
+            "a possessive is a token of its own, the middle of `office` is not"
+        );
         let broken = "7290 Investment Drive, South\n\n[[Page 7]]\n\nCarolina 29418";
         assert!(reachable_spans(broken, &[span(2, broken, broken)]).is_empty());
     }

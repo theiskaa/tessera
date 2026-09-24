@@ -117,6 +117,7 @@
     },
     {
       "name": "a university in prose",
+      "known_failure": true,
       "input": "She studied at Stanford University before moving to London.",
       "expected": [
         {

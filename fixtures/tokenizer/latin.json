@@ -26,8 +26,22 @@
           "script": "other"
         },
         {
-          "text": "Jean-Luc",
+          "text": "Jean",
           "start": 9,
+          "end": 13,
+          "class": "alpha",
+          "script": "latin"
+        },
+        {
+          "text": "-",
+          "start": 13,
+          "end": 14,
+          "class": "punct",
+          "script": "other"
+        },
+        {
+          "text": "Luc",
+          "start": 14,
           "end": 17,
           "class": "alpha",
           "script": "latin"

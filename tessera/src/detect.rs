@@ -1,6 +1,6 @@
 //! The model half of `detect`: features over the whole document, the detector per window,
-//! spans trimmed and kept where their window trusts them, merged with the rule spans, and each
-//! detected address checked by the parser.
+//! spans kept where their window trusts them, merged with the rule spans, and each detected
+//! address split into components by the parser.
 
 use crate::{
     AddressLabel, Entity, Error, Kind, Model, Query, Source, Tessera, chunk, features, internal,
@@ -53,8 +53,7 @@ impl Tessera {
             for s in model::bio::decode_detector(&probs, &masked[range.clone()], &breaks[range]) {
                 let (first, last) = (w.tok_start + s.first, w.tok_start + s.last);
                 if chunk::trusted(&w, first, last) && s.confidence >= policy::detect_min(s.kind) {
-                    candidates.extend(span_entity(
-                        text,
+                    candidates.push(span_entity(
                         &tokens,
                         &retained,
                         s.kind,
@@ -76,8 +75,8 @@ impl Tessera {
             if e.source != Source::Model || !self.kinds.contains(e.kind) {
                 continue;
             }
-            if e.kind == Kind::Address && !self.check_address(text, &mut e, query)? {
-                continue;
+            if e.kind == Kind::Address {
+                self.attach_components(text, &mut e, query)?;
             }
             out.push(e);
         }
@@ -110,26 +109,31 @@ impl Tessera {
         })
     }
 
-    /// Parses a detected address on its own text, as the parser was trained, and decides
-    /// whether to keep it: at least two components with distinct labels (each at least
-    /// `MEDIUM`, since weaker ones are `Unknown`) accept it, with confidence bounded by their
-    /// mean; otherwise it is kept as uncertain only when the caller asks for uncertain results.
-    fn check_address(&self, text: &str, e: &mut Entity, query: &Query<'_>) -> Result<bool, Error> {
+    /// Parses a detected address on its own text, as the parser was trained, and attaches its
+    /// components, with the address's confidence bounded by their mean. An address too long to
+    /// parse keeps no components.
+    fn attach_components(
+        &self,
+        text: &str,
+        e: &mut Entity,
+        query: &Query<'_>,
+    ) -> Result<(), Error> {
         let parsed = match self.parse_address(&text[e.start..e.end], query) {
             Ok(p) => p,
-            Err(Error::InputTooLarge) => return Ok(false),
+            Err(Error::InputTooLarge) => return Ok(()),
             Err(other) => return Err(other),
         };
-        let mut labels: Vec<AddressLabel> = parsed
+        let confidences: Vec<f32> = parsed
             .components
             .iter()
-            .map(|c| c.label)
-            .filter(|l| *l != AddressLabel::Unknown)
+            .filter(|c| c.label != AddressLabel::Unknown)
+            .map(|c| c.confidence)
             .collect();
-        let labelled = labels.len();
-        labels.sort_by_key(|l| *l as u8);
-        labels.dedup();
-        let components = parsed
+        if !confidences.is_empty() {
+            let mean = confidences.iter().sum::<f32>() / confidences.len() as f32;
+            e.confidence = e.confidence.min(mean);
+        }
+        e.components = parsed
             .components
             .into_iter()
             .map(|mut c| {
@@ -137,24 +141,8 @@ impl Tessera {
                 c.end += e.start;
                 c
             })
-            .collect::<Vec<_>>();
-        if labels.len() >= 2 {
-            let mean = components
-                .iter()
-                .filter(|c| c.label != AddressLabel::Unknown)
-                .map(|c| c.confidence)
-                .sum::<f32>()
-                / labelled as f32;
-            e.confidence = e.confidence.min(mean);
-            e.components = components;
-            Ok(true)
-        } else if query.include_uncertain {
-            e.confidence = e.confidence.min(policy::MEDIUM - 0.01);
-            e.components = components;
-            Ok(true)
-        } else {
-            Ok(false)
-        }
+            .collect();
+        Ok(())
     }
 }
 
@@ -208,164 +196,25 @@ fn detector_inputs(
     }
 }
 
-/// A model entity over retained positions `first..=last`, trimmed of what the model tends to
-/// sweep in at the edges: quotes at either end, a bracket whose partner lies outside the span or
-/// a pair wrapping all of it, separators (`,` `;` `:` and their full-width forms) at either
-/// end, a trailing `。`, and a trailing `.` except after a short abbreviation on an org or an
-/// address (`Acme Ltd.`, `Main St.`). `None` when nothing is left.
+/// A model entity over retained positions `first..=last`, exactly as the detector decoded it.
 fn span_entity(
-    text: &str,
     tokens: &[token::Token],
     retained: &[usize],
     kind: Kind,
-    (mut first, mut last): (usize, usize),
+    (first, last): (usize, usize),
     confidence: f32,
-) -> Option<Entity> {
-    const QUOTES: &[&str] = &[
-        "\"", "'", "\u{201c}", "\u{201d}", "\u{2018}", "\u{2019}", "\u{ab}", "\u{bb}", "\u{201e}",
-    ];
-    const BRACKETS: &[(&str, &str)] = &[
-        ("(", ")"),
-        ("[", "]"),
-        ("<", ">"),
-        ("\u{ff08}", "\u{ff09}"),
-        ("\u{300c}", "\u{300d}"),
-        ("\u{300e}", "\u{300f}"),
-        ("\u{3010}", "\u{3011}"),
-    ];
-    const SEPARATORS: &[&str] = &[
-        ",", ";", ":", "\u{3001}", "\u{ff0c}", "\u{ff1b}", "\u{ff1a}",
-    ];
-    let at = |i: usize| {
-        let t = &tokens[retained[i]];
-        &text[t.start..t.end]
-    };
-    let holds =
-        |range: std::ops::RangeInclusive<usize>, s: &str| range.into_iter().any(|i| at(i) == s);
-    let abbreviation = |i: usize| {
-        let word = at(i);
-        word.chars().count() <= 4 && word.chars().all(char::is_alphabetic)
-    };
-    while first < last {
-        let opener = BRACKETS.iter().find(|(open, _)| at(first) == *open);
-        let closer = BRACKETS.iter().find(|(_, close)| at(last) == *close);
-        let period = at(last) == "\u{3002}"
-            || (at(last) == "." && (kind == Kind::Person || !abbreviation(last - 1)));
-        // A bracket opening at the end or closing at the start encloses nothing of the span.
-        let dangling_open = BRACKETS.iter().any(|(open, _)| at(last) == *open);
-        let dangling_close = BRACKETS.iter().any(|(_, close)| at(first) == *close);
-        if QUOTES.contains(&at(first)) || SEPARATORS.contains(&at(first)) || dangling_close {
-            first += 1;
-        } else if QUOTES.contains(&at(last))
-            || SEPARATORS.contains(&at(last))
-            || period
-            || dangling_open
-        {
-            last -= 1;
-        } else if let Some((_, close)) = opener
-            && ((at(last) == *close && !holds(first + 1..=last - 1, close))
-                || !holds(first + 1..=last, close))
-        {
-            first += 1;
-            if at(last) == *close {
-                last -= 1;
-            }
-        } else if let Some((open, _)) = closer
-            && !holds(first..=last - 1, open)
-        {
-            last -= 1;
-        } else {
-            break;
-        }
-    }
-    // A bracket pair with nothing inside trims past itself.
-    if first > last {
-        return None;
-    }
-    let lone = at(first);
-    if first == last
-        && (QUOTES.contains(&lone)
-            || SEPARATORS.contains(&lone)
-            || lone == "."
-            || lone == "\u{3002}"
-            || BRACKETS.iter().any(|(o, c)| lone == *o || lone == *c))
-    {
-        return None;
-    }
-    let start = tokens[retained[first]].start;
-    Some(Entity {
+) -> Entity {
+    Entity {
         kind,
-        start,
-        end: inside_last_token(text, start, tokens[retained[last]].end, kind),
+        start: tokens[retained[first]].start,
+        end: tokens[retained[last]].end,
         confidence,
         review_recommended: false,
         source: Source::Model,
         components: Vec::new(),
         normalized: None,
         region: None,
-    })
-}
-
-/// Roles that directories glue to a name with a hyphen (`Alice KUHNKE-Member`), which the
-/// tokenizer keeps in the name's token.
-const GLUED_ROLES: [&str; 23] = [
-    "Member",
-    "Delegate",
-    "Substitute",
-    "Alternate",
-    "Observer",
-    "Chair",
-    "Chairman",
-    "Chairwoman",
-    "Chairperson",
-    "Vice-Chair",
-    "President",
-    "Vice-President",
-    "Governor",
-    "Director",
-    "Head",
-    "Deputy",
-    "Secretary",
-    "Adviser",
-    "Advisor",
-    "Officer",
-    "Coordinator",
-    "Assistant",
-    "Rapporteur",
-];
-
-/// The end of a span that the token grid cannot cut: a person's name stops before a role glued
-/// on with a hyphen, and a person or organization stops before a possessive `'s` (`the SEC's
-/// Office`). Only the last token can hold either.
-fn inside_last_token(text: &str, start: usize, end: usize, kind: Kind) -> usize {
-    let mut end = end;
-    if kind == Kind::Person {
-        let span = &text[start..end];
-        let glued = span.match_indices('-').find_map(|(i, _)| {
-            let rest = &span[i + 1..];
-            GLUED_ROLES
-                .iter()
-                .any(|role| {
-                    rest.strip_prefix(role)
-                        .is_some_and(|after| !after.starts_with(char::is_alphabetic))
-                })
-                .then_some(i)
-        });
-        if let Some(cut) = glued.filter(|&cut| cut > 0) {
-            end = start + cut;
-        }
     }
-    if matches!(kind, Kind::Person | Kind::Org) {
-        for possessive in ["'s", "\u{2019}s"] {
-            if let Some(kept) = text[start..end].strip_suffix(possessive)
-                && !kept.is_empty()
-            {
-                end = start + kept.len();
-                break;
-            }
-        }
-    }
-    end
 }
 
 #[cfg(test)]
@@ -455,84 +304,5 @@ mod tests {
             t.detect(&text, &Query::default()).unwrap_err(),
             Error::InputTooLarge
         );
-    }
-
-    /// `span_entity` over every content token of `text`, as the text it keeps.
-    fn trimmed(kind: Kind, text: &str) -> Option<&str> {
-        let tokens = token::tokenize(text);
-        let retained: Vec<usize> = tokens
-            .iter()
-            .enumerate()
-            .filter(|(_, t)| features::is_content(t))
-            .map(|(i, _)| i)
-            .collect();
-        span_entity(text, &tokens, &retained, kind, (0, retained.len() - 1), 0.9)
-            .map(|e| &text[e.start..e.end])
-    }
-
-    #[test]
-    fn span_edges_are_trimmed() {
-        let cases = [
-            (
-                Kind::Person,
-                "\u{201c}Anna Schmidt\u{201d},",
-                Some("Anna Schmidt"),
-            ),
-            (
-                Kind::Org,
-                "Nippon Freight Co., Ltd.",
-                Some("Nippon Freight Co., Ltd."),
-            ),
-            (Kind::Org, "Acme Holdings.", Some("Acme Holdings")),
-            (Kind::Person, "Anna Lee.", Some("Anna Lee")),
-            (Kind::Address, ", Tbilisi 0108", Some("Tbilisi 0108")),
-            (Kind::Org, "株式会社ハルカ。", Some("株式会社ハルカ")),
-            (Kind::Org, "、株式会社ハルカ", Some("株式会社ハルカ")),
-            (Kind::Org, "( )", None),
-            (Kind::Org, "[ ]", None),
-            (Kind::Org, "()", None),
-            (Kind::Org, "\"( )\",", None),
-            (
-                Kind::Org,
-                "\u{ff08}株式会社ハルカ\u{ff09}",
-                Some("株式会社ハルカ"),
-            ),
-            (Kind::Org, "株式会社ハルカ\u{ff09}", Some("株式会社ハルカ")),
-            (Kind::Org, "(Acme Ltd", Some("Acme Ltd")),
-            (Kind::Org, "Acme (UK)", Some("Acme (UK)")),
-            (Kind::Org, "(UK) Acme (Europe)", Some("(UK) Acme (Europe)")),
-            (
-                Kind::Address,
-                "14 Rustaveli Avenue, Tbilisi 0108.",
-                Some("14 Rustaveli Avenue, Tbilisi 0108"),
-            ),
-            (
-                Kind::Address,
-                "221 Canal Street, Leeds,",
-                Some("221 Canal Street, Leeds"),
-            ),
-            (Kind::Address, "1 Main St.", Some("1 Main St.")),
-            (Kind::Person, "\"", None),
-            (Kind::Org, "(", None),
-            (Kind::Person, "Oliver Grant <", Some("Oliver Grant")),
-            (Kind::Person, "<Oliver Grant>", Some("Oliver Grant")),
-            (Kind::Org, "Acme Ltd (", Some("Acme Ltd")),
-            (Kind::Org, ") Acme Ltd", Some("Acme Ltd")),
-            (Kind::Person, "Alice KUHNKE-Member", Some("Alice KUHNKE")),
-            (Kind::Person, "Anna BERG-Vice-Chair", Some("Anna BERG")),
-            (
-                Kind::Person,
-                "Jean-Pierre Dubois",
-                Some("Jean-Pierre Dubois"),
-            ),
-            (Kind::Person, "Ana Headley-Smith", Some("Ana Headley-Smith")),
-            (Kind::Org, "SEC's", Some("SEC")),
-            (Kind::Person, "Gunta ANČA-Delegate", Some("Gunta ANČA")),
-            (Kind::Org, "DVLA\u{2019}s", Some("DVLA")),
-            (Kind::Address, "Kings's Road", Some("Kings's Road")),
-        ];
-        for (kind, text, want) in cases {
-            assert_eq!(trimmed(kind, text), want, "{text:?}");
-        }
     }
 }
