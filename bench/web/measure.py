@@ -36,7 +36,7 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 PAGE = "/bench/web/measure.html"
 PKG = "tessera/pkg"
 BUNDLE = "models/tessera-v1.safetensors"
-SHIPPED = ["tessera.js", "index.js", "worker.js", "tessera_simd_bg.wasm", "tessera_bg.wasm"]
+SHIPPED = ["tessera.js", "tessera_simd.js", "index.js", "worker.js", "tessera_simd_bg.wasm", "tessera_bg.wasm"]
 COLD_RUNS = 10
 # Warm calls cycle through the fixture addresses this many times, so each weighs the same.
 WARM_PASSES = 3

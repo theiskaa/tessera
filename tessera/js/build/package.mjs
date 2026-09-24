@@ -3,7 +3,15 @@
 import { copyFile, readFile, rm, writeFile } from "node:fs/promises";
 
 const pkgDir = new URL("../../pkg/", import.meta.url);
-const shipped = ["index.js", "index.d.ts", "worker.js", "tessera.js", "tessera_bg.wasm", "tessera_simd_bg.wasm"];
+const shipped = [
+  "index.js",
+  "index.d.ts",
+  "worker.js",
+  "tessera.js",
+  "tessera_bg.wasm",
+  "tessera_simd.js",
+  "tessera_simd_bg.wasm",
+];
 
 const path = new URL("package.json", pkgDir);
 const pkg = JSON.parse(await readFile(path, "utf8"));

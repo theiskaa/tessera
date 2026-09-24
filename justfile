@@ -16,18 +16,18 @@ simd_env := "RUSTFLAGS='-C target-feature=+simd128' CARGO_TARGET_DIR='" + justfi
 # hand-written entry, worker, and types.
 wasm: wasm-baseline wasm-simd wasm-package
 
-# The baseline wasm for engines without SIMD, with the glue both variants share.
+# The baseline wasm for engines without SIMD, with its glue.
 wasm-baseline:
     env {{wasm_env}} wasm-pack build --release --target web --out-dir pkg tessera --features wasm
     {{wasm_opt}} -o tessera/pkg/tessera_bg.wasm tessera/pkg/tessera_bg.wasm
 
-# The simd128 wasm. Its glue must be identical to the baseline's, which both variants load
-# through, so the build fails if it differs; it is then discarded.
+# The simd128 wasm with its own glue, `tessera_simd.js`: wasm-bindgen names functions in the
+# glue by their index, which differs between the variants once their code does.
 wasm-simd:
-    env {{wasm_env}} {{simd_env}} wasm-pack build --release --target web --out-dir pkg-simd tessera --features wasm
+    env {{wasm_env}} {{simd_env}} wasm-pack build --release --target web --out-dir pkg-simd --out-name tessera_simd tessera --features wasm
     mkdir -p tessera/pkg
-    {{wasm_opt}} --enable-simd -o tessera/pkg/tessera_simd_bg.wasm tessera/pkg-simd/tessera_bg.wasm
-    cmp tessera/pkg-simd/tessera.js tessera/pkg/tessera.js
+    {{wasm_opt}} --enable-simd -o tessera/pkg/tessera_simd_bg.wasm tessera/pkg-simd/tessera_simd_bg.wasm
+    cp tessera/pkg-simd/tessera_simd.js tessera/pkg/tessera_simd.js
     rm -rf tessera/pkg-simd
 
 # Makes index.js the entry and leaves tessera/pkg holding exactly the shipped files.

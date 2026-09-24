@@ -1,6 +1,6 @@
 // Package entry: instantiates the wasm module once, then hands everything else to the Rust
-// `createInstance`: option parsing, fetching, verification, and the optional worker.
-import init, { createInstance } from "./tessera.js";
+// `createInstance`: option parsing, fetching, verification, and the optional worker. Each wasm
+// variant has its own glue, since wasm-bindgen names functions in it by index.
 
 // A 31-byte module with one function returning a v128: validate() is false on engines without
 // SIMD and instantiates nothing.
@@ -20,7 +20,8 @@ export async function createTessera(options = {}) {
   }
   // Both URLs are written out in full: bundlers emit an asset only for a literal
   // `new URL("…", import.meta.url)`, and would drop a module named by an expression.
-  const wasmUrl = WebAssembly.validate(SIMD_PROBE)
+  const simd = WebAssembly.validate(SIMD_PROBE);
+  const wasmUrl = simd
     ? new URL("./tessera_simd_bg.wasm", import.meta.url)
     : new URL("./tessera_bg.wasm", import.meta.url);
   // Node cannot fetch a file: URL, so the module is read from disk there.
@@ -28,16 +29,28 @@ export async function createTessera(options = {}) {
     wasmUrl.protocol === "file:"
       ? import(/* webpackIgnore: true */ /* @vite-ignore */ NODE_FS).then((fs) => fs.readFile(wasmUrl))
       : wasmUrl;
-  ready ??= init({ module_or_path: wasmSource() }).catch((e) => {
-    ready = undefined;
-    throw unsupported(`could not load the WebAssembly module: ${e?.message ?? e}`);
-  });
-  await ready;
+  ready ??= (simd ? import("./tessera_simd.js") : import("./tessera.js"))
+    .then(async (glue) => {
+      await glue.default({ module_or_path: wasmSource() });
+      return glue;
+    })
+    .catch((e) => {
+      ready = undefined;
+      throw unsupported(`could not load the WebAssembly module: ${e?.message ?? e}`);
+    });
+  const { createInstance } = await ready;
   return createInstance({
     ...options,
     wasmUrl: wasmUrl.href,
-    workerUrl: new URL("./worker.js", import.meta.url).href,
+    workerUrl: workerUrl(simd),
   });
+}
+
+// The worker loads the same variant's glue; a bundler may rename the wasm, so it is told which.
+function workerUrl(simd) {
+  const url = new URL("./worker.js", import.meta.url);
+  if (simd) url.searchParams.set("simd", "");
+  return url.href;
 }
 
 function unsupported(message) {
