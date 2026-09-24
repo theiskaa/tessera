@@ -6,7 +6,7 @@
 //! fiction. Names and organizations are real (Wikidata and GLEIF), so generated text is
 //! training data only and never enters a versioned fixture.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
 use std::path::{Path, PathBuf};
 
@@ -1157,6 +1157,7 @@ fn load_pools(
         } else {
             row[0].clone()
         };
+        let name = pool_filter::without_article(&name).to_string();
         // Private trusts, pension schemes, and street-named property companies fill the
         // registers but rarely documents: a few stay, never one that embeds a person's name.
         let keep = if pool_filter::names_a_person(&name) {
@@ -1187,13 +1188,8 @@ fn load_pools(
             {
                 continue;
             }
-            // A bare place is not an address; a few with a region or country stay, since a
-            // sender's "Mainz, Germany" reads like one.
-            if pool_filter::locality_only(&e) {
-                let parts: BTreeSet<_> = e.spans.iter().map(|s| s.label as u8).collect();
-                if parts.len() < 2 || !pool_filter::keep_some(&e.text, 200) {
-                    continue;
-                }
+            if !pool_filter::postal(&e) {
+                continue;
             }
             if let Some(p) = pool_mut(&mut pools, &e.country, split.name()) {
                 p.addresses.push(PoolAddress::from_example(&e));

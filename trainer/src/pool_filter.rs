@@ -431,18 +431,26 @@ pub fn with_local_country(e: &LabelledExample, text: &str) -> String {
     }
 }
 
-/// An address that is only a place: no street, house number, PO box, or postcode. Documents
-/// write "Mainz" as a place, not an address, and the negative lists already teach that.
-pub fn locality_only(e: &LabelledExample) -> bool {
-    !e.spans.iter().any(|s| {
-        matches!(
-            s.label,
-            AddressLabel::Road
-                | AddressLabel::HouseNumber
-                | AddressLabel::PoBox
-                | AddressLabel::Postcode
-        )
-    })
+/// Whether the row is an address a letter could be sent to, as the review guidelines define
+/// one: a house number, a PO box, or a unit or floor on a named street. A town, a postcode
+/// with its town, or a street without a number is a place, and labelling it as an address
+/// would teach the detector the opposite of what it is measured against.
+pub fn postal(e: &LabelledExample) -> bool {
+    let has = |label: AddressLabel| e.spans.iter().any(|s| s.label == label);
+    has(AddressLabel::HouseNumber)
+        || has(AddressLabel::PoBox)
+        || ((has(AddressLabel::Unit) || has(AddressLabel::Level)) && has(AddressLabel::Road))
+}
+
+/// `name` without a leading English article, which the guidelines keep outside an org span.
+pub fn without_article(name: &str) -> &str {
+    match name
+        .strip_prefix("The ")
+        .or_else(|| name.strip_prefix("THE "))
+    {
+        Some(rest) if rest.contains(' ') || rest.chars().count() > 3 => rest,
+        _ => name,
+    }
 }
 
 #[cfg(test)]
@@ -499,6 +507,11 @@ mod tests {
         assert!(private_arrangement(
             "Peak Oil Products Ltd Retirement Benefits Scheme"
         ));
+        assert_eq!(
+            without_article("The Planning Inspectorate"),
+            "Planning Inspectorate"
+        );
+        assert_eq!(without_article("THE AA"), "THE AA");
     }
 
     #[test]
