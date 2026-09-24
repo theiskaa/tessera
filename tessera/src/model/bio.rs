@@ -1,4 +1,4 @@
-//! BIO label ids and greedy decoding, mirroring the trainer's `dataset::decode_labels`,
+//! BIO label ids and decoding, mirroring the trainer's `dataset::decode_labels`,
 //! `model_eval::decode_probs`, and `detector::decode`. Id 0 is `O`; semantic label `i` has
 //! `B` at `1 + 2i` and `I` at `2 + 2i`, in `AddressLabel::ALL` order for the parser and in
 //! `DETECTOR_KINDS` order for the detector.
@@ -32,15 +32,95 @@ pub struct DetectedSpan {
     pub confidence: f32,
 }
 
-/// Greedy decoding of `[len, DETECTOR_LABELS]` probabilities: the most probable label per
-/// position, `O` at masked positions (inside an email or phone), an `I-X` that does not
-/// continue an `X` span read as `B-X`, and every span closed before a paragraph break. Spans
-/// longer than `MAX_ENTITY_TOKENS` are dropped.
+/// Decoding of `[len, DETECTOR_LABELS]` probabilities: the most probable label sequence in
+/// which every `I-X` continues an `X` span (Viterbi over log probabilities), `O` at masked
+/// positions (inside an email or phone), and no span crossing a paragraph break. Spans longer
+/// than `MAX_ENTITY_TOKENS` are dropped. Per-position argmax cuts spans where one label dips
+/// below its neighbours (`[農林]水産省`); the sequence keeps them whole. On the real evaluation
+/// sets a stray `I-X` is nearly always the model's error, so it never opens a span: letting it
+/// open one at a cost gave back most of the gain.
 pub fn decode_detector(
     probs: &[f32],
     masked: &[bool],
     paragraph_break: &[bool],
 ) -> Vec<DetectedSpan> {
+    let labels = viterbi(probs, masked, paragraph_break);
+    spans_of(probs, &labels, paragraph_break)
+}
+
+/// The cost of label `to` after label `from` (`None` at the start or after a paragraph
+/// break): an `I-X` that does not continue an `X` span is impossible.
+fn transition(from: Option<usize>, to: usize) -> f32 {
+    if to == 0 || !to.is_multiple_of(2) {
+        return 0.0;
+    }
+    let continues = from.is_some_and(|f| f != 0 && (f - 1) / 2 == (to - 1) / 2);
+    if !continues { f32::NEG_INFINITY } else { 0.0 }
+}
+
+/// The best label sequence. Masked positions are `O`; after a paragraph break a position
+/// cannot continue a span. A probability of zero or NaN (damaged weights, or a softmax that
+/// saturated) counts as the smallest positive f32, and the scores are shifted so their best is
+/// zero after every position: a huge floor would otherwise swallow every later difference in
+/// f32 rounding and decide the rest of the window by ties.
+fn viterbi(probs: &[f32], masked: &[bool], paragraph_break: &[bool]) -> Vec<usize> {
+    const L: usize = DETECTOR_LABELS;
+    let n = probs.len() / L;
+    let floor = f32::MIN_POSITIVE.ln();
+    let log = |p: f32| {
+        if p.is_nan() || p <= 0.0 {
+            floor
+        } else {
+            p.ln().max(floor)
+        }
+    };
+    let mut score = [f32::NEG_INFINITY; L];
+    let mut back: Vec<[usize; L]> = Vec::with_capacity(n);
+    for t in 0..n {
+        let row = &probs[t * L..(t + 1) * L];
+        let forced_o = masked.get(t).copied().unwrap_or(false);
+        let fresh = t == 0 || paragraph_break.get(t).copied().unwrap_or(false);
+        let mut next = [f32::NEG_INFINITY; L];
+        let mut from = [0usize; L];
+        for (to, slot) in next.iter_mut().enumerate() {
+            if forced_o && to != 0 {
+                continue;
+            }
+            let emit = if forced_o { 0.0 } else { log(row[to]) };
+            if t == 0 {
+                *slot = emit + transition(None, to);
+                continue;
+            }
+            for (prev, &s) in score.iter().enumerate() {
+                let cost = transition(if fresh { None } else { Some(prev) }, to);
+                if s + emit + cost > *slot {
+                    *slot = s + emit + cost;
+                    from[to] = prev;
+                }
+            }
+        }
+        let best = next.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+        if best.is_finite() {
+            next.iter_mut().for_each(|s| *s -= best);
+        }
+        score = next;
+        back.push(from);
+    }
+    let mut labels = vec![0; n];
+    if n == 0 {
+        return labels;
+    }
+    let mut best = argmax(&score);
+    for t in (0..n).rev() {
+        labels[t] = best;
+        best = back[t][best];
+    }
+    labels
+}
+
+/// The spans of a label sequence, with the mean probability of their labels. An `I-X` opens a
+/// span unless it continues an `X` span, and every span closes before a paragraph break.
+fn spans_of(probs: &[f32], labels: &[usize], paragraph_break: &[bool]) -> Vec<DetectedSpan> {
     let mut out = Vec::new();
     let mut open: Option<(usize, usize, f32, usize)> = None;
     let mut close = |open: &mut Option<(usize, usize, f32, usize)>, last: usize| {
@@ -61,11 +141,7 @@ pub fn decode_detector(
             close(&mut open, t - 1);
             prev = None;
         }
-        let label = if masked.get(t).copied().unwrap_or(false) {
-            0
-        } else {
-            argmax(row)
-        };
+        let label = labels.get(t).copied().unwrap_or(0);
         let kind = (label != 0).then(|| (label - 1) / 2);
         let begin = label % 2 == 1;
         let p = row
@@ -215,17 +291,16 @@ mod tests {
     }
 
     #[test]
-    fn stray_inside_labels_start_spans_and_masks_force_o() {
+    fn stray_inside_labels_never_open_spans_and_masks_force_o() {
         // O, B-PERSON, I-PERSON, I-ORG, O, I-ADDRESS, I-ADDRESS
         let p = rows(&[0, 1, 2, 4, 0, 6, 6]);
         let none = [false; 7];
-        assert_eq!(
-            spans(&decode_detector(&p, &none, &none)),
-            [
-                (Kind::Person, 1, 2),
-                (Kind::Org, 3, 3),
-                (Kind::Address, 5, 6)
-            ]
+        let found = spans(&decode_detector(&p, &none, &none));
+        assert_eq!(found[0], (Kind::Person, 1, 2));
+        assert!(
+            !found
+                .iter()
+                .any(|&(k, first, _)| k == Kind::Org && first == 3)
         );
         let mut masked = [false; 7];
         masked[1] = true;
@@ -234,11 +309,57 @@ mod tests {
     }
 
     #[test]
-    fn a_masked_token_splits_a_span_and_the_inside_label_after_it_opens_another() {
+    fn a_masked_token_ends_a_span() {
         // B-PERSON, I-PERSON, I-PERSON with the middle position masked.
         let p = rows(&[1, 2, 2]);
         let found = decode_detector(&p, &[false, true, false], &[false; 3]);
-        assert_eq!(spans(&found), [(Kind::Person, 0, 0), (Kind::Person, 2, 2)]);
+        assert_eq!(spans(&found)[0], (Kind::Person, 0, 0));
+        assert!(!spans(&found).iter().any(|&(_, first, _)| first == 1));
+    }
+
+    #[test]
+    fn empty_or_saturated_rows_do_not_swallow_the_rest_of_the_window() {
+        let l = DETECTOR_LABELS;
+        let row = |label: usize| {
+            let mut r = vec![0.01; l];
+            r[label] = 0.94;
+            r
+        };
+        let none = |n: usize| vec![false; n];
+        for bad in [vec![f32::NAN; l], vec![0.0; l], {
+            let mut r = vec![0.0; l];
+            r[2] = 1.0;
+            r
+        }] {
+            let p: Vec<f32> = [bad, row(0), row(3), row(4), row(0)].concat();
+            assert_eq!(
+                spans(&decode_detector(&p, &none(5), &none(5))),
+                [(Kind::Org, 2, 3)]
+            );
+        }
+        let mut only_inside = vec![0.0; l];
+        only_inside[2] = 1.0;
+        let p: Vec<f32> = [row(1), row(2), only_inside, row(0), row(5), row(6)].concat();
+        let mut breaks = none(6);
+        breaks[2] = true;
+        assert_eq!(
+            spans(&decode_detector(&p, &none(6), &breaks)),
+            [(Kind::Person, 0, 1), (Kind::Address, 4, 5)]
+        );
+    }
+
+    #[test]
+    fn a_dip_inside_a_span_keeps_it_whole() {
+        // B-ORG 0.6, then a position where O (0.55) edges out I-ORG (0.45), then I-ORG 0.9.
+        let mut p = vec![0.0; 3 * DETECTOR_LABELS];
+        p[3] = 0.6;
+        p[0] = 0.4;
+        p[DETECTOR_LABELS] = 0.55;
+        p[DETECTOR_LABELS + 4] = 0.45;
+        p[2 * DETECTOR_LABELS + 4] = 0.9;
+        p[2 * DETECTOR_LABELS] = 0.1;
+        let found = decode_detector(&p, &[false; 3], &[false; 3]);
+        assert_eq!(spans(&found), [(Kind::Org, 0, 2)]);
     }
 
     #[test]

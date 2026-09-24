@@ -104,7 +104,9 @@ pub mod internal {
         pub masked: Vec<bool>,
         /// Logits `[tokens, DETECTOR_LABELS]`, row-major, before softmax.
         pub logits: Vec<f32>,
-        /// The most probable label per retained token, `O` where masked.
+        /// The most probable label per retained token, `O` where masked: the network's own
+        /// choice, which the golden vectors pin. Entities come from the sequence decoding in
+        /// `model::bio::decode_detector`, which can differ at a dip.
         pub decoded: Vec<u8>,
     }
 
