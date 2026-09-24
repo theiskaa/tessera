@@ -324,7 +324,7 @@ pub fn score_shipped(
     )?;
     let query = tessera::Query {
         country_hint: &[],
-        include_uncertain: false,
+        ..tessera::Query::default()
     };
     let originals: Vec<&LabelledExample> = examples.iter().filter(|e| !e.augmented).collect();
     let preds = originals

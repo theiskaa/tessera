@@ -107,7 +107,7 @@ impl Models {
         let hints: Vec<&str> = country_hint.iter().map(String::as_str).collect();
         let query = Query {
             country_hint: &hints,
-            include_uncertain: false,
+            ..Query::default()
         };
         let mut found: Vec<Found> = self
             .rules

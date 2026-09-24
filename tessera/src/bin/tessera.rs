@@ -5,14 +5,15 @@ use std::process::ExitCode;
 
 use serde_json::{Map, Value, json};
 use tessera::internal::display_confidence;
-use tessera::{Config, Entity, Kind, KindSet, Query, Tessera};
+use tessera::{Config, Entity, Format, Kind, KindSet, MarkdownOptions, Query, Tessera};
 
-const USAGE: &str = "usage: tessera [--kinds email,phone] [--country GB,GE] [--include-uncertain] [--model PATH] [--pretty] [FILE]";
+const USAGE: &str = "usage: tessera [--kinds email,phone] [--country GB,GE] [--include-uncertain] [--format text|markdown] [--include-code] [--include-html] [--no-gfm-tables] [--model PATH] [--pretty] [FILE]";
 
 struct Args {
     kinds: KindSet,
     country: Vec<String>,
     include_uncertain: bool,
+    format: Format,
     model: Option<String>,
     pretty: bool,
     file: Option<String>,
@@ -24,10 +25,14 @@ fn parse_args() -> Result<Option<Args>, String> {
         kinds: Kind::Email | Kind::Phone,
         country: Vec::new(),
         include_uncertain: false,
+        format: Format::Text,
         model: None,
         pretty: false,
         file: None,
     };
+    let mut markdown = MarkdownOptions::default();
+    // The first Markdown-only flag seen, rejected unless `--format markdown` is given too.
+    let mut markdown_flag = None;
     let mut it = std::env::args().skip(1);
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -49,12 +54,32 @@ fn parse_args() -> Result<Option<Args>, String> {
                     .collect();
             }
             "--include-uncertain" => args.include_uncertain = true,
+            "--format" => {
+                args.format = match it.next().ok_or("--format needs a value")?.as_str() {
+                    "text" => Format::Text,
+                    "markdown" => Format::Markdown(MarkdownOptions::default()),
+                    v => return Err(format!("unknown format `{v}`")),
+                }
+            }
+            "--include-code" | "--include-html" | "--no-gfm-tables" => {
+                match a.as_str() {
+                    "--include-code" => markdown.include_code = true,
+                    "--include-html" => markdown.include_html = true,
+                    _ => markdown.gfm_tables = false,
+                }
+                markdown_flag.get_or_insert(a);
+            }
             "--model" => args.model = Some(it.next().ok_or("--model needs a value")?),
             "--pretty" => args.pretty = true,
             "-h" | "--help" => return Ok(None),
             s if s.starts_with("--") => return Err(format!("unknown flag `{s}`")),
             s => args.file = Some(s.to_string()),
         }
+    }
+    if let Format::Markdown(options) = &mut args.format {
+        *options = markdown;
+    } else if let Some(flag) = markdown_flag {
+        return Err(format!("{flag} requires --format markdown"));
     }
     if !args.kinds.is_rules_only() && args.model.is_none() {
         let k = Kind::ALL
@@ -131,6 +156,7 @@ fn run() -> Result<(), (u8, String)> {
             &Query {
                 country_hint: &hints,
                 include_uncertain: args.include_uncertain,
+                format: args.format.clone(),
             },
         )
         .map_err(|e| (1, e.to_string()))?;

@@ -103,7 +103,7 @@ mod tests {
         let hint = [sample.country_hint];
         let query = Query {
             country_hint: &hint,
-            include_uncertain: false,
+            ..Query::default()
         };
         rules
             .detect(sample.text, &query)
@@ -156,7 +156,7 @@ mod tests {
             let hint = [sample.country_hint];
             let query = Query {
                 country_hint: &hint,
-                include_uncertain: false,
+                ..Query::default()
             };
             for e in rules.detect(sample.text, &query).unwrap() {
                 for &(start, end) in sample.addresses {

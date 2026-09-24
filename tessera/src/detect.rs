@@ -321,6 +321,7 @@ mod tests {
                 let query = Query {
                     country_hint: &["GE"],
                     include_uncertain,
+                    ..Query::default()
                 };
                 let found = t.detect(SIGNATURE, &query).unwrap();
                 for pair in found.windows(2) {
@@ -353,7 +354,7 @@ mod tests {
         .unwrap();
         let query = Query {
             country_hint: &["GE"],
-            include_uncertain: false,
+            ..Query::default()
         };
         let found = t.detect(SIGNATURE, &query).unwrap();
         let rules = policy::apply(rules::scan(SIGNATURE, &["GE"]), false);

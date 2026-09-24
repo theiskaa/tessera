@@ -90,7 +90,7 @@ fn detect_rules_only() {
             text,
             &Query {
                 country_hint: &["GE"],
-                include_uncertain: false,
+                ..Query::default()
             },
         )
         .unwrap();
@@ -213,7 +213,7 @@ fn overlap_email_wins() {
             text,
             &Query {
                 country_hint: &["GB"],
-                include_uncertain: false,
+                ..Query::default()
             },
         )
         .unwrap();

@@ -16,7 +16,10 @@ use wasm_bindgen_futures::JsFuture;
 use web_sys::{MessageEvent, Response, Worker, WorkerOptions, WorkerType};
 
 use crate::policy::display_confidence;
-use crate::{Config, Contact, Entity, Error, Extraction, Kind, KindSet, Query, Tessera, token};
+use crate::{
+    Config, Contact, Entity, Error, Extraction, Format, Kind, KindSet, MarkdownOptions, Query,
+    Tessera, token,
+};
 
 /// The JavaScript `Tessera` class: a loaded extractor reporting UTF-16 offsets.
 ///
@@ -86,7 +89,10 @@ impl JsTessera {
     /// `detect(text, options?)`: every supported entity in `text`, in document order.
     ///
     /// `options.countryHint` is a `string[]` of regions for numbers written without a country
-    /// code; `options.includeUncertain` also returns low-confidence entities.
+    /// code; `options.includeUncertain` also returns low-confidence entities. `options.format`
+    /// is `"text"` (the default) or `"markdown"`, which scans only prose and reads `mailto:` and
+    /// `tel:` link destinations, tuned by `options.markdown` (`includeCode`, `includeHtml`,
+    /// `gfmTables`); a build without the `markdown` feature rejects it with `UNSUPPORTED_FORMAT`.
     pub fn detect(
         &self,
         #[wasm_bindgen(unchecked_param_type = "string")] text: &JsValue,
@@ -570,6 +576,7 @@ fn describe(value: &JsValue) -> String {
 struct CallOptions {
     country_hint: Vec<String>,
     include_uncertain: bool,
+    format: Format,
 }
 
 impl CallOptions {
@@ -578,6 +585,7 @@ impl CallOptions {
         Ok(CallOptions {
             country_hint: string_array_option(&options, "countryHint")?.unwrap_or_default(),
             include_uncertain: bool_option(&options, "includeUncertain")?.unwrap_or(false),
+            format: format_option(&options)?,
         })
     }
 
@@ -586,6 +594,7 @@ impl CallOptions {
         let query = Query {
             country_hint: &hints,
             include_uncertain: self.include_uncertain,
+            format: self.format.clone(),
         };
         call(&query).map_err(JsValue::from)
     }
@@ -599,6 +608,14 @@ impl CallOptions {
             .collect();
         set(&obj, "countryHint", hints);
         set(&obj, "includeUncertain", self.include_uncertain);
+        if let Format::Markdown(md) = &self.format {
+            set(&obj, "format", "markdown");
+            let markdown = Object::new();
+            set(&markdown, "includeCode", md.include_code);
+            set(&markdown, "includeHtml", md.include_html);
+            set(&markdown, "gfmTables", md.gfm_tables);
+            set(&obj, "markdown", markdown);
+        }
         obj
     }
 }
@@ -754,6 +771,7 @@ fn error_code(err: &Error) -> &'static str {
         Error::ChecksumMismatch => "CHECKSUM_MISMATCH",
         Error::UnsupportedVersion => "UNSUPPORTED_VERSION",
         Error::InputTooLarge => "INPUT_TOO_LARGE",
+        Error::UnsupportedFormat => "UNSUPPORTED_FORMAT",
         Error::Inference { .. } => "INFERENCE",
     }
 }
@@ -803,6 +821,31 @@ fn string_option(options: &JsValue, key: &str) -> Result<Option<String>, JsValue
     option(options, key)?
         .map(|v| v.as_string().ok_or_else(|| type_error(key, "a string")))
         .transpose()
+}
+
+/// `options.format` and, for `"markdown"`, `options.markdown`, whose absent fields keep the
+/// `MarkdownOptions` defaults. `options.markdown` is ignored for `"text"`.
+fn format_option(options: &JsValue) -> Result<Format, JsValue> {
+    match string_option(options, "format")?.as_deref() {
+        None | Some("text") => Ok(Format::Text),
+        Some("markdown") => {
+            let defaults = MarkdownOptions::default();
+            let Some(markdown) = option(options, "markdown")? else {
+                return Ok(Format::Markdown(defaults));
+            };
+            if !markdown.is_object() {
+                return Err(type_error("markdown", "an object"));
+            }
+            Ok(Format::Markdown(MarkdownOptions {
+                include_code: bool_option(&markdown, "includeCode")?
+                    .unwrap_or(defaults.include_code),
+                include_html: bool_option(&markdown, "includeHtml")?
+                    .unwrap_or(defaults.include_html),
+                gfm_tables: bool_option(&markdown, "gfmTables")?.unwrap_or(defaults.gfm_tables),
+            }))
+        }
+        Some(_) => Err(type_error("format", "\"text\" or \"markdown\"")),
+    }
 }
 
 fn bool_option(options: &JsValue, key: &str) -> Result<Option<bool>, JsValue> {

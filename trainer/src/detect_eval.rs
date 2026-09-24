@@ -183,7 +183,7 @@ pub fn predict_library(
         let hints: Vec<&str> = hint(&case.country).into_iter().collect();
         let query = Query {
             country_hint: &hints,
-            include_uncertain: false,
+            ..Query::default()
         };
         let started = Instant::now();
         let found = tessera

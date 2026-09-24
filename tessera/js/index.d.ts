@@ -72,6 +72,7 @@ export type ErrorCode =
   | "CHECKSUM_MISMATCH"
   | "UNSUPPORTED_VERSION"
   | "INPUT_TOO_LARGE"
+  | "UNSUPPORTED_FORMAT"
   | "INFERENCE"
   | "MODEL_FETCH_FAILED"
   | "UNSUPPORTED_RUNTIME"
@@ -103,11 +104,28 @@ export interface CreateOptions {
   worker?: boolean;
 }
 
+export interface MarkdownOptions {
+  /** Scan fenced, indented, and inline code. Default false. */
+  includeCode?: boolean;
+  /** Scan raw HTML blocks and inline HTML as text. Default false. */
+  includeHtml?: boolean;
+  /** Parse GFM tables so each cell is scanned separately. Default true. */
+  gfmTables?: boolean;
+}
+
 export interface QueryOptions {
   /** Regions for phone numbers written without a country code. Ignored by `parseAddress`. */
   countryHint?: string[];
   /** Return low-confidence results instead of omitting them. */
   includeUncertain?: boolean;
+  /**
+   * Default "text". "markdown" scans only prose and reads `mailto:` and `tel:` link destinations;
+   * offsets still index the Markdown source. A build without Markdown support rejects it with
+   * `UNSUPPORTED_FORMAT`. Ignored by `parseAddress`.
+   */
+  format?: "text" | "markdown";
+  /** How "markdown" input is selected; ignored for "text". */
+  markdown?: MarkdownOptions;
 }
 
 /**

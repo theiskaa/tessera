@@ -33,13 +33,6 @@ pub fn scan(text: &str, country_hint: &[&str]) -> Vec<Entity> {
 /// because the others have no span in the document. Percent escapes other than `%40`, `%2B`,
 /// and `%20` fail validation.
 #[cfg(feature = "markdown")]
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "Format::Markdown in phase 6.4 is the first caller"
-    )
-)]
 pub(crate) fn from_links(links: &[LinkTarget], country_hint: &[&str]) -> Vec<Entity> {
     let mut out = Vec::new();
     for link in links {

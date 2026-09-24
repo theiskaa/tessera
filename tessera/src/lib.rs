@@ -398,6 +398,9 @@ pub enum Error {
     /// The input is longer than the operation accepts.
     #[error("input exceeds the supported size")]
     InputTooLarge,
+    /// `Query::format` names a format this build was compiled without.
+    #[error("input format requires a feature that this build lacks")]
+    UnsupportedFormat,
     /// An operation ran that this instance cannot serve, or an internal invariant broke.
     #[error("inference failed in stage `{stage}`")]
     Inference {
@@ -425,6 +428,20 @@ pub struct Query<'a> {
     /// thresholds still apply first, so a person or organization it scores below them is never
     /// returned; an address the parser cannot split is kept as uncertain.
     pub include_uncertain: bool,
+    /// What `text` is. `parse_address` ignores it.
+    pub format: Format,
+}
+
+/// What the input text is.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum Format {
+    /// Plain text. Every byte may be scanned.
+    #[default]
+    Text,
+    /// Markdown. Only prose ranges are scanned, and link destinations stand for their link
+    /// text; see [`MarkdownOptions`]. Offsets still index the Markdown source. Requires the
+    /// `markdown` feature, otherwise [`Error::UnsupportedFormat`].
+    Markdown(MarkdownOptions),
 }
 
 /// How Markdown input is selected for scanning.
@@ -446,6 +463,35 @@ impl Default for MarkdownOptions {
             include_html: false,
             gfm_tables: true,
         }
+    }
+}
+
+/// The scan mask and the link-destination entities `query.format` asks for.
+#[cfg(feature = "markdown")]
+fn format_inputs(
+    text: &str,
+    query: &Query<'_>,
+) -> Result<(Option<chunk::Mask>, Vec<Entity>), Error> {
+    Ok(match &query.format {
+        Format::Text => (None, Vec::new()),
+        Format::Markdown(options) => {
+            let selection = markdown::select(text, options);
+            let linked = rules::from_links(&selection.links, query.country_hint);
+            (Some(selection.mask()), linked)
+        }
+    })
+}
+
+/// Without the `markdown` feature, Markdown is refused rather than scanned as text, which would
+/// return entities from code blocks and link destinations.
+#[cfg(not(feature = "markdown"))]
+fn format_inputs(
+    _text: &str,
+    query: &Query<'_>,
+) -> Result<(Option<chunk::Mask>, Vec<Entity>), Error> {
+    match query.format {
+        Format::Text => Ok((None, Vec::new())),
+        Format::Markdown(_) => Err(Error::UnsupportedFormat),
     }
 }
 
@@ -521,7 +567,8 @@ impl Tessera {
     /// components and kept only if the parser finds at least two distinct labels in it, unless
     /// `include_uncertain`, which keeps it as uncertain.
     pub fn detect(&self, text: &str, query: &Query<'_>) -> Result<Vec<Entity>, Error> {
-        self.detect_masked(text, query, None, Vec::new())
+        let (mask, linked) = format_inputs(text, query)?;
+        self.detect_masked(text, query, mask.as_ref(), linked)
     }
 
     /// `detect` where only the bytes in `mask` may hold entities (`None` is plain text), with
@@ -572,7 +619,8 @@ impl Tessera {
     ///
     /// The input must be a single address of at most 256 non-whitespace tokens and 8 KiB;
     /// longer input is `InputTooLarge`. Empty input gives an entity with no components and
-    /// confidence 0. Of `query`, only `include_uncertain` applies.
+    /// confidence 0. Of `query`, only `include_uncertain` applies: `query.format` is ignored,
+    /// since the input is one address, not a document.
     pub fn parse_address(&self, text: &str, query: &Query<'_>) -> Result<Entity, Error> {
         let trace = self.trace(text)?;
         let found = model::bio::components(
@@ -670,5 +718,59 @@ mod tests {
         }
         assert_eq!(Source::from_str_label("rules"), Some(Source::Rules));
         assert_eq!(Kind::from_str_label("Person"), None);
+    }
+
+    fn rules_only() -> Tessera {
+        Tessera::load(
+            &[],
+            Config {
+                kinds: Kind::Email | Kind::Phone,
+                expected_checksum: None,
+            },
+        )
+        .unwrap()
+    }
+
+    fn markdown_query() -> Query<'static> {
+        Query {
+            format: Format::Markdown(MarkdownOptions::default()),
+            ..Query::default()
+        }
+    }
+
+    #[cfg(feature = "markdown")]
+    #[test]
+    fn markdown_format_masks_code_and_uses_link_targets() {
+        let t = rules_only();
+        let text = "Write to [Nino](mailto:nino@kavkaz-freight.example).\n\n```\nhidden@kavkaz-freight.example\n```\n";
+        let out = t.detect(text, &markdown_query()).unwrap();
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].text(text), "Nino");
+        assert_eq!(
+            out[0].normalized.as_deref(),
+            Some("nino@kavkaz-freight.example")
+        );
+        let plain = t.detect(text, &Query::default()).unwrap();
+        assert_eq!(
+            plain.len(),
+            2,
+            "plain text scans the destination and the code block"
+        );
+        let contacts = t.extract_contacts(text, &markdown_query()).unwrap();
+        assert_eq!(contacts.unassigned, out);
+    }
+
+    #[cfg(not(feature = "markdown"))]
+    #[test]
+    fn markdown_format_is_a_typed_error_without_the_feature() {
+        let t = rules_only();
+        assert_eq!(
+            t.detect("x", &markdown_query()),
+            Err(Error::UnsupportedFormat)
+        );
+        assert_eq!(
+            t.extract_contacts("x", &markdown_query()).map(|_| ()),
+            Err(Error::UnsupportedFormat)
+        );
     }
 }
