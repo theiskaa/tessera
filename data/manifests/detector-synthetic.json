@@ -34,97 +34,97 @@
     },
     "family": {
       "email_body": {
-        "test": 2564,
-        "train": 28310,
-        "valid": 1644
+        "test": 2507,
+        "train": 28389,
+        "valid": 1675
       },
       "invoice": {
-        "test": 2479,
-        "train": 28491,
-        "valid": 1690
+        "test": 2448,
+        "train": 28307,
+        "valid": 1614
       },
       "letterhead": {
-        "test": 2445,
-        "train": 28288,
-        "valid": 1661
+        "test": 2523,
+        "train": 28525,
+        "valid": 1645
       },
       "markdown": {
-        "test": 2440
+        "test": 2464
       },
       "prose": {
-        "test": 2550,
-        "train": 28242,
-        "valid": 1707
+        "test": 2516,
+        "train": 28093,
+        "valid": 1665
       },
       "signature": {
-        "test": 2480,
-        "train": 28367,
+        "test": 2532,
+        "train": 28389,
         "valid": 1676
       },
       "support": {
-        "test": 2560
+        "test": 2536
       },
       "table": {
-        "test": 2482,
-        "train": 28302,
-        "valid": 1622
+        "test": 2474,
+        "train": 28297,
+        "valid": 1725
       }
     },
     "category": {
       "both": {
-        "test": 12526,
-        "train": 84953,
-        "valid": 5011
+        "test": 12468,
+        "train": 85198,
+        "valid": 5009
       },
       "no_address_with_person": {
-        "test": 2542,
-        "train": 28496,
-        "valid": 1682
+        "test": 2511,
+        "train": 28272,
+        "valid": 1679
       },
       "no_person_with_address": {
-        "test": 2534,
-        "train": 28255,
-        "valid": 1653
+        "test": 2474,
+        "train": 28079,
+        "valid": 1707
       },
       "nothing": {
-        "test": 2398,
-        "train": 28296,
-        "valid": 1654
+        "test": 2547,
+        "train": 28451,
+        "valid": 1605
       }
     },
     "country": {
       "DE": {
-        "test": 4035,
-        "train": 34022,
-        "valid": 2013
+        "test": 3982,
+        "train": 33543,
+        "valid": 1951
       },
       "GB": {
-        "test": 4035,
-        "train": 34059,
-        "valid": 2008
+        "test": 3974,
+        "train": 33843,
+        "valid": 2017
       },
       "GE": {
-        "test": 3940,
-        "train": 33926,
-        "valid": 1962
+        "test": 4059,
+        "train": 34378,
+        "valid": 2071
       },
       "JP": {
-        "test": 3961,
-        "train": 34166,
-        "valid": 2041
+        "test": 3948,
+        "train": 34064,
+        "valid": 1978
       },
       "US": {
-        "test": 4029,
-        "train": 33827,
-        "valid": 1976
+        "test": 4037,
+        "train": 34172,
+        "valid": 1983
       }
     }
   },
   "train_category_share": {
-    "both": 0.49972352941176473,
-    "no_address_with_person": 0.1676235294117647,
-    "no_person_with_address": 0.16620588235294118,
-    "nothing": 0.16644705882352942
+    "both": 0.501164705882353,
+    "no_address_with_person": 0.16630588235294116,
+    "no_person_with_address": 0.16517058823529412,
+    "nothing": 0.16735882352941175
   },
   "dropped": {},
   "pools": {
@@ -219,5 +219,5 @@
       "addresses": 3000
     }
   },
-  "phones_fixture_safe_ratio": 0.779095
+  "phones_fixture_safe_ratio": 0.778835
 }

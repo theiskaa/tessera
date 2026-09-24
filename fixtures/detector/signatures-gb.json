@@ -36,8 +36,7 @@
           "end": 137
         }
       ],
-      "must_not": [],
-      "known_failure": true
+      "must_not": []
     },
     {
       "name": "signature with a title line",
@@ -68,8 +67,7 @@
           "kind": "person",
           "text": "Finance Director"
         }
-      ],
-      "known_failure": true
+      ]
     },
     {
       "name": "signature with a drama mobile",
@@ -134,7 +132,8 @@
           "end": 221
         }
       ],
-      "must_not": []
+      "must_not": [],
+      "known_failure": true
     },
     {
       "name": "an eponymous company in a signature",

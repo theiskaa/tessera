@@ -161,8 +161,7 @@
           "end": 97
         }
       ],
-      "must_not": [],
-      "known_failure": true
+      "must_not": []
     },
     {
       "name": "invoice number is not a phone",

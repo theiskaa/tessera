@@ -17,7 +17,7 @@ use burn::prelude::*;
 use burn::tensor::activation::softmax;
 use safetensors::SafeTensors;
 use sha2::{Digest, Sha256};
-use tessera::internal::{detector_label_strings, parser_label_strings};
+use tessera::internal::{argmax, detector_label_strings, parser_label_strings};
 
 use crate::config::{Config, Task};
 use crate::data::{Split, read_shard};
@@ -228,14 +228,18 @@ fn check_same_features(parser: &Config, detector: &Config) -> anyhow::Result<()>
         serde_json::to_value(&parser.features)?,
         serde_json::to_value(&detector.features)?,
     );
-    if let (Some(a), Some(b)) = (a.as_object(), b.as_object()) {
-        for (key, value) in a {
-            anyhow::ensure!(
-                b.get(key) == Some(value),
-                "the parser and detector runs differ in features.{key}: {value} against {}",
-                b.get(key).cloned().unwrap_or_default()
-            );
-        }
+    let empty = serde_json::Map::new();
+    let (a, b) = (
+        a.as_object().unwrap_or(&empty),
+        b.as_object().unwrap_or(&empty),
+    );
+    for key in a.keys().chain(b.keys()) {
+        anyhow::ensure!(
+            a.get(key) == b.get(key),
+            "the parser and detector runs differ in features.{key}: {} against {}",
+            a.get(key).cloned().unwrap_or_default(),
+            b.get(key).cloned().unwrap_or_default()
+        );
     }
     Ok(())
 }
@@ -299,7 +303,14 @@ pub fn run(parser_run: &Path, detector_run: &Path, out: &Path, date: &str) -> an
     std::fs::create_dir_all(&golden_dir)?;
     for (name, text) in golden_cases(&parser.cfg, &fc)? {
         let enc = encode(&text, &[], &fc).map_err(|e| anyhow::anyhow!("{name}: {e}"))?;
-        let case = golden_case("parser", &f32_parser, &int8_parser, &text, &enc, &device);
+        let case = golden_case(
+            Task::Parser,
+            &f32_parser,
+            &int8_parser,
+            &text,
+            &enc,
+            &device,
+        );
         std::fs::write(
             golden_dir.join(format!("{name}.json")),
             golden_json(&case, 0) + "\n",
@@ -313,7 +324,7 @@ pub fn run(parser_run: &Path, detector_run: &Path, out: &Path, date: &str) -> an
         let enc = detector::encode_document(text, &[], &fc)
             .map_err(|e| anyhow::anyhow!("{name}: {e}"))?;
         let case = golden_case(
-            "detector",
+            Task::Detector,
             &f32_detector,
             &int8_detector,
             text,
@@ -482,17 +493,16 @@ fn logits<B: Backend>(
 /// detector's are the most probable label per position, `O` where the rule-span mask is set,
 /// which the file also records.
 fn golden_case(
-    net: &str,
+    task: Task,
     f32_model: &TaggerNet<NdArray>,
     int8_model: &TaggerNet<NdArray>,
     text: &str,
     enc: &Encoded,
     device: &burn::tensor::Device<NdArray>,
 ) -> serde_json::Value {
-    let labels = if net == "detector" {
-        DETECTOR_LABELS
-    } else {
-        PARSER_LABELS
+    let labels = match task {
+        Task::Detector => DETECTOR_LABELS,
+        Task::Parser => PARSER_LABELS,
     };
     let f32_logits = logits(f32_model, labels, enc, device);
     let int8_logits = logits(int8_model, labels, enc, device);
@@ -511,14 +521,13 @@ fn golden_case(
         .iter()
         .map(|f| f & tessera::internal::flag::IN_RULE_SPAN != 0)
         .collect();
-    let decoded: Vec<u8> = if net == "detector" {
-        probs
+    let decoded: Vec<u8> = match task {
+        Task::Detector => probs
             .iter()
             .zip(&masked)
             .map(|(p, &m)| if m { 0 } else { argmax(p) as u8 })
-            .collect()
-    } else {
-        decode_probs(&probs).into_iter().map(|d| d.0).collect()
+            .collect(),
+        Task::Parser => decode_probs(&probs).into_iter().map(|d| d.0).collect(),
     };
     let features: Vec<serde_json::Value> = (0..enc.token_spans.len())
         .map(|t| {
@@ -527,7 +536,7 @@ fn golden_case(
         })
         .collect();
     let mut case = serde_json::json!({
-        "net": net,
+        "net": task.name(),
         "bundle_version": MODEL_VERSION,
         "input": {
             "text": text,
@@ -539,20 +548,10 @@ fn golden_case(
         "decoded": decoded,
         "tolerance": GOLDEN_TOLERANCE,
     });
-    if net == "detector" {
+    if task == Task::Detector {
         case["masked"] = serde_json::json!(masked);
     }
     case
-}
-
-fn argmax(p: &[f32]) -> usize {
-    p.iter()
-        .enumerate()
-        .fold(
-            (0, f32::MIN),
-            |best, (i, &v)| if v > best.1 { (i, v) } else { best },
-        )
-        .0
 }
 
 #[cfg(test)]

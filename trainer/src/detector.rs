@@ -14,20 +14,17 @@ use polars::prelude::{ParquetReader, SerReader};
 use serde::{Deserialize, Serialize};
 use tessera::Kind;
 use tessera::internal::{
-    DETECT_MIN_ADDRESS, DETECT_MIN_ORG, DETECT_MIN_PERSON, FeatureConfig, TokenClass, featurize,
-    flag, scan_rules, tokenize,
+    DETECT_MIN_ADDRESS, DETECT_MIN_ORG, DETECT_MIN_PERSON, FeatureConfig, decode_detector,
+    featurize, flag, is_content, paragraph_breaks, scan_rules, tokenize,
 };
 
 use crate::data::Split;
 use crate::dataset::{Encoded, ParserBatch, ParserBatcher};
 use crate::net::TaggerNet;
 
-pub use tessera::internal::DETECTOR_LABELS;
 /// The model kinds, in label order: kind `k` has `B = 1 + 2k` and `I = 2 + 2k`.
-pub const KINDS: [Kind; 3] = [Kind::Person, Kind::Org, Kind::Address];
-/// A decoded span longer than this many retained tokens is dropped; `chunk.rs` in the library
-/// uses the same bound.
-const MAX_ENTITY_TOKENS: usize = 256;
+pub use tessera::internal::DETECTOR_KINDS as KINDS;
+pub use tessera::internal::DETECTOR_LABELS;
 /// Lowest mean label probability kept per kind, in `KINDS` order, from the library's policy.
 const DETECT_MIN: [f32; 3] = [DETECT_MIN_PERSON, DETECT_MIN_ORG, DETECT_MIN_ADDRESS];
 
@@ -48,11 +45,13 @@ pub struct KindSpan {
     pub end: u32,
 }
 
-/// A detector document as the network sees it, with its gold spans.
+/// A detector document as the network sees it, with its gold spans and, per retained token,
+/// whether a paragraph break comes before it (where the decoder closes every span).
 #[derive(Debug, Clone)]
 pub struct DetectorDoc {
     pub enc: Encoded,
     pub gold: Vec<KindSpan>,
+    pub breaks: Vec<bool>,
 }
 
 /// Why a document could not be encoded.
@@ -94,7 +93,7 @@ pub fn encode_document(
         country: String::new(),
     };
     for (t, f) in tokens.iter().zip(&feats) {
-        if matches!(t.class, TokenClass::Space | TokenClass::Newline) {
+        if !is_content(t) {
             continue;
         }
         enc.token_spans.push((t.start as u32, t.end as u32));
@@ -174,7 +173,11 @@ pub fn load_split(
         match encode_document(row_text, &gold, fc) {
             Ok(mut enc) => {
                 enc.country = country.get(i).unwrap_or_default().to_string();
-                docs.push(DetectorDoc { enc, gold });
+                docs.push(DetectorDoc {
+                    enc,
+                    gold,
+                    breaks: breaks_of(row_text),
+                });
                 counts.encoded += 1;
             }
             Err(DetectorEncodeError::PartialToken(_)) => counts.partial_token += 1,
@@ -184,71 +187,17 @@ pub fn load_split(
     Ok((docs, counts))
 }
 
-/// A decoded span over retained-token positions `first..=last`.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct PredSpan {
-    pub kind: usize,
-    pub first: usize,
-    pub last: usize,
-    /// Mean probability of the chosen label over the span.
-    pub confidence: f32,
-}
-
-/// Greedy BIO decoding with transition repair: masked positions (inside a rule span) are
-/// `O`, and an `I-X` that does not follow `B-X` or `I-X` starts a span as if it were `B-X`.
-pub fn decode(probs: &[[f32; DETECTOR_LABELS]], masked: &[bool]) -> Vec<PredSpan> {
-    let mut out = Vec::new();
-    let mut current: Option<(usize, usize, f32, usize)> = None;
-    let mut close = |current: &mut Option<(usize, usize, f32, usize)>, last: usize| {
-        if let Some((kind, first, sum, n)) = current.take()
-            && last + 1 - first <= MAX_ENTITY_TOKENS
-        {
-            out.push(PredSpan {
-                kind,
-                first,
-                last,
-                confidence: sum / n as f32,
-            });
-        }
-    };
-    let mut prev_kind: Option<usize> = None;
-    for (t, p) in probs.iter().enumerate() {
-        let l = if masked.get(t).copied().unwrap_or(false) {
-            0
-        } else {
-            argmax(p)
-        };
-        let kind = (l != 0).then(|| (l - 1) / 2);
-        let begin = l != 0 && l % 2 == 1;
-        if kind.is_some() && !begin && prev_kind == kind {
-            if let Some(c) = current.as_mut() {
-                c.2 += p[l];
-                c.3 += 1;
-            }
-        } else {
-            if t > 0 {
-                close(&mut current, t - 1);
-            }
-            if let Some(k) = kind {
-                current = Some((k, t, p[l], 1));
-            }
-        }
-        prev_kind = kind;
-    }
-    if let Some(last) = probs.len().checked_sub(1) {
-        close(&mut current, last);
-    }
-    out
-}
-
-fn argmax(p: &[f32]) -> usize {
-    p.iter()
+/// Whether a paragraph break comes before each retained token of `text`, as the library's
+/// decoder reads them.
+pub fn breaks_of(text: &str) -> Vec<bool> {
+    let tokens = tokenize(text);
+    let retained: Vec<usize> = tokens
+        .iter()
         .enumerate()
-        .fold(
-            (0, f32::MIN),
-            |best, (i, &v)| if v > best.1 { (i, v) } else { best },
-        )
-        .0
+        .filter(|(_, t)| is_content(t))
+        .map(|(i, _)| i)
+        .collect();
+    paragraph_breaks(&tokens, &retained)
 }
 
 /// Predicted spans per document in byte offsets, thresholded by `DETECT_MIN`.
@@ -273,12 +222,7 @@ pub fn predict<B: Backend>(
         let probs: Vec<f32> = softmax(logits, 2).into_data().to_vec().unwrap_or_default();
         for (i, d) in chunk.iter().enumerate() {
             let n = d.enc.token_spans.len();
-            let rows: Vec<[f32; DETECTOR_LABELS]> = (0..n)
-                .map(|t| {
-                    let base = (i * l + t) * c;
-                    std::array::from_fn(|k| probs[base + k])
-                })
-                .collect();
+            let rows = &probs[i * l * c..(i * l + n) * c];
             let masked: Vec<bool> = d
                 .enc
                 .flags
@@ -286,13 +230,15 @@ pub fn predict<B: Backend>(
                 .map(|f| f & flag::IN_RULE_SPAN != 0)
                 .collect();
             out.push(
-                decode(&rows, &masked)
+                decode_detector(rows, &masked, &d.breaks)
                     .into_iter()
-                    .filter(|s| s.confidence >= DETECT_MIN[s.kind])
-                    .map(|s| KindSpan {
-                        kind: s.kind,
-                        start: d.enc.token_spans[s.first].0,
-                        end: d.enc.token_spans[s.last].1,
+                    .filter_map(|s| {
+                        let kind = kind_index(s.kind)?;
+                        (s.confidence >= DETECT_MIN[kind]).then(|| KindSpan {
+                            kind,
+                            start: d.enc.token_spans[s.first].0,
+                            end: d.enc.token_spans[s.last].1,
+                        })
                     })
                     .collect(),
             );
@@ -311,21 +257,7 @@ pub struct Prf {
 
 impl Prf {
     fn from_counts(tp: usize, pred: usize, gold: usize) -> Prf {
-        let precision = if pred == 0 {
-            0.0
-        } else {
-            tp as f64 / pred as f64
-        };
-        let recall = if gold == 0 {
-            0.0
-        } else {
-            tp as f64 / gold as f64
-        };
-        let f1 = if precision + recall == 0.0 {
-            0.0
-        } else {
-            2.0 * precision * recall / (precision + recall)
-        };
+        let (precision, recall, f1) = crate::eval::prf(tp, pred, gold);
         Prf {
             precision,
             recall,
@@ -456,27 +388,6 @@ mod tests {
             encode_document(text, &gold, &FeatureConfig::default()),
             Err(DetectorEncodeError::RuleOverlap(_))
         ));
-    }
-
-    fn one_hot(labels: &[usize]) -> Vec<[f32; DETECTOR_LABELS]> {
-        labels
-            .iter()
-            .map(|&l| std::array::from_fn(|k| if k == l { 0.9 } else { 0.1 / 6.0 }))
-            .collect()
-    }
-
-    #[test]
-    fn decoding_repairs_stray_inside_labels() {
-        // O, B-PERSON, I-PERSON, I-ORG, O, I-ADDRESS, I-ADDRESS
-        let probs = one_hot(&[0, 1, 2, 4, 0, 6, 6]);
-        let spans = decode(&probs, &[false; 7]);
-        let got: Vec<(usize, usize, usize)> =
-            spans.iter().map(|s| (s.kind, s.first, s.last)).collect();
-        assert_eq!(got, vec![(0, 1, 2), (1, 3, 3), (2, 5, 6)]);
-        let mut masked = [false; 7];
-        masked[1] = true;
-        let spans = decode(&probs, &masked);
-        assert!(!spans.iter().any(|s| s.kind == 0 && s.first == 1));
     }
 
     #[test]

@@ -9,6 +9,7 @@ mod dataset;
 mod detector;
 mod eval;
 mod export;
+mod filler;
 mod fixtures;
 mod generate;
 mod model_eval;

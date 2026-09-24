@@ -2,6 +2,7 @@
 //! same code: component precision, recall, and F1 by label and by country, exact-parse rate,
 //! character accuracy, confidence calibration, and the worst errors for review.
 
+use crate::eval::round4;
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -39,10 +40,6 @@ impl Counts {
         let (p, r, f) = crate::eval::prf(self.tp, self.pred, self.gold);
         json!({ "precision": round4(p), "recall": round4(r), "f1": round4(f), "tp": self.tp, "predicted": self.pred, "gold": self.gold })
     }
-}
-
-fn round4(x: f64) -> f64 {
-    (x * 10_000.0).round() / 10_000.0
 }
 
 /// Component-level scores over a set of examples.

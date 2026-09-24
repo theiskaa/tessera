@@ -32,6 +32,16 @@ pub enum Task {
     Detector,
 }
 
+impl Task {
+    /// The network's name: its tensor prefix in the bundle and its golden-vector directory.
+    pub fn name(self) -> &'static str {
+        match self {
+            Task::Parser => "parser",
+            Task::Detector => "detector",
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct DataConfig {
@@ -196,10 +206,7 @@ impl Config {
 
     /// The tensor-name prefix of this run's network in the bundle.
     pub fn net_name(&self) -> &'static str {
-        match self.task {
-            Task::Parser => "parser",
-            Task::Detector => "detector",
-        }
+        self.task.name()
     }
 
     /// The detector network these settings describe.

@@ -32,7 +32,8 @@ pub fn prf(tp: usize, pred: usize, gold: usize) -> (f64, f64, f64) {
     (p, r, f)
 }
 
-fn round4(x: f64) -> f64 {
+/// `x` rounded to four decimals, as every report prints scores.
+pub(crate) fn round4(x: f64) -> f64 {
     (x * 10_000.0).round() / 10_000.0
 }
 
@@ -102,10 +103,10 @@ struct ExternalPrediction {
 }
 
 #[derive(Debug, Deserialize)]
-struct ExternalEntity {
-    kind: String,
-    start: usize,
-    end: usize,
+pub(crate) struct ExternalEntity {
+    pub(crate) kind: String,
+    pub(crate) start: usize,
+    pub(crate) end: usize,
 }
 
 /// `trainer eval`: scores a run, the deterministic baselines, or external predictions.

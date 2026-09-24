@@ -156,7 +156,8 @@
           "end": 45
         }
       ],
-      "must_not": []
+      "must_not": [],
+      "known_failure": true
     },
     {
       "name": "an address with a building line",
@@ -169,8 +170,7 @@
           "end": 74
         }
       ],
-      "must_not": [],
-      "known_failure": true
+      "must_not": []
     }
   ]
 }

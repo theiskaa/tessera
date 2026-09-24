@@ -22,6 +22,7 @@ use unicode_normalization::UnicodeNormalization;
 
 use crate::config::{self, Config, GenerateConfig};
 use crate::data::{LabelledExample, Split, read_shard};
+use crate::filler;
 use crate::templates::{self, Template};
 
 /// Where a template's documents come from.
@@ -218,7 +219,7 @@ pub struct Link {
 }
 
 /// A rendered document before the post-render checks.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Doc {
     pub text: String,
     pub entities: Vec<Gold>,
@@ -443,10 +444,12 @@ impl<'a> Ctx<'a> {
             Slot::NegDigits => Filled::plain(*pick(templates::NEG_DIGITS, rng)),
             Slot::NegRoadSentence => Filled::plain(*pick(templates::NEG_ROAD_SENTENCES, rng)),
             Slot::NegPartialLocation => Filled::plain(*pick(templates::NEG_PARTIAL_LOCATIONS, rng)),
-            Slot::Greeting => Filled::plain(localized(templates::GREETINGS, self.country, rng)),
-            Slot::Closing => Filled::plain(localized(templates::CLOSINGS, self.country, rng)),
-            Slot::Title => Filled::plain(localized(templates::TITLES, self.country, rng)),
-            Slot::Sentence => Filled::plain(*pick(templates::FILLER_SENTENCES, rng)),
+            Slot::Greeting => {
+                Filled::plain(localized(templates::GREETINGS, self.country, 0.5, rng))
+            }
+            Slot::Closing => Filled::plain(localized(templates::CLOSINGS, self.country, 0.5, rng)),
+            Slot::Title => Filled::plain(localized(templates::TITLES, self.country, 0.5, rng)),
+            Slot::Sentence => Filled::plain(filler::sentence(self.country, rng)),
             Slot::Date => Filled::plain(*pick(templates::DATES, rng)),
             Slot::Product => Filled::plain(*pick(templates::PRODUCTS, rng)),
         };
@@ -554,19 +557,20 @@ fn pick<'t, T>(items: &'t [T], rng: &mut ChaCha8Rng) -> &'t T {
     &items[rng.random_range(0..items.len())]
 }
 
-/// English half the time, otherwise the country's own list when it has one.
-fn localized(
+/// The country's own list with probability `own` when it has one, otherwise the `"en"` list.
+pub(crate) fn localized(
     lists: &[(&str, &[&'static str])],
     country: &str,
+    own: f64,
     rng: &mut ChaCha8Rng,
 ) -> &'static str {
-    let own = lists.iter().find(|(k, _)| *k == country).map(|(_, l)| *l);
+    let own_list = lists.iter().find(|(k, _)| *k == country).map(|(_, l)| *l);
     let english = lists
         .iter()
         .find(|(k, _)| *k == "en")
         .map_or(&[][..], |(_, l)| *l);
-    match own {
-        Some(own) if rng.random_bool(0.5) => pick(own, rng),
+    match own_list {
+        Some(list) if rng.random_bool(own) => pick(list, rng),
         _ => pick(english, rng),
     }
 }
@@ -807,6 +811,18 @@ pub fn render(template: &Template, ctx: &mut Ctx, rng: &mut ChaCha8Rng) -> anyho
     })
 }
 
+/// `doc` padded with filler text in its country's language (see `filler`), or `doc` as it was
+/// when the padded one would not fit in `max_tokens`.
+fn wrapped(doc: Doc, ctx: &Ctx, max_tokens: usize, rng: &mut ChaCha8Rng) -> anyhow::Result<Doc> {
+    let author = ctx.person(rng)?.name;
+    let padded = filler::Wrap::draw(ctx.country, &author, rng).apply(doc.clone());
+    Ok(if check(&padded, max_tokens) == Err(Drop::TooLong) {
+        doc
+    } else {
+        padded
+    })
+}
+
 /// Why a rendered document was discarded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Drop {
@@ -922,11 +938,9 @@ pub fn run(config_path: &Path, sample: Option<usize>, family: Option<&str>) -> a
         for _ in 0..n {
             let country = *countries.choose(&mut rng).context("no countries")?;
             let template = chosen.choose(&mut rng).context("no templates")?;
-            let doc = render(
-                template,
-                &mut Ctx::new(country, &pools[&(Split::Train, country)]),
-                &mut rng,
-            )?;
+            let mut ctx = Ctx::new(country, &pools[&(Split::Train, country)]);
+            let doc = render(template, &mut ctx, &mut rng)?;
+            let doc = wrapped(doc, &ctx, usize::MAX, &mut rng)?;
             println!(
                 "--- {} #{} {}",
                 template.family.name(),
@@ -1050,7 +1064,7 @@ fn generate(
                 let template = choose_template(&pool, subset, rng)?;
                 let country = *countries.choose(rng).context("no countries")?;
                 let mut ctx = Ctx::new(country, &pools[&(split, country)]);
-                let doc = render(template, &mut ctx, rng)?;
+                let doc = wrapped(render(template, &mut ctx, rng)?, &ctx, cfg.max_tokens, rng)?;
                 match check(&doc, cfg.max_tokens) {
                     Ok(()) => break doc,
                     Err(d) => *dropped.entry(d.name()).or_default() += 1,

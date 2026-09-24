@@ -722,17 +722,17 @@ pub const NEG_PARTIAL_LOCATIONS: &[&str] = &[
 
 /// Phone-shaped numbers that are not phone numbers.
 pub const NEG_DIGITS: &[&str] = &[
-    "Tracking 1Z 999 AA1 01 2345 6784",
-    "Order 4021-7733-19",
+    "Tracking 1Z 12E 4F5 03 9876 2210",
+    "Order 5530-1182-07",
     "Ref 20260922-0417",
     "Parcel 3S 7710 2291 44",
     "Ticket 55120-884",
 ];
 
 pub const NEG_IBANS: &[&str] = &[
-    "GB29 NWBK 6016 1331 9268 19",
-    "DE89 3704 0044 0532 0130 00",
-    "GE29 NB00 0000 0101 9049 17",
+    "GB82 WEST 1234 5698 7654 32",
+    "DE44 5001 0517 5407 3249 31",
+    "GE60 NB00 0000 0123 4567 89",
 ];
 
 pub const NEG_PRICES: &[&str] = &[
@@ -746,7 +746,7 @@ pub const NEG_PRICES: &[&str] = &[
 ];
 
 pub const NEG_ORDERS: &[&str] = &[
-    "INV-2026-0412",
+    "INV-2025-1177",
     "#48213",
     "PO 77120-B",
     "SO-0091",
