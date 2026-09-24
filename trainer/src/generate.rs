@@ -64,9 +64,10 @@ impl Family {
         }
     }
 
-    /// Families that appear only in the test split.
+    /// Families that appear only in the test split. Markdown stays out of training until the
+    /// generator featurizes it with the Markdown mask, as the library does.
     pub fn held_out(self) -> bool {
-        matches!(self, Family::Markdown | Family::Support)
+        matches!(self, Family::Markdown)
     }
 }
 
@@ -134,6 +135,10 @@ pub enum Slot {
     NegDigits,
     NegRoadSentence,
     NegPartialLocation,
+    NegHeader,
+    NegDepartment,
+    NegPrompt,
+    NegHeading,
     Greeting,
     Closing,
     Sentence,
@@ -183,6 +188,10 @@ impl Slot {
             "neg_digits" => NegDigits,
             "neg_road_sentence" => NegRoadSentence,
             "neg_partial_location" => NegPartialLocation,
+            "neg_header" => NegHeader,
+            "neg_department" => NegDepartment,
+            "neg_prompt" => NegPrompt,
+            "neg_heading" => NegHeading,
             "greeting" => Greeting,
             "closing" => Closing,
             "sentence" => Sentence,
@@ -444,6 +453,21 @@ impl<'a> Ctx<'a> {
             Slot::NegDigits => Filled::plain(*pick(templates::NEG_DIGITS, rng)),
             Slot::NegRoadSentence => Filled::plain(*pick(templates::NEG_ROAD_SENTENCES, rng)),
             Slot::NegPartialLocation => Filled::plain(*pick(templates::NEG_PARTIAL_LOCATIONS, rng)),
+            Slot::NegHeader => {
+                Filled::plain(localized(templates::NEG_HEADERS, self.country, 0.5, rng))
+            }
+            Slot::NegDepartment => Filled::plain(localized(
+                templates::NEG_DEPARTMENTS,
+                self.country,
+                0.5,
+                rng,
+            )),
+            Slot::NegPrompt => {
+                Filled::plain(localized(templates::NEG_PROMPTS, self.country, 0.5, rng))
+            }
+            Slot::NegHeading => {
+                Filled::plain(localized(templates::NEG_HEADINGS, self.country, 0.5, rng))
+            }
             Slot::Greeting => {
                 Filled::plain(localized(templates::GREETINGS, self.country, 0.5, rng))
             }

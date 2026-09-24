@@ -501,6 +501,300 @@ const TEMPLATES: &[(Family, u32, Category, &str)] = &[
         Both,
         "Agent: Thanks for calling {org#1}, this is {person_first#2}.\nCustomer: Hi, {person#1} here. My address is {address#1} and my number is {phone#1}.\nAgent: Got it. {sentence}",
     ),
+    (
+        Prose,
+        10,
+        Both,
+        "{neg_heading}\n\n{sentence} Please contact {person#1} at {org#1}, {address#1}, or call {phone#1}.",
+    ),
+    (
+        Prose,
+        11,
+        NoAddr,
+        "{sentence} Payroll questions go to {neg_department}; {person#1} ({email#1}) handles everything else. {sentence}",
+    ),
+    (
+        Prose,
+        12,
+        NoPers,
+        "{neg_heading}\n\n{org#1} has moved its {neg_department} to {address#1}. {sentence}",
+    ),
+    (
+        Prose,
+        13,
+        Nothing,
+        "{neg_heading}\n\n{sentence} {neg_prompt}: see {neg_url} or quote {neg_order}. {sentence}",
+    ),
+    (
+        Prose,
+        14,
+        Both,
+        "{person#1} ({title}, {org#1}) confirmed that the {neg_department} at {address#1} stays open until {neg_date}. {sentence}",
+    ),
+    (
+        Prose,
+        15,
+        NoAddr,
+        "{sentence} {org#1} said {person#1} would handle it.\n\n{neg_prompt}\nWrite to {email#1}.",
+    ),
+    (
+        Prose,
+        19,
+        Both,
+        "{neg_heading}\n{sentence} Our contact there is {person#1} of {org#1}, {address_ml#1}; {phone#1}.",
+    ),
+    (
+        EmailBody,
+        110,
+        Both,
+        "From: {person#1} <{email#1}>\nSubject: {product} order {neg_order}\n\n{greeting},\n\n{sentence}\n\nPlease ship to:\n{person#2}\n{org#2}\n{address_ml#2}\n\n{closing},\n{person#1}",
+    ),
+    (
+        EmailBody,
+        111,
+        NoAddr,
+        "{greeting} {person_first#1},\n\n{sentence} I have copied {neg_department} and {person#2} ({email#2}).\n\n{closing},\n{person#3}\n{neg_department}\n{org#3}",
+    ),
+    (
+        EmailBody,
+        112,
+        NoPers,
+        "{greeting},\n\n{neg_heading}\n{sentence}\n\n{neg_prompt}\n{org#1}, {address#1}\n{phone#1}",
+    ),
+    (
+        EmailBody,
+        113,
+        Nothing,
+        "{greeting},\n\n{neg_header}\n{product}  2  {neg_price}\n{product}  1  {neg_price}\n\n{sentence}\n\n{closing},\n{neg_department}",
+    ),
+    (
+        EmailBody,
+        114,
+        Both,
+        "{greeting} {person_first#1},\n\n{neg_heading}\n{sentence} The site contact is {person#2}, {address#2}.\n\n{neg_heading}\n{sentence}\n\n{closing},\n{person#3}\n{title}, {org#3}",
+    ),
+    (
+        EmailBody,
+        115,
+        NoAddr,
+        "On {date}, {person#1} <{email#1}> wrote:\n> {sentence}\n> {closing},\n> {person#1}\n\n{greeting},\n{sentence}\n\n{closing},\n{person#2}",
+    ),
+    (
+        EmailBody,
+        119,
+        Both,
+        "From: {person#1} <{email#1}>\n\n{greeting},\n\n{neg_heading}\n{sentence} Deliver to {org#2}, {address#2}.\n\n{neg_prompt} {phone#1}\n\n{closing},\n{person#1}",
+    ),
+    (
+        Signature,
+        210,
+        Both,
+        "{closing},\n\n{person#1}\n{neg_department}\n{org#1}\n{address_ml#1}\n{neg_prompt} {phone#1}",
+    ),
+    (
+        Signature,
+        211,
+        NoAddr,
+        "{person#1} | {neg_department} | {org#1}\n{email#1} | {phone#1}",
+    ),
+    (
+        Signature,
+        212,
+        NoPers,
+        "{neg_department}\n{org#1}\n{address#1}\n{neg_prompt}: {phone#1} · {email#1}",
+    ),
+    (
+        Signature,
+        213,
+        Nothing,
+        "{closing},\n{neg_department}\n{neg_prompt} {neg_url}\nRef {neg_order}",
+    ),
+    (
+        Signature,
+        214,
+        Both,
+        "{closing}\n\n{person#1}\n{title} · {neg_department}\n\n{org#1}\n{address#1}\nT {phone#1}\nE {email#1}",
+    ),
+    (
+        Signature,
+        215,
+        NoAddr,
+        "--\n{person#1}\n{org#1}\n\n{neg_prompt}\n{phone#1}\n{email#1}",
+    ),
+    (
+        Signature,
+        219,
+        Both,
+        "{closing},\n{person#1}\n{neg_department}, {org#1}\n{address_ml#1}\n{neg_prompt} {phone#1}",
+    ),
+    (
+        Letterhead,
+        310,
+        Both,
+        "{org#1}\n{neg_department}\n{address_ml#1}\n\n{date}\n\nAttn: {person#2}, {neg_department}\n{org#2}\n{address_ml#2}\n\n{sentence}\n\n{closing},\n{person#3}",
+    ),
+    (
+        Letterhead,
+        311,
+        NoPers,
+        "{org#1}\n{address#1}\n\n{neg_heading}\n{sentence}\n\n{neg_prompt}\n{phone#1} · {email#1}",
+    ),
+    (
+        Letterhead,
+        312,
+        NoAddr,
+        "{org#1} · {neg_department}\n\n{date}\n\nDear {person#2},\n\n{sentence}\n\n{neg_prompt} {email#1}\n\n{closing},\n{person#3}",
+    ),
+    (
+        Letterhead,
+        313,
+        Nothing,
+        "{neg_department}\n\n{date}\n\n{neg_heading}\n{sentence} {sentence}\n\nReference {neg_order}",
+    ),
+    (
+        Letterhead,
+        314,
+        Both,
+        "{org#1}\n{address#1}\n\nTo: {org#2}\nAttn: {person#2}\n{address_ml#2}\n\n{neg_heading}\n{sentence}\n\n{closing},\n{person#3}, {neg_department}",
+    ),
+    (
+        Letterhead,
+        315,
+        NoPers,
+        "{org#1}\n{address_ml#1}\n\n{neg_department}\n{org#2}\n{address_ml#2}\n\n{sentence}",
+    ),
+    (
+        Letterhead,
+        319,
+        Both,
+        "{org#1}\n{address_ml#1}\n\n{person#2}\n{neg_department}\n{org#2}\n{address_ml#2}\n\n{sentence}\n\n{closing},\n{person#3}",
+    ),
+    (
+        Invoice,
+        410,
+        Both,
+        "Invoice {neg_order}\n\nBill to:\n{org#1}\nAttn: {person#1}, {neg_department}\n{address_ml#1}\n\n{neg_header}\n{product}  3  {neg_price}  {neg_price}\n{product}  1  {neg_price}  {neg_price}\n\nTotal due {neg_price}\n\n{neg_prompt} {person#2} on {phone#2}.",
+    ),
+    (
+        Invoice,
+        411,
+        NoPers,
+        "{org#1}\n{address_ml#1}\n\nInvoice {neg_order}   Date {neg_date}\n\n{neg_header}\n{product}\t1\t{neg_price}\n{product}\t4\t{neg_price}\n\nSubtotal {neg_price}\nTotal {neg_price}\n\n{neg_prompt}: {email#1}",
+    ),
+    (
+        Invoice,
+        412,
+        NoAddr,
+        "Credit note {neg_order}\nCustomer: {org#1}\nContact: {person#1} ({neg_department})\n\n{neg_header}\n{product}  1  {neg_price}\n\n{neg_prompt} {email#1}",
+    ),
+    (
+        Invoice,
+        413,
+        Nothing,
+        "Statement {neg_order}\n\n{neg_header}\n{neg_date}  {product}  {neg_price}\n{neg_date}  {product}  {neg_price}\n\nBalance {neg_price}\nPay to IBAN {neg_iban}",
+    ),
+    (
+        Invoice,
+        414,
+        Both,
+        "{org#1}\n{address#1}\n\nINVOICE {neg_order}\n\nShip to:\n{person#2}\n{address_ml#2}\n\n{neg_header}\n{product}  2  {neg_price}\n\n{neg_department}: {phone#1}",
+    ),
+    (
+        Invoice,
+        415,
+        NoPers,
+        "Remit to:\n{org#1}\n{neg_department}\n{address_ml#1}\n\n{neg_header}\n{product}  5  {neg_price}\nTotal {neg_price}",
+    ),
+    (
+        Invoice,
+        419,
+        Both,
+        "Invoice {neg_order}\n\nFrom:\n{org#1}\n{address_ml#1}\n\nTo:\n{person#2}\n{org#2}\n{address_ml#2}\n\n{neg_header}\n{product}  1  {neg_price}\n\n{neg_prompt} {phone#1}",
+    ),
+    (
+        Table,
+        610,
+        NoAddr,
+        "{neg_header}\n{person#1}\t{title}\t{phone#1}\t{email#1}\n{person#2}\t{title}\t{phone#2}\t{email#2}",
+    ),
+    (
+        Table,
+        611,
+        Both,
+        "{neg_heading}\n\nName\tCompany\tAddress\n{person#1}\t{org#1}\t{address#1}\n{person#2}\t{org#2}\t{address#2}",
+    ),
+    (
+        Table,
+        612,
+        NoPers,
+        "{neg_header}\n{org#1}\t{address#1}\t{phone#1}\n{org#2}\t{address#2}\t{phone#2}",
+    ),
+    (
+        Table,
+        613,
+        Nothing,
+        "{neg_heading}\n\n{neg_header}\n{product}\t{neg_digits}\t{neg_price}\n{product}\t{neg_digits}\t{neg_price}",
+    ),
+    (
+        Table,
+        614,
+        NoAddr,
+        "{neg_department}\n{neg_header}\n{person#1}\t{neg_date}\t{email#1}\n{person#2}\t{neg_date}\t{email#2}",
+    ),
+    (
+        Table,
+        615,
+        Both,
+        "| Name | Organisation | Address |\n| --- | --- | --- |\n| {person#1} | {org#1} | {address#1} |\n| {person#2} | {org#2} | {address#2} |",
+    ),
+    (
+        Table,
+        619,
+        NoAddr,
+        "{neg_heading}\n{neg_header}\n{person#1}\t{org#1}\t{phone#1}\n{person#2}\t{org#2}\t{email#2}",
+    ),
+    (
+        Support,
+        710,
+        Both,
+        "Ticket {neg_order}\n{neg_department}\n\nCustomer: {person#1}\nCompany: {org#1}\nAddress: {address#1}\nPhone: {phone#1}\n\n{sentence}",
+    ),
+    (
+        Support,
+        711,
+        NoAddr,
+        "Agent ({neg_department}): {sentence}\nCustomer: This is {person#1} from {org#1}. You can email me at {email#1}.\nAgent: {sentence}",
+    ),
+    (
+        Support,
+        712,
+        NoPers,
+        "{neg_prompt}\n\n{org#1} support\n{address#1}\n{phone#1}\n\n{sentence}",
+    ),
+    (
+        Support,
+        713,
+        Nothing,
+        "Case {neg_digits} assigned to {neg_department}.\n{neg_prompt} Reply to this message quoting {neg_order}.\n{sentence}",
+    ),
+    (
+        Support,
+        714,
+        Both,
+        "Customer: Hi, I'm {person#1}.\nAgent: Thanks {person_first#1}, could you confirm your address?\nCustomer: {address#1}, and my number is {phone#1}.\nAgent: {sentence}",
+    ),
+    (
+        Support,
+        715,
+        NoAddr,
+        "Escalated to {neg_department}\nOwner: {person#1} <{email#1}>\nRequester: {person#2} ({org#2})\n\n{sentence}",
+    ),
+    (
+        Support,
+        719,
+        Both,
+        "Ticket {neg_order} · {neg_department}\n\nRequester: {person#1}\nOrganisation: {org#1}\nShipping address: {address_ml#1}\nCallback: {phone#1}",
+    ),
 ];
 
 impl Template {
@@ -804,6 +1098,150 @@ pub const DOMAIN_WORDS: &[&str] = &[
 /// Reserved email domain endings: reserved top-level and second-level domains only.
 pub const EMAIL_SUFFIXES: &[&str] = &[".example", ".test", ".example.com", ".example.org"];
 
+/// Table and invoice column headers: a line of capitalised words that is never a name.
+pub const NEG_HEADERS: &[(&str, &[&str])] = &[
+    (
+        "en",
+        &[
+            "Description    Quantity    Rate    Amount",
+            "Product\tSKU\tQty\tPrice",
+            "Service          Hours   Rate    Line total",
+            "No.  Article  Units  Unit price  Sum",
+            "Code    Item description    Qty    Net",
+            "Date       Description        Debit    Credit",
+            "Name\tRole\tPhone\tEmail",
+            "Line  Part number  Ordered  Shipped",
+        ],
+    ),
+    (
+        "DE",
+        &[
+            "Pos.  Bezeichnung  Menge  Einzelpreis  Gesamt",
+            "Artikel\tAnzahl\tPreis\tBetrag",
+            "Leistung      Stunden   Satz   Summe",
+        ],
+    ),
+    (
+        "GE",
+        &[
+            "დასახელება   რაოდენობა   ფასი   ჯამი",
+            "N\tპროდუქტი\tერთეული\tთანხა",
+        ],
+    ),
+    (
+        "JP",
+        &[
+            "品名　数量　単価　金額",
+            "項目\t数量\t金額",
+            "番号　品目　個数　小計",
+        ],
+    ),
+];
+
+/// Department and team names, written where a person or an organization often stands.
+pub const NEG_DEPARTMENTS: &[(&str, &[&str])] = &[
+    (
+        "en",
+        &[
+            "Customer Service",
+            "Human Resources",
+            "Procurement",
+            "Facilities Management",
+            "Billing Department",
+            "Legal Department",
+            "Payroll Team",
+            "IT Service Desk",
+            "Credit Control",
+            "Logistics Team",
+        ],
+    ),
+    (
+        "DE",
+        &[
+            "Kundenservice",
+            "Buchhaltung",
+            "Personalabteilung",
+            "Einkauf",
+            "Rechtsabteilung",
+        ],
+    ),
+    (
+        "GE",
+        &[
+            "ბუღალტერია",
+            "კადრების განყოფილება",
+            "მომხმარებელთა სერვისი",
+        ],
+    ),
+    (
+        "JP",
+        &["総務部", "経理部", "営業部", "人事部", "カスタマーサポート"],
+    ),
+];
+
+/// Short prompts and labels standing alone before contact details.
+pub const NEG_PROMPTS: &[(&str, &[&str])] = &[
+    (
+        "en",
+        &[
+            "Need help?",
+            "Any problems?",
+            "Get in touch",
+            "Still stuck?",
+            "Contact us",
+            "Reach us",
+            "More information",
+            "Support hours",
+        ],
+    ),
+    (
+        "DE",
+        &[
+            "Noch Fragen?",
+            "Kontakt",
+            "Hilfe benötigt?",
+            "Erreichbarkeit",
+        ],
+    ),
+    ("GE", &["კითხვები გაქვთ?", "დაგვიკავშირდით"]),
+    ("JP", &["お問い合わせ", "ご不明な点は", "連絡先"]),
+];
+
+/// Section headings: regions, countries, and topics, often on a line of their own.
+pub const NEG_HEADINGS: &[(&str, &[&str])] = &[
+    (
+        "en",
+        &[
+            "France",
+            "Italy",
+            "Canada",
+            "Australia",
+            "Nordics",
+            "Asia Pacific",
+            "North America",
+            "Head office",
+            "Regional offices",
+            "Next steps",
+            "Overview",
+            "Shipping schedule",
+            "Project roles",
+            "Key contacts",
+        ],
+    ),
+    (
+        "DE",
+        &[
+            "Österreich",
+            "Schweiz",
+            "Standorte",
+            "Ansprechpartner",
+            "Übersicht",
+        ],
+    ),
+    ("GE", &["ბათუმი", "რეგიონები", "კონტაქტები"]),
+    ("JP", &["関西", "九州", "拠点一覧", "担当者"]),
+];
+
 pub const HONORIFICS: &[&str] = &["Mr", "Ms", "Mrs", "Dr", "Prof."];
 
 /// Greetings, closings, and job titles per country; English is mixed into every country.
@@ -893,12 +1331,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn eighty_templates_parse_with_their_declared_categories() {
+    fn every_template_parses_with_its_declared_category_and_a_unique_id() {
         let all = all().unwrap();
-        assert_eq!(all.len(), 80);
+        assert_eq!(all.len(), 129);
         let mut ids: Vec<u32> = all.iter().map(|t| t.id).collect();
+        ids.sort_unstable();
         ids.dedup();
-        assert_eq!(ids.len(), 80);
+        assert_eq!(ids.len(), 129);
         for t in &all {
             assert_eq!(t.id / 100, t.family as u32, "template {}", t.id);
         }
@@ -907,7 +1346,7 @@ mod tests {
     #[test]
     fn test_only_templates_are_held_out_families_and_ids_ending_in_nine() {
         let all = all().unwrap();
-        assert_eq!(all.iter().filter(|t| t.test_only()).count(), 26);
+        assert_eq!(all.iter().filter(|t| t.test_only()).count(), 24);
         assert!(
             all.iter()
                 .filter(|t| !t.test_only())

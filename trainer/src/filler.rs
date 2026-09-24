@@ -537,6 +537,10 @@ mod tests {
             .chain(LINES)
             .chain(NAMED_HEADERS)
             .chain(UNNAMED_HEADERS)
+            .chain(templates::NEG_HEADERS)
+            .chain(templates::NEG_DEPARTMENTS)
+            .chain(templates::NEG_PROMPTS)
+            .chain(templates::NEG_HEADINGS)
             .flat_map(|(_, list)| list.iter());
         lists
             .into_iter()
