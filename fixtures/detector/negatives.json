@@ -132,8 +132,7 @@
           "kind": "person",
           "text": "Abraham Lincoln"
         }
-      ],
-      "known_failure": true
+      ]
     },
     {
       "name": "numbers that are not phones",

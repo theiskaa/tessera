@@ -71,6 +71,7 @@ impl Tessera {
                 .collect(),
             mask,
         );
+        let taken: Vec<(usize, usize)> = merged.iter().map(|e| (e.start, e.end)).collect();
         let mut out = Vec::new();
         for mut e in merged {
             if e.source != Source::Model || !self.kinds.contains(e.kind) {
@@ -80,6 +81,11 @@ impl Tessera {
                 continue;
             }
             out.push(e);
+        }
+        if mask.is_none() && self.kinds.contains(Kind::Org) {
+            let repeats = repeated_orgs(text, &tokens, &out, &taken);
+            out.extend(repeats);
+            out.sort_by_key(|e| e.start);
         }
         Ok(out)
     }
@@ -246,7 +252,13 @@ fn span_entity(
         let word = at(i);
         word.chars().count() <= 4 && word.chars().all(char::is_alphabetic)
     };
+    let mut article_trimmed = false;
     while first < last {
+        if kind == Kind::Org && !article_trimmed && leading_article(at(first), at(first + 1)) {
+            first += 1;
+            article_trimmed = true;
+            continue;
+        }
         let opener = BRACKETS.iter().find(|(open, _)| at(first) == *open);
         let closer = BRACKETS.iter().find(|(_, close)| at(last) == *close);
         let period = at(last) == "\u{3002}"
@@ -285,6 +297,7 @@ fn span_entity(
     let lone = at(first);
     if first == last
         && (QUOTES.contains(&lone)
+            || (kind == Kind::Org && ARTICLES.contains(&lone.to_lowercase().as_str()))
             || SEPARATORS.contains(&lone)
             || lone == "."
             || lone == "\u{3002}"
@@ -306,10 +319,137 @@ fn span_entity(
     })
 }
 
+/// Other mentions of the organizations in `found`: the same text on whole tokens, clear of
+/// everything the detector and the rules found (`taken`, of every kind). Documents name a body
+/// in full once and then repeat it (`HMRC` eighty times on one contact page) where the context
+/// around a repeat is too thin for the network alone. Only confident, distinctive names are
+/// repeated, longest first, so a stray prediction does not spread: two or more words, an
+/// acronym, or a name in a script without letter case. A Han name is not repeated inside a
+/// longer run of Han characters (`総務省令`).
+fn repeated_orgs(
+    text: &str,
+    tokens: &[token::Token],
+    found: &[Entity],
+    taken: &[(usize, usize)],
+) -> Vec<Entity> {
+    let mut names: Vec<(&str, f32)> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for e in found.iter().filter(|e| e.kind == Kind::Org) {
+        let name = &text[e.start..e.end];
+        if e.confidence >= policy::HIGH && distinctive(name) && seen.insert(name) {
+            names.push((name, e.confidence));
+        }
+    }
+    names.sort_by_key(|(name, _)| std::cmp::Reverse(name.len()));
+    let mut by_first: std::collections::HashMap<&str, Vec<usize>> =
+        std::collections::HashMap::new();
+    for t in tokens {
+        by_first.entry(t.text(text)).or_default().push(t.start);
+    }
+    let ends: std::collections::HashSet<usize> = tokens.iter().map(|t| t.end).collect();
+    let mut blocked: std::collections::BTreeMap<usize, usize> = taken.iter().copied().collect();
+    let overlaps = |blocked: &std::collections::BTreeMap<usize, usize>, at: usize, end: usize| {
+        blocked
+            .range(..end)
+            .next_back()
+            .is_some_and(|(_, &e)| e > at)
+    };
+    let han = |c: Option<char>| {
+        c.is_some_and(|c| matches!(token::script_of(c as u32), Some(token::Script::Han)))
+    };
+    let mut out = Vec::new();
+    for (name, confidence) in names {
+        let Some(first) = token::tokenize(name).first().map(|t| t.text(name)) else {
+            continue;
+        };
+        for &at in by_first.get(first).map(Vec::as_slice).unwrap_or_default() {
+            let end = at + name.len();
+            if text.get(at..end) != Some(name) || !ends.contains(&end) {
+                continue;
+            }
+            let glued_han = han(name.chars().next()) && han(text[..at].chars().next_back())
+                || han(name.chars().last()) && han(text[end..].chars().next());
+            if !glued_han && !overlaps(&blocked, at, end) {
+                blocked.insert(at, end);
+                out.push(Entity {
+                    kind: Kind::Org,
+                    start: at,
+                    end,
+                    confidence,
+                    review_recommended: false,
+                    source: Source::Model,
+                    components: Vec::new(),
+                    normalized: None,
+                    region: None,
+                });
+            }
+        }
+    }
+    out
+}
+
+/// Whether an organization's name is distinctive enough to repeat: two or more words, an
+/// acronym of two or more capitals, or a name in a script without letter case. A single
+/// capitalized word (`Item`, `The`, `Projekte`) is too often a stray prediction.
+fn distinctive(name: &str) -> bool {
+    let words = name.split_whitespace().count();
+    let letters: Vec<char> = name.chars().filter(|c| c.is_alphabetic()).collect();
+    let cased: Vec<&char> = letters
+        .iter()
+        .filter(|c| c.is_uppercase() || c.is_lowercase())
+        .collect();
+    let latin_like = cased
+        .iter()
+        .any(|c| c.is_ascii() || ('\u{C0}'..='\u{24F}').contains(*c));
+    if letters.len() < 2 {
+        return false;
+    }
+    if !latin_like {
+        return true;
+    }
+    let acronym = letters.iter().filter(|c| c.is_uppercase()).count() >= 2
+        && !letters.iter().any(|c| c.is_lowercase())
+        && words == 1;
+    let proper = words >= 2 && letters.iter().any(|c| c.is_uppercase());
+    acronym || proper
+}
+
+/// Articles and contractions that open a noun phrase before an organization's name and are not
+/// part of it: `the Planning Inspectorate`, `Die DB Fernverkehr AG`, `des Deutschen Bundestages`.
+const ARTICLES: [&str; 15] = [
+    "the", "der", "die", "das", "dem", "den", "des", "im", "am", "vom", "zum", "zur", "beim",
+    "ins", "ans",
+];
+
+/// Names whose leading article is part of them: `Die Linke`, `Die Zeit`, `Der Spiegel`.
+const ARTICLE_NAMES: [&str; 9] = [
+    "linke",
+    "grünen",
+    "zeit",
+    "welt",
+    "tageszeitung",
+    "partei",
+    "spiegel",
+    "erste",
+    "paritätische",
+];
+
+/// Whether `word`, the first token of an organization span, is an article to trim, given the
+/// token after it. An all-capital word other than `THE` is an acronym (`AM Best`, `DAS
+/// Rechtsschutz`), not an article.
+fn leading_article(word: &str, next: &str) -> bool {
+    let lower = word.to_lowercase();
+    let acronym = word.chars().all(|c| !c.is_lowercase()) && word != "THE";
+    ARTICLES.contains(&lower.as_str())
+        && !acronym
+        && !ARTICLE_NAMES.contains(&next.to_lowercase().as_str())
+}
+
 /// Roles that directories glue to a name with a hyphen (`Alice KUHNKE-Member`), which the
 /// tokenizer keeps in the name's token.
-const GLUED_ROLES: [&str; 22] = [
+const GLUED_ROLES: [&str; 23] = [
     "Member",
+    "Delegate",
     "Substitute",
     "Alternate",
     "Observer",
@@ -412,6 +552,68 @@ mod tests {
                 }
             }
         }
+    }
+
+    fn org(text: &str, name: &str, from: usize) -> Entity {
+        let start = from + text[from..].find(name).unwrap();
+        Entity {
+            kind: Kind::Org,
+            start,
+            end: start + name.len(),
+            confidence: 0.9,
+            review_recommended: false,
+            source: Source::Model,
+            components: Vec::new(),
+            normalized: None,
+            region: None,
+        }
+    }
+
+    fn repeats(text: &str, found: &[Entity]) -> Vec<String> {
+        let tokens = crate::token::tokenize(text);
+        let taken: Vec<(usize, usize)> = found.iter().map(|e| (e.start, e.end)).collect();
+        repeated_orgs(text, &tokens, found, &taken)
+            .iter()
+            .map(|e| text[e.start..e.end].to_string())
+            .collect()
+    }
+
+    #[test]
+    fn an_organization_found_once_is_found_wherever_it_repeats() {
+        let text = "Contact HMRC today. HMRC replies within HMRCs days; ask HMRC-Online or hmrc.";
+        assert_eq!(repeats(text, &[org(text, "HMRC", 0)]), ["HMRC"]);
+
+        let text = "The Bank said so. The Bank of England agreed. Write to the Bank of England.";
+        let found = [org(text, "Bank", 0), org(text, "Bank of England", 20)];
+        assert_eq!(
+            repeats(text, &found),
+            ["Bank of England"],
+            "longest names first"
+        );
+
+        let text = "Item one. Item two. The end. The report.";
+        assert!(repeats(text, &[org(text, "Item", 0), org(text, "The", 0)]).is_empty());
+
+        let text = "Acme Ltd, then Acme Ltd again";
+        let mut person = org(text, "Acme Ltd", 10);
+        person.kind = Kind::Person;
+        assert!(repeats(text, &[org(text, "Acme Ltd", 0), person]).is_empty());
+
+        let mut unsure = org(text, "Acme Ltd", 0);
+        unsure.confidence = 0.6;
+        assert!(
+            repeats(text, &[unsure]).is_empty(),
+            "only confident names repeat"
+        );
+
+        let text = "総務か。総務省は発表した。総務省令により、総務省が対応する。";
+        assert_eq!(repeats(text, &[org(text, "総務省", 0)]), ["総務省"]);
+
+        let text = "შემოსავლების სამსახური და შემოსავლების სამსახური";
+        assert_eq!(
+            repeats(text, &[org(text, "შემოსავლების სამსახური", 0)]).len(),
+            1
+        );
     }
 
     #[test]
@@ -525,7 +727,26 @@ mod tests {
                 Some("Jean-Pierre Dubois"),
             ),
             (Kind::Person, "Ana Headley-Smith", Some("Ana Headley-Smith")),
-            (Kind::Org, "the SEC's", Some("the SEC")),
+            (Kind::Org, "the SEC's", Some("SEC")),
+            (
+                Kind::Org,
+                "Die DB Fernverkehr AG",
+                Some("DB Fernverkehr AG"),
+            ),
+            (
+                Kind::Org,
+                "des Deutschen Bundestages",
+                Some("Deutschen Bundestages"),
+            ),
+            (Kind::Org, "Die Linke", Some("Die Linke")),
+            (Kind::Org, "the", None),
+            (Kind::Org, "AM Best Europe", Some("AM Best Europe")),
+            (Kind::Org, "DAS Rechtsschutz", Some("DAS Rechtsschutz")),
+            (Kind::Org, "DIE LINKE", Some("DIE LINKE")),
+            (Kind::Org, "Der Spiegel", Some("Der Spiegel")),
+            (Kind::Org, "the THE Group", Some("THE Group")),
+            (Kind::Person, "Die Anna Berg", Some("Die Anna Berg")),
+            (Kind::Person, "Gunta ANČA-Delegate", Some("Gunta ANČA")),
             (Kind::Org, "DVLA\u{2019}s", Some("DVLA")),
             (Kind::Address, "Kings's Road", Some("Kings's Road")),
         ];

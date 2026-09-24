@@ -150,7 +150,7 @@ fn in_ranges(u: u32, ranges: &[(u32, u32)]) -> bool {
     ranges.iter().any(|&(lo, hi)| u >= lo && u <= hi)
 }
 
-fn script_of(u: u32) -> Option<Script> {
+pub(crate) fn script_of(u: u32) -> Option<Script> {
     const TABLE: &[(Script, &[(u32, u32)])] = &[
         (Script::Latin, LATIN),
         (Script::Cyrillic, CYRILLIC),
