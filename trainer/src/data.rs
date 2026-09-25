@@ -2766,10 +2766,10 @@ pub(crate) mod augment {
         };
         let mut added = vec![];
         // A campus or estate block, and the institution the office is in, are not address
-        // components: `თსუ, III კორპუსი, ოთახი №206`.
+        // components: `სტუ, III კორპუსი, ოთახი №206`.
         if rng.random::<f32>() < 0.4 {
             if rng.random::<f32>() < 0.5 {
-                let place = ["თსუ", "სტუ", "თსსუ", "ბიზნესცენტრი", "სავაჭრო ცენტრი"];
+                let place = ["სტუ", "თსსუ", "ილიაუნი", "ბიზნესცენტრი", "სავაჭრო ცენტრი"];
                 added.push(piece(None, place[rng.random_range(0..place.len())]));
             }
             let block = match rng.random_range(0..3) {

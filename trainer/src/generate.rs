@@ -368,6 +368,9 @@ pub struct PoolOrg {
 pub struct PoolAddress {
     pub text: String,
     pub city: Option<String>,
+    /// The one-line layout Georgian public bodies print, when the row has a city, a street,
+    /// and a number: `ქ. ქუთაისი, წერეთლის ქ. №15, III კორპუსი, ოთახი №206`.
+    pub official: Option<String>,
 }
 
 impl PoolAddress {
@@ -395,7 +398,21 @@ impl PoolAddress {
                 }
             }
         }
-        PoolAddress { text, city }
+        let official = if e.country == "GE" {
+            let mut rng = ChaCha8Rng::seed_from_u64(e.id);
+            let mut p = crate::data::decompose(&e.text, &e.spans);
+            crate::data::augment::official_format_ge("GE", &mut p, &mut rng).then(|| {
+                crate::data::augment::floor_room_ge("GE", &mut p, &mut rng);
+                crate::data::render_pieces(&p).0
+            })
+        } else {
+            None
+        };
+        PoolAddress {
+            text,
+            city,
+            official,
+        }
     }
 
     fn multiline(&self) -> bool {
@@ -578,8 +595,16 @@ impl<'a> Ctx<'a> {
             Slot::OrgMedia => Filled::plain(self.pools.bodies.media(rng)),
             Slot::OrgParty => Filled::plain(self.pools.bodies.party(rng)),
             Slot::Address => {
-                let a = self.address(false, rng)?.one_line();
-                Filled::plain(self.shaped(a, ", ", rng))
+                let pooled = self.address(false, rng)?;
+                match &pooled.official {
+                    Some(official) if !self.plain && rng.random_bool(0.4) => {
+                        Filled::plain(official.clone())
+                    }
+                    _ => {
+                        let a = pooled.one_line();
+                        Filled::plain(self.shaped(a, ", ", rng))
+                    }
+                }
             }
             Slot::AddressMultiline => {
                 let a = self.address(true, rng)?.text.clone();
@@ -2142,10 +2167,12 @@ mod tests {
                 PoolAddress {
                     text: "12 Rustaveli Avenue\n0108 Tbilisi\nGeorgia".into(),
                     city: Some("Tbilisi".into()),
+                    official: None,
                 },
                 PoolAddress {
                     text: "4 Misty Wood Circle".into(),
                     city: None,
+                    official: None,
                 },
             ],
             borrowed_orgs: 0,
@@ -2219,6 +2246,7 @@ mod tests {
         let a = PoolAddress {
             text: "12 Rustaveli Avenue\n0108 Tbilisi\nGeorgia".into(),
             city: None,
+            official: None,
         };
         assert_eq!(a.one_line(), "12 Rustaveli Avenue, 0108 Tbilisi, Georgia");
     }
