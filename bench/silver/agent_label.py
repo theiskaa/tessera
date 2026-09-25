@@ -43,7 +43,8 @@ SOURCES = {
 COLLECTED = {
     **{s: (f"data/raw/review/{s}/*.json", s[:2].upper())
        for s in ("jp-soumu", "jp-maff", "jp-caa", "ge-economy", "ge-civil", "ge-tsu", "ge-contacts",
-                 "de-berlin", "de-impressum", "gb-contacts", "gb-courts")},
+                 "de-berlin", "de-impressum", "gb-contacts", "gb-courts", "gb-people", "ge-addresses",
+                 "jp-addresses")},
     **{s: (f"data/raw/silver/{s}/*.json", s[:2].upper())
        for s in ("jp-env", "ge-mepa", "ge-tbilisi", "ge-parliament", "de-bnetza", "jp-yokohama",
                  "ge-tbilisi2", "ge-govge", "ge-govge-en", "ge-mfa", "ge-mfa-en", "jp-mhlw", "jp-mlit",
@@ -51,7 +52,8 @@ COLLECTED = {
                  "gb-govuk-orgs", "gb-govuk-world", "gb-govuk-about", "gb-scotgov",
                  "gb-govuk-complaints", "gb-govuk-news", "gb-ni-contacts", "gb-ni-news", "gb-public-contacts", "gb-public-people", "ge-parliament-en", "ge-govge-en-old", "ge-rustavi", "ge-gori", "ge-napr", "de-bw", "de-niedersachsen", "de-hessen", "de-sh", "de-stmi", "de-uba", "de-bkarta", "de-bsi", "de-kommunen", "de-landesaemter", "jp-bunka", "jp-env-regional")},
 }
-# Odd rounds are silver (training) rounds; round 2 is the GE and JP evaluation set,
+# Odd rounds are silver (training) rounds; round 2 is the GE and JP evaluation set, round 8 adds
+# UK people and GE and JP addresses to it,
 # and rounds 4 and 6 the DE and GB additions to the review set. No document is sampled twice. A count of None takes every document of the source.
 PLAN = {
     1: {"federal-register": 150, "govuk": 150},
@@ -71,6 +73,7 @@ PLAN = {
         "ge-govge", "ge-govge-en", "ge-mfa", "ge-mfa-en", "jp-mhlw", "jp-mlit", "jp-fsa", "jp-mext",
         "de-sachsen", "de-nrw", "de-bmg", "gb-scotgov")}},
     15: {"federal-register": 150, **{s: None for s in ("gb-govuk-complaints", "gb-govuk-news", "gb-ni-contacts", "gb-ni-news", "gb-public-contacts", "gb-public-people", "ge-parliament-en", "ge-govge-en-old", "ge-rustavi", "ge-gori", "ge-napr", "de-bw", "de-niedersachsen", "de-hessen", "de-sh", "de-stmi", "de-uba", "de-bkarta", "de-bsi", "de-kommunen", "de-landesaemter", "jp-bunka", "jp-env-regional")}},
+    8: {s: None for s in ("gb-people", "ge-addresses", "jp-addresses")},
     17: {"govuk": 350, "federal-register": 100},
 }
 CONTACT = re.compile(r"@|\b\d{3}[-. ]\d{3}[-. ]\d{4}\b|\b0\d{2,4} ?\d{3} ?\d{3,4}\b|\b(Street|Avenue|Road|Room|Suite)\b")
