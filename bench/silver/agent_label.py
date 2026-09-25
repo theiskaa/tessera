@@ -50,7 +50,8 @@ COLLECTED = {
                  "ge-tbilisi2", "ge-govge", "ge-govge-en", "ge-mfa", "ge-mfa-en", "jp-mhlw", "jp-mlit",
                  "jp-fsa", "jp-mext", "de-sachsen", "de-nrw", "de-bmg", "de-behoerden",
                  "gb-govuk-orgs", "gb-govuk-world", "gb-govuk-about", "gb-scotgov",
-                 "gb-govuk-complaints", "gb-govuk-news", "gb-ni-contacts", "gb-ni-news", "gb-public-contacts", "gb-public-people", "ge-parliament-en", "ge-govge-en-old", "ge-rustavi", "ge-gori", "ge-napr", "de-bw", "de-niedersachsen", "de-hessen", "de-sh", "de-stmi", "de-uba", "de-bkarta", "de-bsi", "de-kommunen", "de-landesaemter", "jp-bunka", "jp-env-regional")},
+                 "gb-govuk-complaints", "gb-govuk-news", "gb-ni-contacts", "gb-ni-news", "gb-public-contacts", "gb-public-people", "ge-parliament-en", "ge-govge-en-old", "ge-rustavi", "ge-gori", "ge-napr", "de-bw", "de-niedersachsen", "de-hessen", "de-sh", "de-stmi", "de-uba", "de-bkarta", "de-bsi", "de-kommunen", "de-landesaemter", "jp-bunka", "jp-env-regional",
+                 "de-bast", "de-bfs", "de-bgh", "de-bsg", "de-hochschulen", "de-kammern", "de-kreise", "de-ministerien", "de-muenster", "de-mv", "de-rlp", "gb-govuk-charters", "gb-govuk-governance", "gb-govuk-orgs2", "gb-govuk-services", "gb-hmpps", "gb-hse-press", "gb-phs-news", "gb-scotgov-directorates", "gb-wales-news", "ge-chiatura", "ge-chkhorotsku", "ge-guria", "ge-imereti", "ge-kvareli", "ge-mes", "ge-mtskheta", "ge-parliament-ka", "ge-shuakhevi", "ge-sps", "ge-structure", "ge-telavi", "ge-tsageri", "jp-env-archive", "jp-env-regional", "jp-finance-bureaus", "jp-kensatsu", "jp-mlit-regional", "jp-sports")},
 }
 # Odd rounds are silver (training) rounds; round 2 is the GE and JP evaluation set, round 8 adds
 # UK people and GE and JP addresses to it,
@@ -76,6 +77,7 @@ PLAN = {
     15: {"federal-register": 150, **{s: None for s in ("gb-govuk-complaints", "gb-govuk-news", "gb-ni-contacts", "gb-ni-news", "gb-public-contacts", "gb-public-people", "ge-parliament-en", "ge-govge-en-old", "ge-rustavi", "ge-gori", "ge-napr", "de-bw", "de-niedersachsen", "de-hessen", "de-sh", "de-stmi", "de-uba", "de-bkarta", "de-bsi", "de-kommunen", "de-landesaemter", "jp-bunka", "jp-env-regional")}},
     8: {s: None for s in ("gb-people", "ge-addresses", "jp-addresses")},
     17: {"govuk": 350, "federal-register": 100},
+    25: {s: None for s in ("de-bast", "de-bfs", "de-bgh", "de-bkarta", "de-bmg", "de-bsg", "de-bsi", "de-bw", "de-hessen", "de-hochschulen", "de-kammern", "de-kreise", "de-ministerien", "de-muenster", "de-mv", "de-nrw", "de-rlp", "de-sachsen", "de-sh", "de-stmi", "de-uba", "gb-govuk-charters", "gb-govuk-governance", "gb-govuk-news", "gb-govuk-orgs2", "gb-govuk-services", "gb-hmpps", "gb-hse-press", "gb-ni-news", "gb-phs-news", "gb-scotgov-directorates", "gb-wales-news", "ge-chiatura", "ge-chkhorotsku", "ge-gori", "ge-govge", "ge-guria", "ge-imereti", "ge-kvareli", "ge-mepa", "ge-mes", "ge-mfa", "ge-mfa-en", "ge-mtskheta", "ge-parliament-ka", "ge-rustavi", "ge-shuakhevi", "ge-sps", "ge-structure", "ge-tbilisi", "ge-telavi", "ge-tsageri", "jp-bunka", "jp-env-archive", "jp-env-regional", "jp-finance-bureaus", "jp-kensatsu", "jp-mext", "jp-mhlw", "jp-mlit", "jp-mlit-regional", "jp-sports")},
     23: {"federal-register": 650, "govuk": 1200},
     21: {s: None for s in ("de-sachsen", "de-bw", "de-niedersachsen", "de-hessen", "de-sh")},
     19: {s: None for s in ("ge-govge", "ge-govge-en", "ge-mfa", "ge-parliament-en", "ge-rustavi",
