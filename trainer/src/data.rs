@@ -672,10 +672,14 @@ fn normalize_source(country: &str, p: &mut Pieces) -> Result<(), Rejection> {
                 return Err(Rejection::KanaReading);
             }
             normalize_japanese(p);
-            if p.items
-                .iter()
-                .any(|i| i.label == Some(L::City) && city_holds_more(&i.text))
-            {
+            let whole_address_as_road = |i: &Piece| {
+                i.label == Some(L::Road)
+                    && i.text.chars().next().is_some_and(is_cjk)
+                    && repeats_japanese_place(&i.text)
+            };
+            if p.items.iter().any(|i| {
+                (i.label == Some(L::City) && city_holds_more(&i.text)) || whole_address_as_road(i)
+            }) {
                 return Err(Rejection::Mislabelled);
             }
         }
@@ -816,6 +820,7 @@ fn normalize_japanese(p: &mut Pieces) {
     strip_prefecture_from_city(p);
     split_ward_from_city(p);
     split_county_from_town(p);
+    split_town_from_lot(p);
     let has_city = p.items.iter().any(|i| {
         let lower = i.text.to_lowercase();
         i.label == Some(L::City)
@@ -963,12 +968,7 @@ fn is_bare_chome(text: &str) -> bool {
 /// named with those characters (`府中町`, `市谷田町`, `八日市町`) are not.
 fn is_japanese_street(text: &str) -> bool {
     let town = text.trim_end_matches(|c: char| japanese_numeral(c) || c == '丁' || c == '目');
-    let repeats_place = JP_PREFECTURES.iter().any(|p| text.starts_with(p))
-        || text.char_indices().any(|(k, c)| {
-            k > 0
-                && (c == '市' || c == '区')
-                && !matches!(&text[k + c.len_utf8()..], "" | "町" | "村")
-        });
+    let repeats_place = repeats_japanese_place(text);
     let route = ["国道", "県道", "府道", "都道", "道道"]
         .iter()
         .any(|w| text.starts_with(w))
@@ -980,6 +980,55 @@ fn is_japanese_street(text: &str) -> bool {
         .any(|w| town.ends_with(w))
         || route
         || repeats_place
+}
+
+/// Whether `text` starts with a prefecture or holds a city or ward before more text
+/// (`東京都新宿区神楽坂`, `京都市左京区岡崎`): a whole address in one piece. Towns named with
+/// those characters (`府中町`, `市谷田町`, `八日市町`) are not.
+fn repeats_japanese_place(text: &str) -> bool {
+    JP_PREFECTURES.iter().any(|p| text.starts_with(p))
+        || text.char_indices().any(|(k, c)| {
+            k > 0
+                && (c == '市' || c == '区')
+                && !matches!(&text[k + c.len_utf8()..], "" | "町" | "村")
+        })
+}
+
+/// A road piece that is a town with its lot number glued on (`字屋宜240-1`, `与儀1-2-9`)
+/// becomes the town and a house number, where the row has no house number of its own.
+fn split_town_from_lot(p: &mut Pieces) {
+    use AddressLabel as L;
+    if p.items.iter().any(|i| i.label == Some(L::HouseNumber)) {
+        return;
+    }
+    let Some(k) = p
+        .items
+        .iter()
+        .position(|i| i.label == Some(L::Road) && i.text.chars().next().is_some_and(is_cjk))
+    else {
+        return;
+    };
+    let text = &p.items[k].text;
+    let Some(cut) = text.find(|c: char| c.is_ascii_digit() || ('０'..='９').contains(&c)) else {
+        return;
+    };
+    let (town, lot) = text.split_at(cut);
+    let lot_only = lot
+        .chars()
+        .all(|c| c.is_ascii_digit() || ('０'..='９').contains(&c) || "-－−番号地の".contains(c));
+    if town.is_empty() || !lot_only || !town.chars().all(is_cjk) || is_japanese_street(town) {
+        return;
+    }
+    let lot = lot.to_string();
+    p.items[k].text.truncate(cut);
+    p.items.insert(
+        k + 1,
+        Piece {
+            label: Some(L::HouseNumber),
+            text: lot,
+        },
+    );
+    p.seps.insert(k, String::new());
 }
 
 /// A town name, with or without its block: `錦町`, `栄三丁目`, `Maruyama-cho`, `1 chome`, or
@@ -3496,6 +3545,24 @@ mod tests {
                 "unk\tjp\t豊/suburb 洲/suburb 豊/suburb 洲/suburb 2/suburb |/FSEP 江/city 東/city 区/city"
             ),
             ["豊洲2"]
+        );
+        assert_eq!(
+            labelled(
+                "JP",
+                "ja\tjp\t与/road 儀/road 1-2-9/road |/FSEP 那/city 覇/city 市/city"
+            ),
+            pairs(&[
+                ("city", "那覇市"),
+                ("suburb", "与儀"),
+                ("house_number", "1-2-9")
+            ])
+        );
+        assert!(
+            normalized(
+                "JP",
+                "ja\tjp\t東/road 京/road 都/road 新/road 宿/road 区/road 神/road 楽/road 坂/road |/FSEP 東/city 京/city"
+            )
+            .is_err()
         );
     }
 
