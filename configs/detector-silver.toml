@@ -23,7 +23,7 @@ kernel = 3
 dilations = [1, 2, 4, 8, 16, 1]
 dropout = 0.1
 max_params = 1000000
-ngram_from = "runs/parser-small-v5"
+ngram_from = "runs/parser-small-v6"
 
 [train]
 epochs = 10

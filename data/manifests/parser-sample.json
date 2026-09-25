@@ -22,31 +22,31 @@
       "train": 30000,
       "valid": 3000,
       "test": 3000,
-      "augmented": 44931
+      "augmented": 44920
     },
     "GE": {
       "train": 30000,
       "valid": 3000,
       "test": 3000,
-      "augmented": 37208
+      "augmented": 37380
     },
     "DE": {
       "train": 30000,
       "valid": 3000,
       "test": 3000,
-      "augmented": 44811
+      "augmented": 44799
     },
     "US": {
       "train": 30000,
       "valid": 3000,
       "test": 3000,
-      "augmented": 41465
+      "augmented": 41613
     },
     "JP": {
-      "train": 27591,
-      "valid": 2737,
-      "test": 2723,
-      "augmented": 44988
+      "train": 27136,
+      "valid": 2693,
+      "test": 2624,
+      "augmented": 44293
     }
   },
   "split_seed": 42,
@@ -59,18 +59,18 @@
     "malformed": 34,
     "excluded_query": 10428838,
     "no_component": 2145394,
-    "foreign_postcode": 589693,
+    "foreign_postcode": 589535,
     "po_box_with_road": 240602,
     "kana_reading": 209246,
-    "cuts_token": 6,
+    "cuts_token": 2,
     "truncated_road": 2435761,
     "foreign_country": 218,
-    "mislabelled": 12314,
+    "mislabelled": 13982,
     "invalid_span": 0,
-    "locality_over_cap": 959050,
-    "unencodable_copies": 281,
-    "duplicate": 35583,
-    "same_place": 27917,
+    "locality_over_cap": 958184,
+    "unencodable_copies": 304,
+    "duplicate": 35540,
+    "same_place": 27918,
     "over_quota": 97152908
   },
   "lines_read": 320115455,
@@ -83,7 +83,7 @@
       "orphan_copies": 0,
       "copies_outside_train": 0,
       "components_in_two_splits": 0,
-      "postcode_and_number_shared": 568
+      "postcode_and_number_shared": 565
     }
   }
 }
