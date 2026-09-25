@@ -46,7 +46,7 @@ COLLECTED = {
                  "de-berlin", "de-impressum", "gb-contacts", "gb-courts", "gb-people", "ge-addresses",
                  "jp-addresses")},
     **{s: (f"data/raw/silver/{s}/*.json", s[:2].upper())
-       for s in ("jp-env", "ge-mepa", "ge-tbilisi", "ge-parliament", "de-bnetza", "jp-yokohama",
+       for s in ("jp-env", "ge-mepa", "ge-tbilisi", "ge-parliament", "de-bnetza",
                  "ge-tbilisi2", "ge-govge", "ge-govge-en", "ge-mfa", "ge-mfa-en", "jp-mhlw", "jp-mlit",
                  "jp-fsa", "jp-mext", "de-sachsen", "de-nrw", "de-bmg", "de-behoerden",
                  "gb-govuk-orgs", "gb-govuk-world", "gb-govuk-about", "gb-scotgov",
@@ -63,7 +63,8 @@ PLAN = {
     4: {s: None for s in ("de-berlin", "de-impressum", "gb-contacts")},
     5: {"de-bnetza": None},
     6: {"gb-courts": None},
-    7: {"govuk": 150, "jp-yokohama": None, "ge-tbilisi2": None},
+    # Yokohama's pages were dropped from round 7: the city's terms do not allow reuse.
+    7: {"govuk": 150, "ge-tbilisi2": None},
     9: {s: None for s in ("ge-govge", "ge-govge-en", "ge-mfa", "ge-mfa-en", "jp-mhlw", "jp-mlit",
                           "jp-fsa", "jp-mext")},
     11: {"federal-register": 200, **{s: None for s in (
