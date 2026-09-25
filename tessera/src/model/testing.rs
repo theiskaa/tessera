@@ -5,7 +5,10 @@
 
 use serde_json::{Map, Value, json};
 
-use super::{DETECTOR_LABELS, HIDDEN, INPUT_DIM, KERNEL, NGRAM_DIM, SCRIPT_DIM, SHAPE_DIM};
+use super::{DETECTOR_LABELS, INPUT_DIM, KERNEL, NGRAM_DIM, SCRIPT_DIM, SHAPE_DIM};
+
+/// Hidden width of the test bundles, the width the shipped networks use.
+const HIDDEN: usize = 96;
 use super::{SCRIPT_ROWS, SHAPE_ROWS, bio};
 
 /// A safetensors header and the tensor bytes it indexes.
@@ -89,15 +92,15 @@ pub(crate) fn parser_bundle() -> Vec<u8> {
 
 /// The parser-only bundle plus a detector with `blocks` random residual blocks.
 pub(crate) fn with_random_detector(seed: u64, blocks: usize) -> Vec<u8> {
-    random_detector(seed, blocks, true)
+    random_detector(seed, blocks, true, HIDDEN)
 }
 
 /// The same, with no `detector.embed.ngram`: a detector trained on the parser's table.
 pub(crate) fn with_random_sharing_detector(seed: u64) -> Vec<u8> {
-    random_detector(seed, 6, false)
+    random_detector(seed, 6, false, HIDDEN)
 }
 
-fn random_detector(seed: u64, blocks: usize, own_ngram: bool) -> Vec<u8> {
+fn random_detector(seed: u64, blocks: usize, own_ngram: bool, hidden: usize) -> Vec<u8> {
     let mut parts = Parts::read(&parser_bundle());
     let feature_config: Value =
         serde_json::from_str(parts.metadata()["feature_config"].as_str().unwrap()).unwrap();
@@ -138,18 +141,18 @@ fn random_detector(seed: u64, blocks: usize, own_ngram: bool) -> Vec<u8> {
             &[SHAPE_ROWS, SHAPE_DIM],
             SHAPE_DIM,
         ),
-        int8("detector.proj.weight".into(), &[HIDDEN, INPUT_DIM], HIDDEN),
+        int8("detector.proj.weight".into(), &[hidden, INPUT_DIM], hidden),
         int8(
             "detector.head.weight".into(),
-            &[DETECTOR_LABELS, HIDDEN],
+            &[DETECTOR_LABELS, hidden],
             DETECTOR_LABELS,
         ),
     ]);
     for i in 0..blocks {
         tensors.push(int8(
             format!("detector.block{i}.conv.weight"),
-            &[HIDDEN, HIDDEN, KERNEL],
-            HIDDEN,
+            &[hidden, hidden, KERNEL],
+            hidden,
         ));
     }
     for (name, shape, values, scales) in tensors {
@@ -161,10 +164,10 @@ fn random_detector(seed: u64, blocks: usize, own_ngram: bool) -> Vec<u8> {
             &scales,
         );
     }
-    let mut zeros = vec![("detector.proj.bias".to_string(), HIDDEN)];
+    let mut zeros = vec![("detector.proj.bias".to_string(), hidden)];
     zeros.push(("detector.head.bias".to_string(), DETECTOR_LABELS));
     for i in 0..blocks {
-        zeros.push((format!("detector.block{i}.conv.bias"), HIDDEN));
+        zeros.push((format!("detector.block{i}.conv.bias"), hidden));
     }
     for (name, len) in zeros {
         parts.add(&name, "F32", &[len], &vec![0u8; len * 4]);
@@ -182,7 +185,7 @@ mod tests {
     use crate::Error;
     use crate::features::{FeatureConfig, featurize};
     use crate::model::weights::Bundle;
-    use crate::model::{Tagger, kernels};
+    use crate::model::{MAX_HIDDEN, Tagger, kernels};
     use crate::token::tokenize;
 
     #[test]
@@ -191,6 +194,25 @@ mod tests {
         let bundle = Bundle::parse(&bytes, None).unwrap();
         assert!(Tagger::detector(&bundle, None).is_ok());
         let bytes = with_random_detector(7, 5);
+        let bundle = Bundle::parse(&bytes, None).unwrap();
+        assert_eq!(
+            Tagger::detector(&bundle, None).unwrap_err(),
+            Error::BundleInvalid
+        );
+    }
+
+    #[test]
+    fn a_detector_of_another_width_loads_and_runs() {
+        let bytes = random_detector(3, 6, true, 192);
+        let bundle = Bundle::parse(&bytes, None).unwrap();
+        let wide = Tagger::detector(&bundle, None).unwrap();
+        assert_eq!(wide.hidden, 192);
+        let text = "Nino Beridze, Tbilisi";
+        let tokens = tokenize(text);
+        let feats = featurize(text, &tokens, &[], None, &FeatureConfig::default(), None);
+        assert_eq!(wide.forward(&feats).len(), feats.len() * DETECTOR_LABELS);
+
+        let bytes = random_detector(3, 6, true, MAX_HIDDEN + 1);
         let bundle = Bundle::parse(&bytes, None).unwrap();
         assert_eq!(
             Tagger::detector(&bundle, None).unwrap_err(),

@@ -119,6 +119,17 @@ impl<'a> Bundle<'a> {
         self.entries.iter().any(|e| e.name == name)
     }
 
+    /// The length of the rank-1 f32 tensor `name`, if the bundle holds one.
+    pub(crate) fn f32_len(&self, name: &str) -> Option<usize> {
+        self.entries
+            .iter()
+            .find(|e| e.name == name && e.dtype == Dtype::F32)
+            .and_then(|e| match e.shape.as_slice() {
+                [len] => Some(*len),
+                _ => None,
+            })
+    }
+
     fn entry(&self, name: &str, dtype: Dtype, shape: &[usize]) -> Result<&Entry, Error> {
         self.entries
             .iter()

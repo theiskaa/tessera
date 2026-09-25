@@ -55,8 +55,8 @@ const NGRAM_DIM: usize = 48;
 const SCRIPT_DIM: usize = 8;
 /// Width of the shape embedding.
 const SHAPE_DIM: usize = 8;
-/// Width of the hidden layers.
-const HIDDEN: usize = 96;
+/// The widest hidden layer a bundle may declare, which bounds the memory a bundle can ask for.
+const MAX_HIDDEN: usize = 1024;
 /// Width of one token's input to the projection.
 const INPUT_DIM: usize = NGRAM_DIM + SCRIPT_DIM + SHAPE_DIM + FLAG_BITS;
 
@@ -79,6 +79,7 @@ pub(crate) struct Tagger {
     blocks: Vec<(kernels::Dense, usize)>,
     head: kernels::Dense,
     labels: usize,
+    hidden: usize,
 }
 
 impl Tagger {
@@ -123,14 +124,19 @@ impl Tagger {
         dilations: &[usize],
         labels: usize,
     ) -> Result<Tagger, Error> {
+        // The hidden width is read from the projection's bias; every other tensor must agree.
+        let hidden = bundle
+            .f32_len(&format!("{net}.proj.bias"))
+            .filter(|h| (1..=MAX_HIDDEN).contains(h))
+            .ok_or(Error::BundleInvalid)?;
         let mut blocks = Vec::with_capacity(dilations.len());
         for (i, &d) in dilations.iter().enumerate() {
             let w = bundle.take_i8(
                 &format!("{net}.block{i}.conv.weight"),
-                &[HIDDEN, HIDDEN, KERNEL],
+                &[hidden, hidden, KERNEL],
                 0,
             )?;
-            let b = bundle.take_f32(&format!("{net}.block{i}.conv.bias"), HIDDEN)?;
+            let b = bundle.take_f32(&format!("{net}.block{i}.conv.bias"), hidden)?;
             blocks.push((kernels::Dense::new(&w, b), d));
         }
         Ok(Tagger {
@@ -142,15 +148,16 @@ impl Tagger {
             )?,
             shape: bundle.take_i8(&format!("{net}.embed.shape"), &[SHAPE_ROWS, SHAPE_DIM], 1)?,
             proj: kernels::Dense::new(
-                &bundle.take_i8(&format!("{net}.proj.weight"), &[HIDDEN, INPUT_DIM], 0)?,
-                bundle.take_f32(&format!("{net}.proj.bias"), HIDDEN)?,
+                &bundle.take_i8(&format!("{net}.proj.weight"), &[hidden, INPUT_DIM], 0)?,
+                bundle.take_f32(&format!("{net}.proj.bias"), hidden)?,
             ),
             blocks,
             head: kernels::Dense::new(
-                &bundle.take_i8(&format!("{net}.head.weight"), &[labels, HIDDEN], 0)?,
+                &bundle.take_i8(&format!("{net}.head.weight"), &[labels, hidden], 0)?,
                 bundle.take_f32(&format!("{net}.head.bias"), labels)?,
             ),
             labels,
+            hidden,
         })
     }
 
@@ -180,9 +187,9 @@ impl Tagger {
                 *v = ((f.flags >> bit) & 1) as f32;
             }
         }
-        let mut h = vec![0f32; len * HIDDEN];
+        let mut h = vec![0f32; len * self.hidden];
         kernels::linear(&x, len, &self.proj, &mut h);
-        let mut conv = vec![0f32; len * HIDDEN];
+        let mut conv = vec![0f32; len * self.hidden];
         for (layer, d) in &self.blocks {
             kernels::conv1d_same(&h, len, layer, *d, &mut conv);
             kernels::relu_inplace(&mut conv);

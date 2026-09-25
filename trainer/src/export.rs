@@ -159,8 +159,8 @@ fn read_quantized(path: &Path) -> anyhow::Result<(Vec<QTensor>, Vec<F32Tensor>)>
     Ok((q, biases))
 }
 
-/// The library's forward passes are written for one architecture per network; the bundle
-/// does not describe it, so a run with another one must not be exported.
+/// The library's forward passes are written for one architecture per network, except for the
+/// hidden width, which it reads from the bundle; a run with another one must not be exported.
 fn check_library_shape(cfg: &Config) -> anyhow::Result<()> {
     let net = cfg.tagger_net_config();
     let dilations: &[usize] = match cfg.task {
@@ -169,14 +169,14 @@ fn check_library_shape(cfg: &Config) -> anyhow::Result<()> {
     };
     let ok = net.dilations == dilations
         && net.kernel == 3
-        && net.hidden == 96
+        && (1..=1024).contains(&net.hidden)
         && net.ngram_dim == 48
         && net.script_dim == 8
         && net.shape_dim == 8;
     anyhow::ensure!(
         ok,
-        "the library runs the {} with dilations {dilations:?}, kernel 3, hidden 96, and embedding \
-         dims 48, 8, 8; this run has {:?}, {}, {}, and {}, {}, {}",
+        "the library runs the {} with dilations {dilations:?}, kernel 3, hidden 1 to 1024, and \
+         embedding dims 48, 8, 8; this run has {:?}, {}, {}, and {}, {}, {}",
         cfg.net_name(),
         net.dilations,
         net.kernel,
