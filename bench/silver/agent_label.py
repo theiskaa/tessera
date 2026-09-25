@@ -75,6 +75,8 @@ PLAN = {
     15: {"federal-register": 150, **{s: None for s in ("gb-govuk-complaints", "gb-govuk-news", "gb-ni-contacts", "gb-ni-news", "gb-public-contacts", "gb-public-people", "ge-parliament-en", "ge-govge-en-old", "ge-rustavi", "ge-gori", "ge-napr", "de-bw", "de-niedersachsen", "de-hessen", "de-sh", "de-stmi", "de-uba", "de-bkarta", "de-bsi", "de-kommunen", "de-landesaemter", "jp-bunka", "jp-env-regional")}},
     8: {s: None for s in ("gb-people", "ge-addresses", "jp-addresses")},
     17: {"govuk": 350, "federal-register": 100},
+    19: {s: None for s in ("ge-govge", "ge-govge-en", "ge-mfa", "ge-parliament-en", "ge-rustavi",
+                           "ge-gori", "ge-napr", "jp-mhlw", "jp-mlit", "jp-bunka", "jp-env-regional")},
 }
 CONTACT = re.compile(r"@|\b\d{3}[-. ]\d{3}[-. ]\d{4}\b|\b0\d{2,4} ?\d{3} ?\d{3,4}\b|\b(Street|Avenue|Road|Room|Suite)\b")
 
