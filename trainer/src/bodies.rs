@@ -704,6 +704,7 @@ const GE_COUNCILS: &[&str] = &[
 
 const GE_PARTIES: &[&str] = &[
     "Georgian Dream",
+    "GD",
     "United National Movement",
     "UNM",
     "Lelo",
@@ -713,6 +714,74 @@ const GE_PARTIES: &[&str] = &[
     "Coalition for Change",
     "ქართული ოცნება",
     "ერთიანი ნაციონალური მოძრაობა",
+];
+
+const GE_MEDIA: &[&str] = &[
+    "Imedi TV",
+    "TV Pirveli",
+    "Rustavi 2",
+    "Formula TV",
+    "Mtavari Arkhi",
+    "POSTV",
+    "Georgian Public Broadcaster",
+    "Interpressnews",
+    "Netgazeti",
+    "Publika",
+    "Radio Liberty",
+    "იმედი",
+    "რუსთავი 2",
+    "საზოგადოებრივი მაუწყებელი",
+    "ინტერპრესნიუსი",
+];
+
+const GB_MEDIA: &[&str] = &[
+    "ITV News",
+    "Channel 4 News",
+    "Sky News",
+    "The Times",
+    "Financial Times",
+    "Reuters",
+    "The Telegraph",
+    "PA Media",
+    "The Independent",
+    "Daily Mail",
+];
+
+const US_MEDIA: &[&str] = &[
+    "CNN",
+    "Fox News",
+    "NPR",
+    "The New York Times",
+    "The Associated Press",
+    "Politico",
+    "The Washington Post",
+    "Bloomberg",
+    "CBS News",
+    "ABC News",
+];
+
+const DE_MEDIA: &[&str] = &[
+    "dpa",
+    "RTL",
+    "n-tv",
+    "FAZ",
+    "taz",
+    "Deutschlandfunk",
+    "MDR",
+    "SWR",
+    "Bild",
+    "Der Tagesspiegel",
+];
+
+const JP_MEDIA: &[&str] = &[
+    "NHK",
+    "朝日新聞",
+    "読売新聞",
+    "毎日新聞",
+    "共同通信",
+    "日本経済新聞",
+    "時事通信",
+    "産経新聞",
 ];
 
 const DE_PARTIES: &[&str] = &[
@@ -1039,6 +1108,19 @@ impl Bodies {
             "JP" => pick_str(JP_PARTIES, rng),
             _ => pick_str(EN_PARTIES, rng),
         }
+    }
+
+    /// A broadcaster, newspaper, or news agency. Outlets whose own pages are in the evaluation
+    /// sets are not listed.
+    pub fn media(&self, rng: &mut ChaCha8Rng) -> String {
+        let list = match self.country {
+            "GE" => GE_MEDIA,
+            "DE" => DE_MEDIA,
+            "JP" => JP_MEDIA,
+            "US" => US_MEDIA,
+            _ => GB_MEDIA,
+        };
+        pick_str(list, rng)
     }
 
     /// A named sub-unit: an office, division, directorate, section, or team with its own name.

@@ -162,6 +162,13 @@ pub const TEMPLATES: &[Local] = &[
     ),
     (
         Prose,
+        58,
+        NoAddr,
+        NEWS,
+        "{person#1} told {org_media#2} on {date} that {org_party#3} would not back the bill. In an interview with {org_media#4}, {person_last#1} said {org_party#3} lawmakers had met {org_acr#5} officials. {sentence}",
+    ),
+    (
+        Prose,
         59,
         NoAddr,
         NEWS,

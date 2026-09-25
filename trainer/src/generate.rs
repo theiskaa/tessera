@@ -138,6 +138,7 @@ pub enum Slot {
     OrgUniv,
     OrgCouncil,
     OrgParty,
+    OrgMedia,
     OrgList,
     Address,
     AddressMultiline,
@@ -194,7 +195,7 @@ impl Slot {
             Person | PersonFirst | PersonLast | PersonNative | PersonDirectory | PersonList
             | PersonEponymous => Some(Kind::Person),
             Org | OrgEponymous | OrgSchool | OrgGov | OrgAcronym | OrgUnit | OrgRegistry
-            | OrgChain | OrgUniv | OrgCouncil | OrgParty | OrgList => Some(Kind::Org),
+            | OrgChain | OrgUniv | OrgCouncil | OrgParty | OrgMedia | OrgList => Some(Kind::Org),
             Address | AddressMultiline | AddressPersonStreet => Some(Kind::Address),
             Email => Some(Kind::Email),
             Phone | PhoneLocal => Some(Kind::Phone),
@@ -222,6 +223,7 @@ impl Slot {
             "org_chain" => OrgChain,
             "org_univ" => OrgUniv,
             "org_council" => OrgCouncil,
+            "org_media" => OrgMedia,
             "org_party" => OrgParty,
             "org_list" => OrgList,
             "address" => Address,
@@ -573,6 +575,7 @@ impl<'a> Ctx<'a> {
             Slot::OrgChain => Filled::plain(self.pools.bodies.chain(rng)),
             Slot::OrgUniv => Filled::plain(self.pools.bodies.university(rng)),
             Slot::OrgCouncil => Filled::plain(self.pools.bodies.council(rng)),
+            Slot::OrgMedia => Filled::plain(self.pools.bodies.media(rng)),
             Slot::OrgParty => Filled::plain(self.pools.bodies.party(rng)),
             Slot::Address => {
                 let a = self.address(false, rng)?.one_line();
