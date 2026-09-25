@@ -1,4 +1,4 @@
-name = "detector-silver"
+name = "detector-wide"
 task = "detector"
 seed = 42
 
@@ -18,7 +18,7 @@ ngram_dim = 48
 shape_dim = 16
 
 [net]
-hidden = 96
+hidden = 192
 kernel = 3
 dilations = [1, 2, 4, 8, 16, 1]
 dropout = 0.1
