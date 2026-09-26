@@ -6,7 +6,7 @@ import sys
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from source_profiles import PROFILES, project, verify_source_profile
+from source_profiles import PROFILES, html_200_headers, project, verify_source_profile
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -15,6 +15,14 @@ LINEAGE = ROOT / "data/interim/silver/qa-dedup-20260926/source-lineage-pending-v
 
 
 class OfficialCaptureReplayTest(unittest.TestCase):
+    def test_final_http_response_accepts_html_200_over_http2(self):
+        redirected = (b"HTTP/1.1 301 Moved\r\nLocation: https://example.org/new\r\n\r\n"
+                      b"HTTP/2 200 \r\ncontent-type: text/html; charset=UTF-8\r\n\r\n")
+        self.assertTrue(html_200_headers(redirected))
+        self.assertFalse(html_200_headers(
+            b"HTTP/2 200 \r\ncontent-type: text/html\r\n\r\n"
+            b"HTTP/2 403 \r\ncontent-type: text/html\r\n\r\n"))
+
     def test_ge_scopes_project_visible_text_and_reject_dropped_content(self):
         eqe = (b'<main><div class="block block--height box-shadow">'
                b'<h2>Contact</h2><p>Alice</p></div><footer>Outside</footer></main>')

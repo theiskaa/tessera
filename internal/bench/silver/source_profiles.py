@@ -87,6 +87,18 @@ def digest(data):
     return hashlib.sha256(data).hexdigest()
 
 
+def html_200_headers(headers):
+    """Check the final captured HTTP response, including HTTP/2 curl headers."""
+    responses = [block for block in headers.split(b"\r\n\r\n")
+                 if block.startswith(b"HTTP/")]
+    if not responses:
+        return False
+    final = responses[-1]
+    status = final.split(b"\r\n", 1)[0]
+    return (re.fullmatch(rb"HTTP/(?:1\.1|2) 200(?: .*)?", status) is not None
+            and b"content-type: text/html" in final.lower())
+
+
 class PressBody(HTMLParser):
     def __init__(self):
         super().__init__(convert_charrefs=True)
@@ -235,8 +247,7 @@ def verify_source_profile(root: Path, profile_id: str, doc: dict, info: dict) ->
     if profile.header_path:
         headers = (root / profile.header_path).read_bytes()
         if (digest(headers) != profile.header_sha256
-                or not headers.startswith(b"HTTP/1.1 200 OK\r\n")
-                or b"Content-Type: text/html" not in headers):
+                or not html_200_headers(headers)):
             raise ValueError("source proof HTTP headers mismatch")
     output = project(capture, profile.projection)
     if digest(output.encode("utf-8")) != profile.text_sha256 or output != doc.get("text"):
