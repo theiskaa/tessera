@@ -105,6 +105,27 @@ pub const TEMPLATES: &[Local] = &[
         "{org_gov#1}\n\n{sentence_local} {sentence_local}\n\nმისამართი: {address_ml#2}\nცხელი ხაზი: {phone#3}\nელ-ფოსტა: {email#3}",
     ),
     (
+        Letterhead,
+        386,
+        Nothing,
+        GE,
+        "{org_local_office#1}\nტელ.: {phone#2}\nელ-ფოსტა: {email#3}",
+    ),
+    (
+        Letterhead,
+        387,
+        Nothing,
+        GE,
+        "საკონტაქტო ინფორმაცია\n{org_local_office#1}\nცხელი ხაზი: {phone#2}\nელ-ფოსტა: {email#3}",
+    ),
+    (
+        Letterhead,
+        388,
+        Nothing,
+        GE,
+        "მის.: {neg_ge_incomplete_street}\nსაკონტაქტო მონაცემები განახლდება.",
+    ),
+    (
         Prose,
         50,
         NoAddr,

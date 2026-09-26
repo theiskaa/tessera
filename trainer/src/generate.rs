@@ -133,6 +133,7 @@ pub enum Slot {
     OrgGov,
     OrgAcronym,
     OrgUnit,
+    OrgLocalOffice,
     OrgRegistry,
     OrgChain,
     OrgUniv,
@@ -158,6 +159,7 @@ pub enum Slot {
     NegDigits,
     NegRoadSentence,
     NegPartialLocation,
+    NegGeIncompleteStreet,
     NegHeader,
     NegDepartment,
     NegPrompt,
@@ -194,8 +196,10 @@ impl Slot {
         match self {
             Person | PersonFirst | PersonLast | PersonNative | PersonDirectory | PersonList
             | PersonEponymous => Some(Kind::Person),
-            Org | OrgEponymous | OrgSchool | OrgGov | OrgAcronym | OrgUnit | OrgRegistry
-            | OrgChain | OrgUniv | OrgCouncil | OrgParty | OrgMedia | OrgList => Some(Kind::Org),
+            Org | OrgEponymous | OrgSchool | OrgGov | OrgAcronym | OrgUnit | OrgLocalOffice
+            | OrgRegistry | OrgChain | OrgUniv | OrgCouncil | OrgParty | OrgMedia | OrgList => {
+                Some(Kind::Org)
+            }
             Address | AddressMultiline | AddressPersonStreet => Some(Kind::Address),
             Email => Some(Kind::Email),
             Phone | PhoneLocal => Some(Kind::Phone),
@@ -219,6 +223,7 @@ impl Slot {
             "org_gov" => OrgGov,
             "org_acr" => OrgAcronym,
             "org_unit" => OrgUnit,
+            "org_local_office" => OrgLocalOffice,
             "org_registry" => OrgRegistry,
             "org_chain" => OrgChain,
             "org_univ" => OrgUniv,
@@ -244,6 +249,7 @@ impl Slot {
             "neg_digits" => NegDigits,
             "neg_road_sentence" => NegRoadSentence,
             "neg_partial_location" => NegPartialLocation,
+            "neg_ge_incomplete_street" => NegGeIncompleteStreet,
             "neg_header" => NegHeader,
             "neg_department" => NegDepartment,
             "neg_prompt" => NegPrompt,
@@ -588,6 +594,12 @@ impl<'a> Ctx<'a> {
             }
             Slot::OrgAcronym => Filled::plain(self.acronym(group, rng)),
             Slot::OrgUnit => Filled::plain(self.pools.bodies.unit(rng)),
+            Slot::OrgLocalOffice => Filled::plain(
+                self.pools
+                    .bodies
+                    .local_office(rng)
+                    .context("no split-safe Georgian local office heading")?,
+            ),
             Slot::OrgRegistry => Filled::plain(self.pools.bodies.registry(rng)),
             Slot::OrgChain => Filled::plain(self.pools.bodies.chain(rng)),
             Slot::OrgUniv => Filled::plain(self.pools.bodies.university(rng)),
@@ -669,6 +681,12 @@ impl<'a> Ctx<'a> {
             Slot::NegDigits => Filled::plain(*pick(templates::NEG_DIGITS, rng)),
             Slot::NegRoadSentence => Filled::plain(*pick(templates::NEG_ROAD_SENTENCES, rng)),
             Slot::NegPartialLocation => Filled::plain(*pick(templates::NEG_PARTIAL_LOCATIONS, rng)),
+            Slot::NegGeIncompleteStreet => Filled::plain(
+                self.pools
+                    .bodies
+                    .incomplete_street(rng)
+                    .context("no split-safe Georgian incomplete street")?,
+            ),
             Slot::NegHeader => {
                 Filled::plain(localized(templates::NEG_HEADERS, self.country, 0.5, rng))
             }
@@ -1550,7 +1568,18 @@ fn expand_lists(text: &str, country: &str, rng: &mut ChaCha8Rng) -> String {
 /// when the padded one would not fit in `max_tokens`.
 fn wrapped(doc: Doc, ctx: &Ctx, max_tokens: usize, rng: &mut ChaCha8Rng) -> anyhow::Result<Doc> {
     let author = ctx.person(rng)?.name;
-    let padded = filler::Wrap::draw(ctx.country, &author, rng).apply(doc.clone());
+    let mut padding = filler::Wrap::draw(ctx.country, &author, rng);
+    // These contact snippets are deliberately person-free. A generic named reply
+    // header would silently add a person despite their Nothing categories.
+    if matches!(doc.template_id, 386..=388)
+        && padding
+            .quote
+            .as_ref()
+            .is_some_and(|(_, name)| name.is_some())
+    {
+        padding.quote = None;
+    }
+    let padded = padding.apply(doc.clone());
     Ok(if check(&padded, max_tokens) == Err(Drop::TooLong) {
         doc
     } else {
@@ -1565,6 +1594,7 @@ pub enum Drop {
     Overlap,
     TooLong,
     EmptyEntity,
+    Duplicate,
 }
 
 impl Drop {
@@ -1574,6 +1604,7 @@ impl Drop {
             Drop::Overlap => "overlap",
             Drop::TooLong => "too_long",
             Drop::EmptyEntity => "empty_entity",
+            Drop::Duplicate => "duplicate",
         }
     }
 }
@@ -1790,6 +1821,7 @@ fn generate(
 ) -> anyhow::Result<(Vec<Row>, Dropped)> {
     let mut rows = Vec::new();
     let mut dropped = Dropped::new();
+    let mut seen_text = HashSet::new();
     for (split, subset, count) in plan(cfg) {
         let pool = eligible(all, subset);
         for _ in 0..count {
@@ -1806,7 +1838,8 @@ fn generate(
                 let mut ctx = Ctx::new(country, &pools[&(split, country)]);
                 let doc = wrapped(render(template, &mut ctx, rng)?, &ctx, cfg.max_tokens, rng)?;
                 match check(&doc, cfg.max_tokens) {
-                    Ok(()) => break doc,
+                    Ok(()) if seen_text.insert(doc.text.clone()) => break doc,
+                    Ok(()) => *dropped.entry(Drop::Duplicate.name()).or_default() += 1,
                     Err(d) => *dropped.entry(d.name()).or_default() += 1,
                 }
             };
@@ -2252,6 +2285,56 @@ mod tests {
     }
 
     #[test]
+    fn ge_local_office_templates_keep_org_and_incomplete_street_separate() {
+        let all = templates::all().unwrap();
+        let pools = stub_pools(&[("Nino Beridze", "latin")]);
+        for id in [386, 387, 388] {
+            let t = all.iter().find(|t| t.id == id).unwrap();
+            assert!(t.fits("GE") && !t.fits("GB") && !t.test_only());
+            let mut ctx = Ctx::new("GE", &pools);
+            ctx.plain = true;
+            let mut rng = ChaCha8Rng::seed_from_u64(id as u64);
+            let doc = render(t, &mut ctx, &mut rng).unwrap();
+            let spans: Vec<(&str, &str)> = doc
+                .entities
+                .iter()
+                .map(|e| (e.kind, &doc.text[e.start..e.end]))
+                .collect();
+            if id == 388 {
+                assert!(doc.text.contains("ქუჩა"));
+                assert!(spans.is_empty(), "negative-only template was labelled");
+            } else {
+                assert_eq!(t.category, Category::Nothing);
+                assert_eq!(
+                    spans.iter().map(|(kind, _)| *kind).collect::<Vec<_>>(),
+                    vec!["org", "phone", "email"]
+                );
+                assert!(spans[0].1.ends_with(" სამმართველო"));
+                assert!(!doc.text.contains("მისამართი:") && !doc.text.contains("ორიენტირი:"));
+            }
+        }
+    }
+
+    #[test]
+    fn ge_local_office_wrapping_never_adds_reply_header_person() {
+        let pools = stub_pools(&[("Nino Beridze", "latin")]);
+        let all = templates::all().unwrap();
+        for id in [386, 387, 388] {
+            let template = all.iter().find(|t| t.id == id).unwrap();
+            for seed in 0..300 {
+                let mut rng = ChaCha8Rng::seed_from_u64(seed);
+                let mut ctx = Ctx::new("GE", &pools);
+                let doc = render(template, &mut ctx, &mut rng).unwrap();
+                let padded = wrapped(doc, &ctx, 900, &mut rng).unwrap();
+                assert!(
+                    padded.entities.iter().all(|e| e.kind != "person"),
+                    "template {id} seed {seed} acquired a person"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn honorifics_stay_outside_the_person_span() {
         let pools = stub_pools(&[("Nino Beridze", "latin")]);
         let t = template("Dear {person}.");
@@ -2370,6 +2453,14 @@ mod tests {
         let mut rng = ChaCha8Rng::seed_from_u64(5);
         let (rows, _) = generate(&cfg, &["GB"], &pools, &all, &mut rng).unwrap();
         assert_eq!(rows.len(), 300);
+        assert_eq!(
+            rows.iter()
+                .map(|r| r.doc.text.as_str())
+                .collect::<HashSet<_>>()
+                .len(),
+            rows.len(),
+            "generated documents must not repeat across splits"
+        );
         for r in rows.iter().filter(|r| r.split != Split::Train) {
             assert!(!r.doc.text.contains("Train Person"), "{}", r.doc.text);
         }

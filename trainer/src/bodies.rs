@@ -561,6 +561,73 @@ const GE_UNITS: &[&str] = &[
     "მუნიციპალური ინსპექცია",
 ];
 
+// Synthetic-only local office names. The full heading is split by hash; none of these
+// place forms occurs in the frozen SA office headings. Recheck prospective evaluation
+// names before producing a corpus from a changed source roster.
+const GE_LOCAL_OFFICE_PLACES_GENITIVE: &[&str] = &[
+    "მცხეთის",
+    "კასპის",
+    "ხაშურის",
+    "ბორჯომის",
+    "ბოლნისის",
+    "დმანისის",
+    "მარნეულის",
+    "გარდაბნის",
+    "დედოფლისწყაროს",
+    "სიღნაღის",
+    "ლაგოდეხის",
+    "ყვარლის",
+    "ზესტაფონის",
+    "სამტრედიის",
+    "წყალტუბოს",
+    "ტყიბულის",
+    "ჭიათურის",
+    "სენაკის",
+    "ხობის",
+    "ჩხოროწყუს",
+    "ლანჩხუთის",
+    "ჩოხატაურის",
+    "ქობულეთის",
+    "ხელვაჩაურის",
+    "აბაშის",
+    "მარტვილის",
+    "წალენჯიხის",
+    "დუშეთის",
+    "თიანეთის",
+    "ახმეტის",
+    "წალკის",
+    "თეთრიწყაროს",
+    "ნინოწმინდის",
+];
+
+// Town and street, without a house number or postcode. The review policy excludes
+// these from address spans. Keep complete lines split-safe even though unlabelled.
+const GE_INCOMPLETE_STREETS: &[&str] = &[
+    "ქ. ბოლნისი, თავისუფლების ქუჩა",
+    "ქ. ხაშური, მშვიდობის ქუჩა",
+    "ქ. კასპი, ჭავჭავაძის ქუჩა",
+    "ქ. მარნეული, რუსთაველის ქუჩა",
+    "ქ. სენაკი, წერეთლის ქუჩა",
+    "ქ. ზესტაფონი, ფარნავაზის ქუჩა",
+    "ქ. დუშეთი, თამარ მეფის ქუჩა",
+    "ქ. სიღნაღი, ბარათაშვილის ქუჩა",
+    "ქ. ყვარელი, ერეკლე მეორის ქუჩა",
+    "ქ. ქობულეთი, მეგობრობის ქუჩა",
+    "ქ. ჭიათურა, ნიკოლაძის ქუჩა",
+    "ქ. ლანჩხუთი, შრომის ქუჩა",
+    "ქ. აბაშა, ვაჟა-ფშაველას ქუჩა",
+    "ქ. მარტვილი, სკოლის ქუჩა",
+    "ქ. ბორჯომი, პარკის ქუჩა",
+    "ქ. წალკა, ბარათაშვილის ქუჩა",
+    "ქ. დმანისი, დედა ენის ქუჩა",
+    "ქ. ხელვაჩაური, აჭარის ქუჩა",
+    "ქ. ახმეტა, ილიას ქუჩა",
+    "ქ. ნინოწმინდა, მესხეთის ქუჩა",
+    "ქ. დედოფლისწყარო, ველის ქუჩა",
+    "ქ. აბაშა, თავისუფლების ქუჩა",
+    "ქ. დუშეთი, რუსთაველის ქუჩა",
+];
+
 fn pick_str(list: &[&str], rng: &mut ChaCha8Rng) -> String {
     list.choose(rng).copied().unwrap_or("").to_string()
 }
@@ -872,6 +939,32 @@ pub struct Bodies {
 }
 
 impl Bodies {
+    /// A bare, place-named Georgian office heading. Unlike `split_pick`, this never
+    /// falls back to a name assigned to another split.
+    pub fn local_office(&self, rng: &mut ChaCha8Rng) -> Option<String> {
+        if self.country != "GE" {
+            return None;
+        }
+        let own: Vec<String> = GE_LOCAL_OFFICE_PLACES_GENITIVE
+            .iter()
+            .map(|place| format!("{place} სამმართველო"))
+            .filter(|heading| in_split(heading, self.split()))
+            .collect();
+        own.choose(rng).cloned()
+    }
+
+    /// A town-and-street line without a delivery number or postcode.
+    pub fn incomplete_street(&self, rng: &mut ChaCha8Rng) -> Option<String> {
+        if self.country != "GE" {
+            return None;
+        }
+        let own: Vec<&&str> = GE_INCOMPLETE_STREETS
+            .iter()
+            .filter(|line| in_split(line, self.split()))
+            .collect();
+        own.choose(rng).map(|line| (**line).to_string())
+    }
+
     pub fn new(country: &'static str, split: Split) -> Bodies {
         Bodies {
             country,
@@ -1224,6 +1317,67 @@ mod tests {
                     .iter()
                     .any(|body| body.acronym.as_deref() == Some("HMRC"))
             );
+        }
+    }
+
+    #[test]
+    fn ge_local_offices_are_split_safe_and_exclude_sa_headings() {
+        const SA_HEADINGS: &[&str] = &[
+            "რუსთავის ცენტრალური დეპარტამენტი",
+            "თბილისის სამმართველო",
+            "გორის სამმართველო",
+            "თელავის სამმართველო",
+            "ახალციხე-ახალქალაქის სამმართველო",
+            "ქუთაისის სამმართველო",
+            "ოზურგეთის სამმართველო",
+            "ბათუმის სამმართველო",
+            "საჩხერე-ამბროლაურის სამმართველო",
+            "ზუგდიდის სამმართველო",
+            "ფოთის სამმართველო",
+        ];
+        for split in [Split::Train, Split::Valid, Split::Test] {
+            let headings: Vec<String> = GE_LOCAL_OFFICE_PLACES_GENITIVE
+                .iter()
+                .map(|place| format!("{place} სამმართველო"))
+                .filter(|heading| in_split(heading, split))
+                .collect();
+            assert!(!headings.is_empty(), "empty {split:?} local-office pool");
+            for heading in &headings {
+                assert!(!SA_HEADINGS.contains(&heading.as_str()), "{heading}");
+                assert_eq!(
+                    [Split::Train, Split::Valid, Split::Test]
+                        .into_iter()
+                        .filter(|&other| in_split(heading, other))
+                        .count(),
+                    1,
+                    "{heading} crosses splits"
+                );
+            }
+            let mut rng = ChaCha8Rng::seed_from_u64(31);
+            let body = Bodies::new("GE", split);
+            for _ in 0..100 {
+                let heading = body.local_office(&mut rng).unwrap();
+                assert!(headings.contains(&heading));
+            }
+        }
+    }
+
+    #[test]
+    fn ge_incomplete_streets_are_unambiguous_negatives_in_each_split() {
+        for split in [Split::Train, Split::Valid, Split::Test] {
+            let lines: Vec<&&str> = GE_INCOMPLETE_STREETS
+                .iter()
+                .filter(|line| in_split(line, split))
+                .collect();
+            assert!(lines.len() >= 4, "too few {split:?} incomplete streets");
+            let body = Bodies::new("GE", split);
+            let mut rng = ChaCha8Rng::seed_from_u64(37);
+            for _ in 0..100 {
+                let line = body.incomplete_street(&mut rng).unwrap();
+                assert!(lines.iter().any(|item| **item == line));
+                assert!(!line.chars().any(|c| c.is_numeric()), "{line}");
+                assert!(line.contains("ქუჩა"), "{line}");
+            }
         }
     }
 }
