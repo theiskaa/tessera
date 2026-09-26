@@ -4,7 +4,7 @@
 //! scores per kind, per slice of the cases, and per script of the spans, documents with a
 //! false positive, latency, and the Markdown tables of the detector report.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::path::Path;
 use std::time::Instant;
@@ -19,6 +19,22 @@ use tessera::{Config, Kind, Query, Tessera};
 use crate::EvalArgs;
 use crate::baselines::{self, Span};
 use crate::eval::{ExternalEntity, prf, round4};
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, clap::ValueEnum)]
+pub enum CountryHintMode {
+    #[default]
+    Known,
+    Auto,
+}
+
+impl CountryHintMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Known => "known",
+            Self::Auto => "auto",
+        }
+    }
+}
 
 /// The kinds in report order.
 const KINDS: [&str; 5] = ["person", "org", "address", "email", "phone"];
@@ -49,6 +65,8 @@ struct GoldLine {
     expected: Vec<GoldSpan>,
     country: String,
     doc_type: String,
+    #[serde(default)]
+    source_host: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -61,10 +79,16 @@ struct GoldSpan {
 }
 
 /// Reads `gold.jsonl`, one case per line, checking that every span's `text` is its slice.
+#[cfg(test)]
 pub fn load_gold(path: &Path) -> anyhow::Result<Vec<Case>> {
     let text =
         std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    parse_gold(path, &text)
+}
+
+fn parse_gold(path: &Path, text: &str) -> anyhow::Result<Vec<Case>> {
     let mut cases = Vec::new();
+    let mut names = BTreeSet::new();
     for (i, line) in text
         .lines()
         .enumerate()
@@ -72,17 +96,33 @@ pub fn load_gold(path: &Path) -> anyhow::Result<Vec<Case>> {
     {
         let g: GoldLine = serde_json::from_str(line)
             .with_context(|| format!("{}:{}: not a gold case", path.display(), i + 1))?;
+        anyhow::ensure!(
+            names.insert(g.name.clone()),
+            "{}:{}: duplicate gold case name `{}`",
+            path.display(),
+            i + 1,
+            g.name
+        );
         for s in &g.expected {
             let slice = g.input.get(s.start..s.end);
-            if slice.is_none() || s.text.as_deref().is_some_and(|t| Some(t) != slice) {
+            if s.start >= s.end
+                || !KINDS.contains(&s.kind.as_str())
+                || slice.is_none()
+                || s.text.as_deref().is_some_and(|t| Some(t) != slice)
+            {
                 bail!(
-                    "{}: `{}` span {}..{} does not slice to its text",
+                    "{}: `{}` has an invalid {} span {}..{}",
                     path.display(),
                     g.name,
+                    s.kind,
                     s.start,
                     s.end
                 );
             }
+        }
+        let mut slices = BTreeMap::from([("country", g.country.clone()), ("doc_type", g.doc_type)]);
+        if let Some(host) = g.source_host.filter(|host| !host.is_empty()) {
+            slices.insert("source_host", host);
         }
         cases.push(Case {
             expected: g
@@ -94,13 +134,45 @@ pub fn load_gold(path: &Path) -> anyhow::Result<Vec<Case>> {
                     end: s.end,
                 })
                 .collect(),
-            slices: BTreeMap::from([("country", g.country.clone()), ("doc_type", g.doc_type)]),
+            slices,
             name: g.name,
             input: g.input,
             country: g.country,
         });
     }
+    anyhow::ensure!(!cases.is_empty(), "{} has no gold cases", path.display());
+    gold_text_stats(&cases)?;
     Ok(cases)
+}
+
+fn gold_text_stats(cases: &[Case]) -> anyhow::Result<Value> {
+    let mut seen: BTreeMap<&str, (&Case, usize)> = BTreeMap::new();
+    for case in cases {
+        let prior = seen.entry(&case.input).or_insert((case, 0));
+        if prior.0.name != case.name {
+            let labels = |c: &Case| {
+                let mut spans: Vec<_> = c
+                    .expected
+                    .iter()
+                    .map(|s| (s.kind.clone(), s.start, s.end))
+                    .collect();
+                spans.sort();
+                spans
+            };
+            anyhow::ensure!(
+                labels(prior.0) == labels(case),
+                "gold cases `{}` and `{}` have identical text but conflicting labels",
+                prior.0.name,
+                case.name
+            );
+            prior.1 += 1;
+        }
+    }
+    Ok(json!({
+        "unique_texts": seen.len(),
+        "duplicate_rows": seen.values().map(|(_, n)| n).sum::<usize>(),
+        "duplicate_text_groups": seen.values().filter(|(_, n)| *n > 0).count(),
+    }))
 }
 
 #[derive(Deserialize)]
@@ -129,14 +201,22 @@ pub fn load_synthetic(path: &Path) -> anyhow::Result<Vec<Case>> {
         col("country")?,
         col("category")?,
     );
-    let at = |c: &StringChunked, i: usize| c.get(i).unwrap_or_default().to_string();
+    let at = |c: &StringChunked, i: usize, name: &str| -> anyhow::Result<String> {
+        Ok(c.get(i)
+            .with_context(|| format!("{} row {i} has null {name}", path.display()))?
+            .to_string())
+    };
     let mut cases = Vec::with_capacity(df.height());
     for i in 0..df.height() {
-        let gold: Vec<SyntheticGold> =
-            serde_json::from_str(entities.get(i).context("null entities")?)?;
+        let gold: Vec<SyntheticGold> = serde_json::from_str(&at(&entities, i, "entities_json")?)
+            .with_context(|| format!("{} row {i} has invalid entities_json", path.display()))?;
+        let input = at(&text, i, "text")?;
+        validate_synthetic_gold(&input, &gold)
+            .with_context(|| format!("{} row {i}", path.display()))?;
+        let country = at(&country, i, "country")?;
         cases.push(Case {
             name: format!("{i}"),
-            input: at(&text, i),
+            input,
             expected: gold
                 .into_iter()
                 .map(|g| Span {
@@ -145,29 +225,51 @@ pub fn load_synthetic(path: &Path) -> anyhow::Result<Vec<Case>> {
                     end: g.end,
                 })
                 .collect(),
-            country: at(&country, i),
+            country: country.clone(),
             slices: BTreeMap::from([
-                ("subset", at(&subset, i)),
-                ("family", at(&family, i)),
-                ("country", at(&country, i)),
-                ("category", at(&category, i)),
+                ("subset", at(&subset, i, "subset")?),
+                ("family", at(&family, i, "family")?),
+                ("country", country),
+                ("category", at(&category, i, "category")?),
             ]),
         });
     }
+    anyhow::ensure!(
+        !cases.is_empty(),
+        "{} has no synthetic cases",
+        path.display()
+    );
     Ok(cases)
 }
 
+fn validate_synthetic_gold(text: &str, gold: &[SyntheticGold]) -> anyhow::Result<()> {
+    for span in gold {
+        anyhow::ensure!(
+            KINDS.contains(&span.kind.as_str())
+                && span.start < span.end
+                && text.get(span.start..span.end).is_some(),
+            "invalid {} span {}..{}",
+            span.kind,
+            span.start,
+            span.end
+        );
+    }
+    Ok(())
+}
+
 /// What one system predicted for every case, in case order.
+#[derive(Debug)]
 pub struct Predictions {
     pub system: String,
     pub spans: Vec<Vec<Span>>,
 }
 
-/// The library's `detect` over every case, with the case's country as the phone hint, and the
-/// time each call took by retained-token count.
+/// The library's `detect` over every case, with the selected phone-hint mode, and the time each
+/// call took by retained-token count.
 pub fn predict_library(
     bundle: &[u8],
     cases: &[Case],
+    country_hint_mode: CountryHintMode,
 ) -> anyhow::Result<(Predictions, Vec<(usize, f64)>)> {
     let tessera = Tessera::load(
         bundle,
@@ -180,7 +282,7 @@ pub fn predict_library(
     let mut spans = Vec::with_capacity(cases.len());
     let mut timings = Vec::with_capacity(cases.len());
     for case in cases {
-        let hints: Vec<&str> = hint(&case.country).into_iter().collect();
+        let hints = country_hints(&case.country, country_hint_mode);
         let query = Query {
             country_hint: &hints,
             ..Query::default()
@@ -221,6 +323,13 @@ fn hint(country: &str) -> Option<&str> {
         .then_some(country)
 }
 
+fn country_hints(country: &str, mode: CountryHintMode) -> Vec<&str> {
+    match mode {
+        CountryHintMode::Known => hint(country).into_iter().collect(),
+        CountryHintMode::Auto => Vec::new(),
+    }
+}
+
 /// Milestone 1's deterministic detector over every case.
 pub fn predict_baseline(cases: &[Case]) -> Predictions {
     Predictions {
@@ -244,28 +353,54 @@ struct ExternalCase {
     entities: Vec<ExternalEntity>,
 }
 
-/// An external system's predictions by case name; a case the file leaves out predicts nothing,
-/// and a name that is not a case is an error.
+/// An external system's predictions by case name; a case the file leaves out predicts nothing.
+/// Duplicate names, unknown cases, and invalid spans are errors.
 pub fn load_predictions(path: &Path, cases: &[Case]) -> anyhow::Result<Predictions> {
     let text =
         std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
     let file: ExternalFile =
         serde_json::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
     let mut by_name: BTreeMap<&str, Vec<Span>> = BTreeMap::new();
+    let mut names = BTreeSet::new();
+    anyhow::ensure!(
+        cases.iter().all(|c| names.insert(c.name.as_str())),
+        "gold cases have duplicate names; external predictions cannot be aligned"
+    );
     for p in &file.predictions {
-        if !cases.iter().any(|c| c.name == p.name) {
-            bail!("{}: unknown case `{}`", path.display(), p.name);
+        let case = cases
+            .iter()
+            .find(|c| c.name == p.name)
+            .with_context(|| format!("{}: unknown case `{}`", path.display(), p.name))?;
+        for e in &p.entities {
+            anyhow::ensure!(
+                KINDS.contains(&e.kind.as_str())
+                    && e.start < e.end
+                    && case.input.get(e.start..e.end).is_some(),
+                "{}: `{}` has an invalid {} span {}..{}",
+                path.display(),
+                p.name,
+                e.kind,
+                e.start,
+                e.end
+            );
         }
-        by_name.insert(
-            &p.name,
-            p.entities
-                .iter()
-                .map(|e| Span {
-                    kind: e.kind.clone(),
-                    start: e.start,
-                    end: e.end,
-                })
-                .collect(),
+        anyhow::ensure!(
+            by_name
+                .insert(
+                    &p.name,
+                    p.entities
+                        .iter()
+                        .map(|e| Span {
+                            kind: e.kind.clone(),
+                            start: e.start,
+                            end: e.end,
+                        })
+                        .collect(),
+                )
+                .is_none(),
+            "{}: duplicate external prediction case `{}`",
+            path.display(),
+            p.name
         );
     }
     Ok(Predictions {
@@ -288,6 +423,10 @@ pub struct Tally {
     pub lenient_predicted: usize,
     /// Gold spans overlapped by a prediction of their kind.
     pub lenient_gold: usize,
+    /// Predictions assigned to distinct overlapping gold spans.
+    pub unique_predicted: usize,
+    /// Gold spans assigned to distinct overlapping predictions.
+    pub unique_gold: usize,
 }
 
 impl Tally {
@@ -297,6 +436,8 @@ impl Tally {
         self.exact += other.exact;
         self.lenient_predicted += other.lenient_predicted;
         self.lenient_gold += other.lenient_gold;
+        self.unique_predicted += other.unique_predicted;
+        self.unique_gold += other.unique_gold;
     }
 
     pub fn exact_prf(&self) -> (f64, f64, f64) {
@@ -307,6 +448,18 @@ impl Tally {
     pub fn lenient_prf(&self) -> (f64, f64, f64) {
         let (p, _, _) = prf(self.lenient_predicted, self.predicted, self.gold);
         let (_, r, _) = prf(self.lenient_gold, self.predicted, self.gold);
+        let f = if p + r == 0.0 {
+            0.0
+        } else {
+            2.0 * p * r / (p + r)
+        };
+        (p, r, f)
+    }
+
+    /// Each predicted span and gold span can contribute to at most one overlap match.
+    pub fn unique_lenient_prf(&self) -> (f64, f64, f64) {
+        let (p, _, _) = prf(self.unique_predicted, self.predicted, self.gold);
+        let (_, r, _) = prf(self.unique_gold, self.predicted, self.gold);
         let f = if p + r == 0.0 {
             0.0
         } else {
@@ -326,18 +479,62 @@ impl Tally {
     fn json(&self) -> Value {
         let (p, r, f) = self.exact_prf();
         let (lp, lr, lf) = self.lenient_prf();
+        let (up, ur, uf) = self.unique_lenient_prf();
         json!({
             "exact": { "precision": round4(p), "recall": round4(r), "f1": round4(f) },
             "lenient": { "precision": round4(lp), "recall": round4(lr), "f1": round4(lf) },
+            "lenient_one_to_one": { "precision": round4(up), "recall": round4(ur), "f1": round4(uf) },
             "boundary_accuracy": round4(self.boundary_accuracy()),
             "gold": self.gold,
             "predicted": self.predicted,
+            "exact_tp": self.exact,
+            "lenient_predicted_hits": self.lenient_predicted,
+            "lenient_gold_hits": self.lenient_gold,
+            "one_to_one_predicted_hits": self.unique_predicted,
+            "one_to_one_gold_hits": self.unique_gold,
         })
     }
 }
 
 fn overlaps(a: &Span, b: &Span) -> bool {
     a.kind == b.kind && a.start < b.end && b.start < a.end
+}
+
+/// Maximum-cardinality same-kind overlap matching within one document.
+fn overlap_pairs(gold: &[Span], predicted: &[Span]) -> Vec<(usize, usize)> {
+    fn assign(
+        p: usize,
+        gold: &[Span],
+        predicted: &[Span],
+        seen: &mut [bool],
+        owner: &mut [Option<usize>],
+    ) -> bool {
+        for (g, span) in gold.iter().enumerate() {
+            if seen[g] || !overlaps(&predicted[p], span) {
+                continue;
+            }
+            seen[g] = true;
+            if let Some(previous) = owner[g]
+                && !assign(previous, gold, predicted, seen, owner)
+            {
+                continue;
+            }
+            owner[g] = Some(p);
+            return true;
+        }
+        false
+    }
+
+    let mut owner = vec![None; gold.len()];
+    for p in 0..predicted.len() {
+        let mut seen = vec![false; gold.len()];
+        assign(p, gold, predicted, &mut seen, &mut owner);
+    }
+    owner
+        .into_iter()
+        .enumerate()
+        .filter_map(|(g, p)| p.map(|p| (p, g)))
+        .collect()
 }
 
 /// Per-kind tallies of one document, keyed by the script of each span as well.
@@ -361,15 +558,29 @@ fn score_doc(text: &str, gold: &[Span], predicted: &[Span]) -> Vec<(String, Stri
             bump(&g.kind, script, &|t| t.lenient_gold += 1);
         }
     }
+    let mut exact_used = vec![false; gold.len()];
     for p in predicted {
         let script = span_script(text.get(p.start..p.end).unwrap_or("")).to_string();
         bump(&p.kind, script.clone(), &|t| t.predicted += 1);
-        if gold.contains(p) {
+        if let Some((index, _)) = gold
+            .iter()
+            .enumerate()
+            .find(|(index, g)| !exact_used[*index] && *g == p)
+        {
+            exact_used[index] = true;
             bump(&p.kind, script.clone(), &|t| t.exact += 1);
         }
         if gold.iter().any(|g| overlaps(p, g)) {
             bump(&p.kind, script, &|t| t.lenient_predicted += 1);
         }
+    }
+    for (p, g) in overlap_pairs(gold, predicted) {
+        let pred = &predicted[p];
+        let actual = &gold[g];
+        let pred_script = span_script(text.get(pred.start..pred.end).unwrap_or("")).to_string();
+        let gold_script = span_script(text.get(actual.start..actual.end).unwrap_or("")).to_string();
+        bump(&pred.kind, pred_script, &|t| t.unique_predicted += 1);
+        bump(&actual.kind, gold_script, &|t| t.unique_gold += 1);
     }
     out
 }
@@ -401,6 +612,11 @@ pub fn span_script(text: &str) -> &'static str {
 /// One system's scores over all cases: per kind, per kind within each slice value, per kind
 /// within each script, and the share of documents with at least one false positive per kind.
 pub fn score(cases: &[Case], predictions: &Predictions) -> Value {
+    assert_eq!(
+        cases.len(),
+        predictions.spans.len(),
+        "one prediction list per case"
+    );
     let mut by_kind: BTreeMap<String, Tally> = BTreeMap::new();
     let mut overall = Tally::default();
     let mut by_slice: BTreeMap<&'static str, BTreeMap<String, BTreeMap<String, Tally>>> =
@@ -606,10 +822,17 @@ pub fn latency_table(latency: &Value) -> String {
 /// as the report's review-set tables.
 pub fn run_gold(args: &EvalArgs) -> anyhow::Result<()> {
     let gold_path = args.gold.as_deref().context("--gold is required")?;
-    let cases = load_gold(gold_path)?;
+    let gold_bytes =
+        std::fs::read(gold_path).with_context(|| format!("reading {}", gold_path.display()))?;
+    let cases = parse_gold(gold_path, std::str::from_utf8(&gold_bytes)?)?;
     let bundle = std::fs::read(&args.bundle)
         .with_context(|| format!("reading {}", args.bundle.display()))?;
-    let (tessera, timings) = predict_library(&bundle, &cases)?;
+    let provenance = json!({
+        "gold_sha256": crate::export::sha256_hex(&gold_bytes),
+        "bundle_sha256": crate::export::sha256_hex(&bundle),
+        "evaluator_sha256": evaluator_sha256()?,
+    });
+    let (tessera, timings) = predict_library(&bundle, &cases, args.country_hint_mode)?;
     let mut systems = vec![score(&cases, &tessera)];
     if args.baseline {
         systems.push(score(&cases, &predict_baseline(&cases)));
@@ -620,9 +843,16 @@ pub fn run_gold(args: &EvalArgs) -> anyhow::Result<()> {
     let latency = latency(&timings);
     write_json(
         &args.out.join("eval").join("review.json"),
-        &json!({ "gold": gold_path, "systems": systems, "latency": latency }),
+        &json!({ "gold": gold_path, "gold_texts": gold_text_stats(&cases)?, "provenance": provenance, "country_hint_mode": args.country_hint_mode.as_str(), "systems": systems, "latency": latency }),
     )?;
     let tables = [
+        (
+            "Evaluation settings".to_string(),
+            format!(
+                "Country hint mode: `{}`.\n",
+                args.country_hint_mode.as_str()
+            ),
+        ),
         (
             "Review set by kind".to_string(),
             kind_table(&systems, &["by_kind"]),
@@ -656,15 +886,26 @@ pub fn run_gold(args: &EvalArgs) -> anyhow::Result<()> {
 pub fn run_split(args: &EvalArgs, run: &Path) -> anyhow::Result<()> {
     let cfg = crate::config::load(&run.join("config.toml"))?;
     let path = Path::new(&cfg.data.processed).join(format!("{}.parquet", args.split));
+    let split_sha256 = crate::export::sha256_hex(&std::fs::read(&path)?);
     let cases = load_synthetic(&path)?;
+    anyhow::ensure!(
+        split_sha256 == crate::export::sha256_hex(&std::fs::read(&path)?),
+        "{} changed while loading synthetic evaluation cases",
+        path.display()
+    );
     let bundle = std::fs::read(&args.bundle)
         .with_context(|| format!("reading {}", args.bundle.display()))?;
-    let (tessera, _) = predict_library(&bundle, &cases)?;
+    let provenance = json!({
+        "split_sha256": split_sha256,
+        "bundle_sha256": crate::export::sha256_hex(&bundle),
+        "evaluator_sha256": evaluator_sha256()?,
+    });
+    let (tessera, _) = predict_library(&bundle, &cases, CountryHintMode::Known)?;
     let systems = vec![score(&cases, &tessera)];
     write_json(
         &run.join("eval")
             .join(format!("{}-shipped.json", args.split)),
-        &json!({ "split": args.split, "systems": systems }),
+        &json!({ "split": args.split, "provenance": provenance, "systems": systems }),
     )?;
     let tables = [
         (
@@ -689,6 +930,13 @@ pub fn run_split(args: &EvalArgs, run: &Path) -> anyhow::Result<()> {
         ),
     ];
     finish(args.report.as_deref(), &tables)
+}
+
+fn evaluator_sha256() -> anyhow::Result<String> {
+    let path = std::env::current_exe().context("finding the evaluator executable")?;
+    Ok(crate::export::sha256_hex(
+        &std::fs::read(&path).with_context(|| format!("reading {}", path.display()))?,
+    ))
 }
 
 fn write_json(path: &Path, value: &Value) -> anyhow::Result<()> {
@@ -718,12 +966,182 @@ fn finish(report: Option<&Path>, tables: &[(String, String)]) -> anyhow::Result<
 mod tests {
     use super::*;
 
+    #[test]
+    fn synthetic_gold_rejects_invalid_kind_and_offsets() {
+        let valid = SyntheticGold {
+            kind: "person".into(),
+            start: 0,
+            end: 4,
+        };
+        validate_synthetic_gold("Anna", &[valid]).unwrap();
+        for invalid in [
+            SyntheticGold {
+                kind: "role".into(),
+                start: 0,
+                end: 4,
+            },
+            SyntheticGold {
+                kind: "person".into(),
+                start: 4,
+                end: 4,
+            },
+            SyntheticGold {
+                kind: "person".into(),
+                start: 0,
+                end: 5,
+            },
+        ] {
+            assert!(validate_synthetic_gold("Anna", &[invalid]).is_err());
+        }
+        assert!(
+            validate_synthetic_gold(
+                "ნინო",
+                &[SyntheticGold {
+                    kind: "person".into(),
+                    start: 1,
+                    end: 4,
+                }]
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn synthetic_loader_rejects_null_text_instead_of_scoring_an_empty_document() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("synthetic.parquet");
+        let mut df = DataFrame::new_infer_height(vec![
+            Column::new("text".into(), vec![None::<&str>]),
+            Column::new("entities_json".into(), vec!["[]"]),
+            Column::new("subset".into(), vec!["heldout"]),
+            Column::new("family".into(), vec!["signature"]),
+            Column::new("country".into(), vec!["GE"]),
+            Column::new("category".into(), vec!["ordinary"]),
+        ])
+        .unwrap();
+        ParquetWriter::new(File::create(&path).unwrap())
+            .finish(&mut df)
+            .unwrap();
+        let error = load_synthetic(&path).unwrap_err().to_string();
+        assert!(error.contains("row 0 has null text"), "{error}");
+    }
+
+    #[test]
+    fn national_phone_requires_known_country_hint() {
+        let detector = Tessera::load(
+            &[],
+            Config {
+                kinds: Kind::Phone.into(),
+                expected_checksum: None,
+            },
+        )
+        .unwrap();
+        let text = "The desk is on 020 7946 0321.";
+        let detect = |mode| {
+            let hints = country_hints("GB", mode);
+            detector
+                .detect(
+                    text,
+                    &Query {
+                        country_hint: &hints,
+                        ..Query::default()
+                    },
+                )
+                .unwrap()
+                .into_iter()
+                .filter(|entity| entity.kind == Kind::Phone)
+                .count()
+        };
+        assert_eq!(detect(CountryHintMode::Known), 1);
+        assert_eq!(detect(CountryHintMode::Auto), 0);
+    }
+
     fn span(kind: &str, start: usize, end: usize) -> Span {
         Span {
             kind: kind.into(),
             start,
             end,
         }
+    }
+
+    #[test]
+    fn gold_rejects_duplicate_names_and_invalid_spans() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("gold.jsonl");
+        let row = r#"{"name":"one","input":"Anna","expected":[{"kind":"person","start":0,"end":4}],"country":"DE","doc_type":"page"}"#;
+        std::fs::write(&path, format!("{row}\n{row}\n")).unwrap();
+        assert!(
+            load_gold(&path)
+                .unwrap_err()
+                .to_string()
+                .contains("duplicate gold case")
+        );
+
+        std::fs::write(&path, row.replace("\"end\":4", "\"end\":0")).unwrap();
+        assert!(
+            load_gold(&path)
+                .unwrap_err()
+                .to_string()
+                .contains("invalid person span")
+        );
+    }
+
+    #[test]
+    fn gold_reports_duplicate_text_weight_and_rejects_conflicting_labels() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("gold.jsonl");
+        let first = r#"{"name":"one","input":"Anna","expected":[{"kind":"person","start":0,"end":4}],"country":"DE","doc_type":"page"}"#;
+        let second = first.replace("\"one\"", "\"two\"");
+        std::fs::write(&path, format!("{first}\n{second}\n")).unwrap();
+        let cases = load_gold(&path).unwrap();
+        assert_eq!(gold_text_stats(&cases).unwrap()["unique_texts"], 1);
+        assert_eq!(gold_text_stats(&cases).unwrap()["duplicate_rows"], 1);
+        let conflicting = second.replace("\"person\"", "\"org\"");
+        std::fs::write(&path, format!("{first}\n{conflicting}\n")).unwrap();
+        assert!(
+            load_gold(&path)
+                .unwrap_err()
+                .to_string()
+                .contains("identical text but conflicting labels")
+        );
+    }
+
+    #[test]
+    fn external_predictions_reject_duplicate_names_and_out_of_bounds_spans() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pred.json");
+        let cases = vec![Case {
+            name: "one".into(),
+            input: "Anna".into(),
+            expected: vec![span("person", 0, 4)],
+            country: "DE".into(),
+            slices: BTreeMap::new(),
+        }];
+        let prediction = r#"{"name":"one","entities":[{"kind":"person","start":0,"end":4}]}"#;
+        std::fs::write(
+            &path,
+            format!(r#"{{"system":"stub","predictions":[{prediction},{prediction}]}}"#),
+        )
+        .unwrap();
+        assert!(
+            load_predictions(&path, &cases)
+                .unwrap_err()
+                .to_string()
+                .contains("duplicate external prediction")
+        );
+
+        let invalid = prediction.replace("\"end\":4", "\"end\":5");
+        std::fs::write(
+            &path,
+            format!(r#"{{"system":"stub","predictions":[{invalid}]}}"#),
+        )
+        .unwrap();
+        assert!(
+            load_predictions(&path, &cases)
+                .unwrap_err()
+                .to_string()
+                .contains("invalid person span")
+        );
     }
 
     fn total(rows: Vec<(String, String, Tally)>) -> Tally {
@@ -750,6 +1168,38 @@ mod tests {
         assert_eq!(round(t.lenient_prf()).0, 1.0);
         assert_eq!(round(t.lenient_prf()).1, 0.6667);
         assert_eq!(t.boundary_accuracy(), 0.5);
+        assert_eq!(round(t.unique_lenient_prf()), round(t.lenient_prf()));
+    }
+
+    #[test]
+    fn one_to_one_lenient_does_not_credit_one_span_twice() {
+        let text = "Anna Bruno Carla";
+        let gold = [span("person", 0, 4), span("person", 6, 11)];
+        let predicted = [span("person", 0, 11)];
+        let tally = total(score_doc(text, &gold, &predicted));
+        assert_eq!(tally.lenient_gold, 2);
+        assert_eq!(tally.unique_gold, 1);
+        assert_eq!(tally.unique_predicted, 1);
+        assert_eq!(tally.unique_lenient_prf(), (1.0, 0.5, 2.0 / 3.0));
+
+        let gold = [span("person", 0, 4)];
+        let predicted = [span("person", 0, 3), span("person", 1, 4)];
+        let tally = total(score_doc(text, &gold, &predicted));
+        assert_eq!(tally.lenient_predicted, 2);
+        assert_eq!(tally.unique_predicted, 1);
+        assert_eq!(tally.unique_gold, 1);
+        assert_eq!(tally.unique_lenient_prf(), (0.5, 1.0, 2.0 / 3.0));
+
+        let gold = [span("person", 0, 4), span("person", 6, 11)];
+        let predicted = [span("person", 0, 11), span("person", 0, 3)];
+        let tally = total(score_doc(text, &gold, &predicted));
+        assert_eq!((tally.unique_predicted, tally.unique_gold), (2, 2));
+
+        let gold = [span("person", 0, 4)];
+        let predicted = [span("person", 0, 4), span("person", 0, 4)];
+        let tally = total(score_doc(text, &gold, &predicted));
+        assert_eq!(tally.exact, 1);
+        assert_eq!(tally.exact_prf(), (0.5, 1.0, 2.0 / 3.0));
     }
 
     #[test]

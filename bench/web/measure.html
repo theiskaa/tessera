@@ -42,7 +42,7 @@
     if (cfg.baseline) WebAssembly.validate = () => false;
     const out = { isolated: self.crossOriginIsolated, resolution: timerResolution() };
     const mem0 = cfg.memory ? await memory() : null;
-    const { createTessera } = await import("/tessera/pkg/index.js");
+    const { createTessera } = await import(cfg.packageUrl ?? "/tessera/pkg/index.js");
     const options = cfg.mode === "detect"
       ? { kinds: ["email", "phone"], worker: cfg.worker }
       : cfg.mode === "detect_model"
@@ -60,6 +60,7 @@
     } else if (cfg.mode === "detect_model") {
       const r = await timed(cfg.modelRuns, [cfg.longText], (t) => tessera.detect(t, { countryHint: cfg.countryHint }));
       Object.assign(out, { times: r.times, total: r.total, entities: r.results[0].length });
+      if (cfg.includeResult) out.firstResult = r.results[0];
     } else {
       const r = await timed(cfg.runs, [cfg.text], (t) => tessera.detect(t, { countryHint: cfg.countryHint }));
       Object.assign(out, { times: r.times, total: r.total, entities: r.results[0].length });

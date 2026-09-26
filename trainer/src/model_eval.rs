@@ -100,10 +100,27 @@ fn label_at(spans: &[Span], byte: u32) -> Option<AddressLabel> {
 
 /// Scores predictions against the gold spans of `examples`, aligned by index.
 pub fn score(examples: &[&LabelledExample], preds: &[Vec<Span>]) -> ParserScores {
+    assert_eq!(
+        examples.len(),
+        preds.len(),
+        "parser evaluation needs one prediction list per example"
+    );
     let mut out = ParserScores::default();
     for (ex, pred) in examples.iter().zip(preds) {
         out.rows += 1;
-        let exact = *pred == ex.spans;
+        let mut unmatched = ex.spans.clone();
+        let matched = pred
+            .iter()
+            .map(|p| {
+                if let Some(index) = unmatched.iter().position(|g| g == p) {
+                    unmatched.remove(index);
+                    true
+                } else {
+                    false
+                }
+            })
+            .collect::<Vec<_>>();
+        let exact = pred.len() == ex.spans.len() && unmatched.is_empty();
         if exact {
             out.exact += 1;
         }
@@ -120,9 +137,9 @@ pub fn score(examples: &[&LabelledExample], preds: &[Vec<Span>]) -> ParserScores
         for g in &ex.spans {
             bump(g.label, &|c| c.gold += 1);
         }
-        for p in pred {
+        for (p, matched) in pred.iter().zip(matched) {
             bump(p.label, &|c| c.pred += 1);
-            if ex.spans.contains(p) {
+            if matched {
                 bump(p.label, &|c| c.tp += 1);
             }
         }
@@ -359,6 +376,7 @@ fn address_examples(dir: &Path) -> anyhow::Result<(Vec<String>, Vec<LabelledExam
     let fixtures: Vec<(String, crate::fixtures::ParserFixture)> = crate::fixtures::load_dir(dir)?;
     let cases: Vec<&crate::fixtures::ParserCase> =
         fixtures.iter().flat_map(|(_, f)| &f.cases).collect();
+    anyhow::ensure!(!cases.is_empty(), "{} has no parser cases", dir.display());
     let examples = cases
         .iter()
         .enumerate()
@@ -367,6 +385,14 @@ fn address_examples(dir: &Path) -> anyhow::Result<(Vec<String>, Vec<LabelledExam
                 .components
                 .iter()
                 .map(|c| {
+                    anyhow::ensure!(
+                        c.start < c.end && case.input.get(c.start..c.end) == Some(c.text.as_str()),
+                        "{}: component {:?} has invalid byte offsets {}..{}",
+                        case.name,
+                        c.text,
+                        c.start,
+                        c.end
+                    );
                     Ok(Span {
                         label: AddressLabel::from_str_label(&c.label)
                             .with_context(|| format!("{}: label {}", case.name, c.label))?,
@@ -515,9 +541,13 @@ pub fn run<B: Backend>(
         .collect();
     let (kept, items) = encode_examples(&examples, &fc);
     let unencoded = examples.len() - kept.len();
-    if unencoded > 0 {
-        eprintln!("{unencoded} rows could not be encoded and are not scored");
-    }
+    anyhow::ensure!(
+        !examples.is_empty() && unencoded == 0,
+        "{} has {} unencodable rows out of {}; repair the shard before scoring",
+        shard.display(),
+        unencoded,
+        examples.len()
+    );
 
     let model: TaggerNet<B> = cfg
         .parser_net_config()
@@ -702,6 +732,34 @@ fn write_errors(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[should_panic(expected = "one prediction list per example")]
+    fn parser_score_rejects_missing_prediction_rows() {
+        let example = LabelledExample {
+            id: 1,
+            group_id: 1,
+            country: "GE".into(),
+            language: "ka".into(),
+            text: "თბილისი".into(),
+            spans: Vec::new(),
+            split: Split::Test,
+            augmented: false,
+        };
+        score(&[&example], &[]);
+    }
+
+    #[test]
+    fn address_fixture_eval_rejects_wrong_component_text() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("case.json"),
+            r#"{"cases":[{"name":"one","country":"DE","input":"Berlin","components":[{"label":"city","text":"Bremen","start":0,"end":6}]}]}"#,
+        )
+        .unwrap();
+        let error = address_examples(dir.path()).unwrap_err().to_string();
+        assert!(error.contains("invalid byte offsets"), "{error}");
+    }
     use crate::dataset::PARSER_LABELS;
 
     #[test]
@@ -778,5 +836,38 @@ mod tests {
         );
         assert_eq!(s.char_total, 15);
         assert_eq!(s.char_correct, 9);
+    }
+
+    #[test]
+    fn parser_score_matches_components_once_and_ignores_order() {
+        let house = Span {
+            label: AddressLabel::HouseNumber,
+            start: 0,
+            end: 2,
+        };
+        let road = Span {
+            label: AddressLabel::Road,
+            start: 3,
+            end: 17,
+        };
+        let ex = LabelledExample {
+            id: 0,
+            group_id: 0,
+            country: "GB".into(),
+            language: "en".into(),
+            text: "10 Downing Street".into(),
+            spans: vec![house, road],
+            split: Split::Test,
+            augmented: false,
+        };
+        let reordered = score(&[&ex], &[vec![road, house]]);
+        assert_eq!(reordered.exact, 1);
+        assert_eq!(reordered.overall.tp, 2);
+
+        let duplicate = score(&[&ex], &[vec![house, house]]);
+        assert_eq!(duplicate.exact, 0);
+        assert_eq!(duplicate.overall.tp, 1);
+        assert_eq!(duplicate.overall.gold, 2);
+        assert!(duplicate.overall.f1() <= 1.0);
     }
 }

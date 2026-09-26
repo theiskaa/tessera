@@ -15,6 +15,7 @@ library only; brotli sizes appear when the `brotli` module or command exists.
 """
 
 import functools
+import argparse
 import glob
 import hashlib
 import http.server
@@ -31,6 +32,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+import urllib.parse
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 PAGE = "/bench/web/measure.html"
@@ -194,10 +196,10 @@ def brotli_size(data):
         return None
 
 
-def sizes():
+def sizes(bundle):
     rows = []
-    for name in SHIPPED + [BUNDLE]:
-        path = name if name == BUNDLE else f"{PKG}/{name}"
+    for name in SHIPPED + [bundle]:
+        path = name if name == bundle else f"{PKG}/{name}"
         data = read(path)
         # -n leaves the file name out of the header, as a server compressing a response would.
         gz = len(subprocess.run(["gzip", "-9", "-n", "-c"], input=data, capture_output=True, check=True).stdout)
@@ -362,13 +364,20 @@ def report(size_rows, results, environment):
 
 
 def main():
-    args = sys.argv[1:]
-    json_out = None
-    if "--json" in args:
-        i = args.index("--json")
-        json_out = args[i + 1]
-        del args[i : i + 2]
-    names = args or ["chrome", "firefox", "safari"]
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("browsers", nargs="*", choices=["chrome", "firefox", "safari"])
+    parser.add_argument("--json")
+    parser.add_argument("--bundle", default=BUNDLE, help="bundle path relative to the repo root")
+    args = parser.parse_args()
+    names = args.browsers or ["chrome", "firefox", "safari"]
+    bundle = args.bundle
+    if os.path.isabs(bundle):
+        parser.error("--bundle must be a repo-relative path")
+    resolved = os.path.realpath(os.path.join(ROOT, bundle))
+    if os.path.commonpath((ROOT, resolved)) != ROOT or not os.path.isfile(resolved):
+        parser.error("--bundle must name a file served from the repo root")
+    bundle = os.path.relpath(resolved, ROOT)
+    bundle_sha256 = hashlib.sha256(read(bundle)).hexdigest()
 
     handler = functools.partial(Handler, directory=ROOT)
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
@@ -382,9 +391,9 @@ def main():
         long_text += "\n\n" + text
     long_text = long_text[:LONG_CHARS]
     base_cfg = {
-        "modelUrl": f"/{BUNDLE}",
+        "modelUrl": "/" + urllib.parse.quote(bundle),
         # The digest format Tessera::load verifies: sha256- and lowercase hex.
-        "integrity": "sha256-" + hashlib.sha256(read(BUNDLE)).hexdigest(),
+        "integrity": "sha256-" + bundle_sha256,
         "addresses": inputs,
         "runs": WARM_PASSES * len(inputs),
         "text": text,
@@ -400,16 +409,16 @@ def main():
         "form factor": "desktop only; no mobile device measured",
         "server": "127.0.0.1, so download time is local and not a network estimate",
     }
-    size_rows = sizes()
+    size_rows = sizes(bundle)
     results = {}
     for name in names:
         print(f"measuring {name}", file=sys.stderr)
         results[name] = run_browser(name, url, base_cfg)
     server.shutdown()
 
-    if json_out:
-        with open(json_out, "w", encoding="utf-8") as f:
-            json.dump({"sizes": size_rows, "environment": environment, "browsers": results}, f, indent=1)
+    if args.json:
+        with open(args.json, "w", encoding="utf-8") as f:
+            json.dump({"bundle": {"path": bundle, "sha256": bundle_sha256}, "sizes": size_rows, "environment": environment, "browsers": results}, f, indent=1)
     print(report(size_rows, results, environment))
     problems = check(results)
     for p in problems:

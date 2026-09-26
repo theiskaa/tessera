@@ -3,18 +3,19 @@
 //! bundle. Wrong and missed assignments are counted apart, because a wrong assignment is the
 //! failure the grouper exists to prevent and an unassigned entity is the safe one.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 
-use anyhow::Context;
+use anyhow::{Context, bail, ensure};
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 use tessera::{Config, Entity, Extraction, Kind, Query, Source, Tessera};
 
 use crate::EvalArgs;
 use crate::fixtures::{self, GrouperCase, GrouperFixture};
 
 /// Counts of one fixture family, or of all of them.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize)]
 pub struct GrouperCounts {
     pub cases: usize,
     /// Gold entities, each owned by the contact it belongs to (an anchor by its own) or by none.
@@ -29,6 +30,16 @@ pub struct GrouperCounts {
     pub exact_contacts: usize,
     /// Predicted contacts whose anchor anchors no gold contact.
     pub false_contacts: usize,
+    pub predicted_contacts: usize,
+    pub exact_card_matches: usize,
+    pub unmatched_predicted_contacts: usize,
+    pub unmatched_gold_contacts: usize,
+    pub false_card_documents: usize,
+    pub false_assigned_fields: usize,
+    pub false_assigned_by_kind: BTreeMap<String, usize>,
+    pub wrong_ownership_fields: usize,
+    pub high_confidence_predicted_cards: usize,
+    pub high_confidence_exact_cards: usize,
 }
 
 impl GrouperCounts {
@@ -41,6 +52,18 @@ impl GrouperCounts {
         self.gold_contacts += other.gold_contacts;
         self.exact_contacts += other.exact_contacts;
         self.false_contacts += other.false_contacts;
+        self.predicted_contacts += other.predicted_contacts;
+        self.exact_card_matches += other.exact_card_matches;
+        self.unmatched_predicted_contacts += other.unmatched_predicted_contacts;
+        self.unmatched_gold_contacts += other.unmatched_gold_contacts;
+        self.false_card_documents += other.false_card_documents;
+        self.false_assigned_fields += other.false_assigned_fields;
+        self.wrong_ownership_fields += other.wrong_ownership_fields;
+        self.high_confidence_predicted_cards += other.high_confidence_predicted_cards;
+        self.high_confidence_exact_cards += other.high_confidence_exact_cards;
+        for (kind, count) in &other.false_assigned_by_kind {
+            *self.false_assigned_by_kind.entry(kind.clone()).or_default() += count;
+        }
     }
 }
 
@@ -50,16 +73,86 @@ pub struct GrouperReport {
     pub families: Vec<(String, GrouperCounts, GrouperCounts)>,
     pub total_gold: GrouperCounts,
     pub total_end_to_end: GrouperCounts,
+    pub by_country: BTreeMap<String, (GrouperCounts, GrouperCounts)>,
+    pub by_source: BTreeMap<String, (GrouperCounts, GrouperCounts)>,
 }
 
 type Span = (&'static str, usize, usize);
 
 /// A fixture case with its gold entities and, per gold contact, its anchor (the person, else the
 /// org) and every member span including the anchor.
+#[derive(Debug)]
 struct GoldCase {
     text: String,
     entities: Vec<Entity>,
     contacts: Vec<(Span, BTreeSet<Span>)>,
+}
+
+fn validate_case(case: &GrouperCase) -> anyhow::Result<()> {
+    let mut ownership = vec![0usize; case.entities.len()];
+    let mut spans = BTreeSet::new();
+    for entity in &case.entities {
+        ensure!(
+            case.input.get(entity.start..entity.end) == Some(entity.text.as_str()),
+            "{}: entity {}..{} does not slice to its text",
+            case.name,
+            entity.start,
+            entity.end
+        );
+        ensure!(
+            spans.insert((&entity.kind, entity.start, entity.end)),
+            "{}: duplicate entity span {}..{}",
+            case.name,
+            entity.start,
+            entity.end
+        );
+    }
+    let mut anchors = BTreeSet::new();
+    for contact in &case.contacts {
+        let anchor = contact
+            .person
+            .or(contact.org)
+            .with_context(|| format!("{}: a contact has no anchor", case.name))?;
+        ensure!(
+            anchors.insert(anchor),
+            "{}: duplicate contact anchor {anchor}",
+            case.name
+        );
+        let fields = contact
+            .person
+            .into_iter()
+            .map(|i| (i, "person"))
+            .chain(contact.org.into_iter().map(|i| (i, "org")))
+            .chain(contact.addresses.iter().copied().map(|i| (i, "address")))
+            .chain(contact.emails.iter().copied().map(|i| (i, "email")))
+            .chain(contact.phones.iter().copied().map(|i| (i, "phone")));
+        for (index, kind) in fields {
+            let entity = case
+                .entities
+                .get(index)
+                .with_context(|| format!("{}: no entity {index}", case.name))?;
+            ensure!(
+                entity.kind == kind,
+                "{}: entity {index} is not {kind}",
+                case.name
+            );
+            ownership[index] += 1;
+        }
+    }
+    for &index in &case.unassigned {
+        if index >= ownership.len() {
+            bail!("{}: no entity {index}", case.name);
+        }
+        ownership[index] += 1;
+    }
+    for (index, count) in ownership.into_iter().enumerate() {
+        ensure!(
+            count == 1,
+            "{}: entity {index} has {count} owners",
+            case.name
+        );
+    }
+    Ok(())
 }
 
 fn span(e: &Entity) -> Span {
@@ -69,6 +162,7 @@ fn span(e: &Entity) -> Span {
 /// Gold entities as `detect` would return them: confidence 0.95, emails and phones from the
 /// rules with a normalized form, which the email name match reads.
 fn gold_case(case: &GrouperCase) -> anyhow::Result<GoldCase> {
+    validate_case(case)?;
     let entities = case
         .entities
         .iter()
@@ -132,15 +226,16 @@ fn score(case: &GoldCase, predicted: &Extraction, counts: &mut GrouperCounts) {
     counts.cases += 1;
     let mut predicted_by_anchor: HashMap<Span, BTreeSet<Span>> = HashMap::new();
     let mut owner_of: HashMap<Span, Span> = HashMap::new();
+    let mut predicted_cards = Vec::with_capacity(predicted.contacts.len());
     for c in &predicted.contacts {
-        let Some(anchor) = c.person.as_ref().or(c.org.as_ref()).map(span) else {
-            continue;
-        };
         let members: BTreeSet<Span> = c.entities().map(span).collect();
-        for m in &members {
-            owner_of.insert(*m, anchor);
+        if let Some(anchor) = c.person.as_ref().or(c.org.as_ref()).map(span) {
+            for m in &members {
+                owner_of.insert(*m, anchor);
+            }
+            predicted_by_anchor.insert(anchor, members.clone());
         }
-        predicted_by_anchor.insert(anchor, members);
+        predicted_cards.push((members, c.confidence));
     }
     let gold_owner: HashMap<Span, Span> = case
         .contacts
@@ -167,6 +262,57 @@ fn score(case: &GoldCase, predicted: &Extraction, counts: &mut GrouperCounts) {
         .keys()
         .filter(|a| !gold_anchors.contains(*a))
         .count();
+
+    counts.predicted_contacts += predicted_cards.len();
+    let mut matched_gold = vec![false; case.contacts.len()];
+    for (predicted_members, confidence) in &predicted_cards {
+        if *confidence >= 0.90 {
+            counts.high_confidence_predicted_cards += 1;
+        }
+        if let Some(index) = case
+            .contacts
+            .iter()
+            .enumerate()
+            .find(|(i, (_, gold_members))| !matched_gold[*i] && *gold_members == *predicted_members)
+            .map(|(i, _)| i)
+        {
+            matched_gold[index] = true;
+            counts.exact_card_matches += 1;
+            if *confidence >= 0.90 {
+                counts.high_confidence_exact_cards += 1;
+            }
+        } else {
+            counts.unmatched_predicted_contacts += 1;
+        }
+    }
+    counts.unmatched_gold_contacts += matched_gold.iter().filter(|&&matched| !matched).count();
+    counts.false_card_documents += usize::from(
+        predicted_cards.len() > matched_gold.iter().filter(|&&matched| matched).count(),
+    );
+
+    for c in &predicted.contacts {
+        let gold_members = c
+            .person
+            .as_ref()
+            .or(c.org.as_ref())
+            .map(span)
+            .and_then(|anchor| case.contacts.iter().find(|(a, _)| *a == anchor))
+            .map(|(_, members)| members);
+        for member in c.entities().map(|e| (span(e), e.kind.as_str())) {
+            if gold_members.is_some_and(|members| members.contains(&member.0)) {
+                continue;
+            }
+            if gold_owner.contains_key(&member.0) {
+                counts.wrong_ownership_fields += 1;
+            } else {
+                counts.false_assigned_fields += 1;
+                *counts
+                    .false_assigned_by_kind
+                    .entry(member.1.to_string())
+                    .or_default() += 1;
+            }
+        }
+    }
 }
 
 /// Scores every fixture file in `dir`, on gold entities and end to end through `tessera`.
@@ -178,11 +324,25 @@ pub fn eval_grouper(dir: &Path, tessera: &Tessera) -> anyhow::Result<GrouperRepo
         for case in &fixture.cases {
             let gold = gold_case(case)?;
             let predicted = tessera::internal::group(&gold.text, gold.entities.clone());
-            score(&gold, &predicted, &mut gold_counts);
+            let mut gold_one = GrouperCounts::default();
+            score(&gold, &predicted, &mut gold_one);
             let predicted = tessera
                 .extract_contacts(&gold.text, &Query::default())
                 .map_err(|e| anyhow::anyhow!("{family}/{}: {e}", case.name))?;
-            score(&gold, &predicted, &mut e2e_counts);
+            let mut e2e_one = GrouperCounts::default();
+            score(&gold, &predicted, &mut e2e_one);
+            gold_counts.add(&gold_one);
+            e2e_counts.add(&e2e_one);
+            if let Some(country) = &case.country {
+                let (gold_total, e2e_total) = report.by_country.entry(country.clone()).or_default();
+                gold_total.add(&gold_one);
+                e2e_total.add(&e2e_one);
+            }
+            if let Some(source) = &case.source {
+                let (gold_total, e2e_total) = report.by_source.entry(source.clone()).or_default();
+                gold_total.add(&gold_one);
+                e2e_total.add(&e2e_one);
+            }
         }
         report.total_gold.add(&gold_counts);
         report.total_end_to_end.add(&e2e_counts);
@@ -199,26 +359,72 @@ fn pct(n: usize, d: usize) -> String {
     }
 }
 
-fn table(report: &GrouperReport) -> String {
+fn card_f1(c: &GrouperCounts) -> String {
+    if c.predicted_contacts == 0 || c.gold_contacts == 0 {
+        return "0.0%".into();
+    }
+    let p = c.exact_card_matches as f64 / c.predicted_contacts as f64;
+    let r = c.exact_card_matches as f64 / c.gold_contacts as f64;
+    if p + r == 0.0 {
+        "0.0%".into()
+    } else {
+        format!("{:.1}%", 200.0 * p * r / (p + r))
+    }
+}
+
+fn count_row(label: &str, mode: &str, c: &GrouperCounts) -> String {
+    format!(
+        "| {label} | {mode} | {} | {} | {} | {} | {} / {} / {} | {} | {} | {} | {} | {} / {} | {} | {} | {} |\n",
+        c.cases,
+        pct(c.correct, c.assignments),
+        c.wrong,
+        c.missed,
+        c.exact_card_matches,
+        c.predicted_contacts,
+        c.gold_contacts,
+        pct(c.exact_card_matches, c.predicted_contacts),
+        pct(c.exact_card_matches, c.gold_contacts),
+        card_f1(c),
+        pct(c.false_card_documents, c.cases),
+        c.high_confidence_exact_cards,
+        c.high_confidence_predicted_cards,
+        c.false_assigned_fields,
+        c.wrong_ownership_fields,
+        pct(c.exact_contacts, c.gold_contacts),
+    )
+}
+
+fn table(rows: impl Iterator<Item = (String, GrouperCounts, GrouperCounts)>) -> String {
     let mut out = String::from(
-        "| family | cases | assignment acc | wrong | missed | exact contacts (gold) | exact contacts (e2e) | false contacts (e2e) |\n| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n",
+        "| Slice | Mode | Cases | Assignment accuracy | Wrong | Missed | Exact TP / predicted / gold | Card P | Card R | Card F1 | False-card documents | High-confidence exact / predicted | Extra assigned fields | Wrong ownership fields | Legacy exact recall |\n| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n",
     );
-    let totals = (
+    for (label, gold, e2e) in rows {
+        out.push_str(&count_row(&label, "gold entities", &gold));
+        out.push_str(&count_row(&label, "end to end", &e2e));
+    }
+    out
+}
+
+fn family_table(report: &GrouperReport) -> String {
+    let rows = report.families.iter().cloned().chain([(
         "total".to_string(),
-        report.total_gold,
-        report.total_end_to_end,
-    );
-    for (family, g, e) in report.families.iter().chain([&totals]) {
-        out.push_str(&format!(
-            "| {family} | {} | {} | {} | {} | {} | {} | {} |\n",
-            g.cases,
-            pct(g.correct, g.assignments),
-            g.wrong,
-            g.missed,
-            pct(g.exact_contacts, g.gold_contacts),
-            pct(e.exact_contacts, e.gold_contacts),
-            e.false_contacts,
-        ));
+        report.total_gold.clone(),
+        report.total_end_to_end.clone(),
+    )]);
+    table(rows)
+}
+
+fn breakdown_table(rows: &BTreeMap<String, (GrouperCounts, GrouperCounts)>) -> String {
+    table(
+        rows.iter()
+            .map(|(name, (g, e))| (name.clone(), g.clone(), e.clone())),
+    )
+}
+
+fn false_fields_table(c: &GrouperCounts) -> String {
+    let mut out = String::from("| Kind | Extra assigned fields |\n| --- | ---: |\n");
+    for (kind, n) in &c.false_assigned_by_kind {
+        out.push_str(&format!("| {kind} | {n} |\n"));
     }
     out
 }
@@ -229,19 +435,44 @@ pub fn render_markdown(
     report: &GrouperReport,
     hard: Option<&GrouperReport>,
     bundle: &str,
+    bundle_sha256: &str,
+    manifest_sha256: Option<&str>,
 ) -> String {
     let mut out = format!(
-        "# Contact grouping\n\nBundle `{bundle}`. Assignment accuracy, wrong, and missed are on the fixtures' gold entities; exact contacts are on gold entities and end to end through `extract_contacts`.\n\n{}",
-        table(report)
+        "# Contact grouping\n\nMetric version 3. Bundle `{bundle}`; SHA-256 `{bundle_sha256}`. Corpus manifest SHA-256 `{}`. End-to-end query: `Query::default()` (no country hint). Exact cards match `(kind, start, end)` member sets one-to-one. Extra assigned fields include members of false-anchor cards. High confidence means contact confidence ≥0.90.\n\n{}",
+        manifest_sha256.unwrap_or("not provided"),
+        family_table(report)
     );
+    if !report.by_country.is_empty() {
+        out.push_str(&format!(
+            "\n## By country\n\n{}",
+            breakdown_table(&report.by_country)
+        ));
+    }
+    if !report.by_source.is_empty() {
+        out.push_str(&format!(
+            "\n## By source\n\n{}",
+            breakdown_table(&report.by_source)
+        ));
+    }
+    out.push_str(&format!(
+        "\n## Extra assigned fields by kind, end to end\n\n{}\nHigh-confidence exact-card precision: {} ({} / {} predicted cards). Unmatched predicted cards: {}; unmatched gold cards: {}; contacts with an unexpected anchor: {}.\n",
+        false_fields_table(&report.total_end_to_end),
+        pct(report.total_end_to_end.high_confidence_exact_cards, report.total_end_to_end.high_confidence_predicted_cards),
+        report.total_end_to_end.high_confidence_exact_cards,
+        report.total_end_to_end.high_confidence_predicted_cards,
+        report.total_end_to_end.unmatched_predicted_contacts,
+        report.total_end_to_end.unmatched_gold_contacts,
+        report.total_end_to_end.false_contacts,
+    ));
     if let Some(hard) = hard {
         out.push_str(&format!(
             "\n## Known-hard cases (not gating)\n\n{}",
-            table(hard)
+            family_table(hard)
         ));
     }
     out.push_str(
-        "\nEnd-to-end numbers include detector boundary errors; a span that differs by one character from gold counts as a grouping miss. The fixture corpus is small and per-country breakdowns are not meaningful at this size.\n",
+        "\nEnd-to-end numbers include detector boundary errors; a span that differs by one character from gold counts as a grouping miss. Legacy exact recall is the old anchor-based count over gold contacts and is retained only for comparison. The fixture corpus is small; its country breakdowns are descriptive, not release estimates.\n",
     );
     out
 }
@@ -265,7 +496,19 @@ pub fn run(args: &EvalArgs, dir: &Path) -> anyhow::Result<()> {
         .as_deref()
         .map(|d| eval_grouper(d, &tessera))
         .transpose()?;
-    let markdown = render_markdown(&report, hard.as_ref(), &args.bundle.display().to_string());
+    let bundle_sha256 = format!("{:x}", Sha256::digest(&bytes));
+    let manifest = dir.join("manifest.jsonl");
+    let manifest_sha256 = manifest
+        .exists()
+        .then(|| std::fs::read(&manifest).map(|bytes| format!("{:x}", Sha256::digest(bytes))))
+        .transpose()?;
+    let markdown = render_markdown(
+        &report,
+        hard.as_ref(),
+        &args.bundle.display().to_string(),
+        &bundle_sha256,
+        manifest_sha256.as_deref(),
+    );
     print!("{markdown}");
     if let Some(path) = &args.report {
         std::fs::write(path, &markdown).with_context(|| format!("writing {}", path.display()))?;
@@ -277,6 +520,7 @@ pub fn run(args: &EvalArgs, dir: &Path) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fixtures::{ExpectedContact, ExpectedSpan};
 
     fn entity(kind: Kind, start: usize, end: usize) -> Entity {
         Entity {
@@ -290,6 +534,250 @@ mod tests {
             normalized: None,
             region: None,
         }
+    }
+
+    fn contact(person: Entity, phones: Vec<Entity>) -> tessera::Contact {
+        tessera::Contact {
+            start: person.start,
+            end: phones.last().map_or(person.end, |phone| phone.end),
+            confidence: 0.95,
+            review_recommended: false,
+            person: Some(person),
+            org: None,
+            addresses: Vec::new(),
+            emails: Vec::new(),
+            phones,
+        }
+    }
+
+    fn gold(people: &[Entity]) -> GoldCase {
+        GoldCase {
+            text: String::new(),
+            entities: people.to_vec(),
+            contacts: people
+                .iter()
+                .map(|person| (span(person), BTreeSet::from([span(person)])))
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn extra_card_lowers_precision_but_not_recall() {
+        let person = entity(Kind::Person, 0, 4);
+        let extra = entity(Kind::Person, 10, 14);
+        let predicted = Extraction {
+            contacts: vec![contact(person.clone(), vec![]), contact(extra, vec![])],
+            unassigned: vec![],
+        };
+        let mut counts = GrouperCounts::default();
+        score(&gold(&[person]), &predicted, &mut counts);
+        assert_eq!(
+            (
+                counts.exact_card_matches,
+                counts.predicted_contacts,
+                counts.gold_contacts
+            ),
+            (1, 2, 1)
+        );
+        assert_eq!(
+            (
+                counts.unmatched_predicted_contacts,
+                counts.false_card_documents
+            ),
+            (1, 1)
+        );
+    }
+
+    #[test]
+    fn extra_phone_on_valid_card_is_a_false_assigned_field() {
+        let person = entity(Kind::Person, 0, 4);
+        let phone = entity(Kind::Phone, 5, 15);
+        let predicted = Extraction {
+            contacts: vec![contact(person.clone(), vec![phone])],
+            unassigned: vec![],
+        };
+        let mut counts = GrouperCounts::default();
+        score(&gold(&[person]), &predicted, &mut counts);
+        assert_eq!(counts.false_assigned_fields, 1);
+        assert_eq!(counts.false_assigned_by_kind["phone"], 1);
+        assert_eq!(counts.exact_card_matches, 0);
+    }
+
+    #[test]
+    fn field_taken_from_another_card_is_wrong_ownership() {
+        let first = entity(Kind::Person, 0, 4);
+        let second = entity(Kind::Person, 10, 14);
+        let phone = entity(Kind::Phone, 15, 25);
+        let gold = GoldCase {
+            text: String::new(),
+            entities: vec![first.clone(), second.clone(), phone.clone()],
+            contacts: vec![
+                (span(&first), BTreeSet::from([span(&first)])),
+                (span(&second), BTreeSet::from([span(&second), span(&phone)])),
+            ],
+        };
+        let predicted = Extraction {
+            contacts: vec![contact(first, vec![phone]), contact(second, vec![])],
+            unassigned: vec![],
+        };
+        let mut counts = GrouperCounts::default();
+        score(&gold, &predicted, &mut counts);
+        assert_eq!(counts.wrong_ownership_fields, 1);
+        assert_eq!(counts.false_assigned_fields, 0);
+    }
+
+    #[test]
+    fn missing_card_lowers_recall() {
+        let first = entity(Kind::Person, 0, 4);
+        let second = entity(Kind::Person, 10, 14);
+        let predicted = Extraction {
+            contacts: vec![contact(first.clone(), vec![])],
+            unassigned: vec![],
+        };
+        let mut counts = GrouperCounts::default();
+        score(&gold(&[first, second]), &predicted, &mut counts);
+        assert_eq!(
+            (
+                counts.exact_card_matches,
+                counts.gold_contacts,
+                counts.unmatched_gold_contacts
+            ),
+            (1, 2, 1)
+        );
+    }
+
+    #[test]
+    fn duplicate_predicted_card_only_matches_once() {
+        let person = entity(Kind::Person, 0, 4);
+        let predicted = Extraction {
+            contacts: vec![
+                contact(person.clone(), vec![]),
+                contact(person.clone(), vec![]),
+            ],
+            unassigned: vec![],
+        };
+        let mut counts = GrouperCounts::default();
+        score(&gold(&[person]), &predicted, &mut counts);
+        assert_eq!(
+            (
+                counts.exact_card_matches,
+                counts.unmatched_predicted_contacts
+            ),
+            (1, 1)
+        );
+    }
+
+    #[test]
+    fn zero_gold_cards_still_count_invented_cards() {
+        let person = entity(Kind::Person, 0, 4);
+        let gold = GoldCase {
+            text: String::new(),
+            entities: vec![],
+            contacts: vec![],
+        };
+        let predicted = Extraction {
+            contacts: vec![contact(person, vec![])],
+            unassigned: vec![],
+        };
+        let mut counts = GrouperCounts::default();
+        score(&gold, &predicted, &mut counts);
+        assert_eq!(
+            (
+                counts.predicted_contacts,
+                counts.unmatched_predicted_contacts,
+                counts.false_card_documents
+            ),
+            (1, 1, 1)
+        );
+        assert_eq!(card_f1(&counts), "0.0%");
+    }
+
+    #[test]
+    fn false_card_counts_its_anchor_and_extra_phone() {
+        let person = entity(Kind::Person, 0, 4);
+        let phone = entity(Kind::Phone, 5, 15);
+        let gold = GoldCase {
+            text: String::new(),
+            entities: vec![],
+            contacts: vec![],
+        };
+        let predicted = Extraction {
+            contacts: vec![contact(person, vec![phone])],
+            unassigned: vec![],
+        };
+        let mut counts = GrouperCounts::default();
+        score(&gold, &predicted, &mut counts);
+        assert_eq!(
+            (
+                counts.unmatched_predicted_contacts,
+                counts.false_card_documents
+            ),
+            (1, 1)
+        );
+        assert_eq!(counts.false_assigned_fields, 2);
+        assert_eq!(counts.false_assigned_by_kind["person"], 1);
+        assert_eq!(counts.false_assigned_by_kind["phone"], 1);
+    }
+
+    #[test]
+    fn false_card_stealing_gold_phone_counts_wrong_ownership() {
+        let true_person = entity(Kind::Person, 0, 4);
+        let invented_person = entity(Kind::Person, 10, 14);
+        let phone = entity(Kind::Phone, 15, 25);
+        let gold = GoldCase {
+            text: String::new(),
+            entities: vec![true_person.clone(), phone.clone()],
+            contacts: vec![(
+                span(&true_person),
+                BTreeSet::from([span(&true_person), span(&phone)]),
+            )],
+        };
+        let predicted = Extraction {
+            contacts: vec![contact(invented_person, vec![phone])],
+            unassigned: vec![],
+        };
+        let mut counts = GrouperCounts::default();
+        score(&gold, &predicted, &mut counts);
+        assert_eq!(counts.wrong_ownership_fields, 1);
+        assert_eq!(counts.false_assigned_by_kind["person"], 1);
+        assert_eq!(
+            (
+                counts.exact_card_matches,
+                counts.predicted_contacts,
+                counts.gold_contacts
+            ),
+            (0, 1, 1)
+        );
+    }
+
+    #[test]
+    fn fixture_rejects_duplicate_ownership() {
+        let case = GrouperCase {
+            name: "duplicate".into(),
+            country: Some("GB".into()),
+            source: Some("fixture".into()),
+            input: "Jane".into(),
+            entities: vec![ExpectedSpan {
+                kind: "person".into(),
+                text: "Jane".into(),
+                start: 0,
+                end: 4,
+            }],
+            contacts: vec![ExpectedContact {
+                person: Some(0),
+                org: None,
+                addresses: vec![],
+                emails: vec![],
+                phones: vec![],
+            }],
+            unassigned: vec![0],
+        };
+        assert!(
+            gold_case(&case)
+                .unwrap_err()
+                .to_string()
+                .contains("2 owners")
+        );
     }
 
     #[test]

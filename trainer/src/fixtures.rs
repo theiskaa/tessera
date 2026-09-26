@@ -67,6 +67,10 @@ pub struct GrouperFixture {
 #[derive(Debug, Deserialize)]
 pub struct GrouperCase {
     pub name: String,
+    #[serde(default)]
+    pub country: Option<String>,
+    #[serde(default)]
+    pub source: Option<String>,
     pub input: String,
     pub entities: Vec<ExpectedSpan>,
     pub contacts: Vec<ExpectedContact>,
