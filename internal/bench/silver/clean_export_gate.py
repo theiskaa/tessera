@@ -22,6 +22,8 @@ ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_CANDIDATE = ROOT / "data/interim/silver/qa-dedup-20260926/train.jsonl"
 DEFAULT_LINEAGE = ROOT / "data/interim/silver/qa-dedup-20260926/source-lineage-pending-v2.jsonl"
 DEV_GOLD_SHA256 = "e283b6db04469fc67945f0204a597fe25da092fa2f91062073325f1213028887"
+EVAL_GOLD_SHA256 = "ada3de32f65d9d57f0cca1d53928bdaa35bee5e95707974ebf517384c9088e78"
+EVAL_PUBLISHER_INDEX_SHA256 = "28fc7a3da42e308dfba52d7828a5ec66c4071caac4894008e558a83211579d8f"
 KINDS = {"person", "org", "address"}
 BAD_VALUES = {"", "pending", "unknown", "todo", "tbd", "n/a", "none"}
 PUBLISHER_ID = re.compile(r"^[a-z][a-z0-9_-]*(?::[a-z0-9][a-z0-9._-]*)+$")
@@ -252,6 +254,9 @@ def validate_inputs(candidate_path, lineage_path, qualification_path, labels_pat
         if (ev.get("status") != "sealed" or not filled(ev.get("version"))
                 or not filled(ev.get("reviewer")) or not filled(ev.get("reviewed_at"))):
             errors.append("evaluation publisher manifest needs sealed status, version, reviewer, date")
+        if (ev.get("gold_sha256") != EVAL_GOLD_SHA256
+                or ev.get("publisher_index_sha256") != EVAL_PUBLISHER_INDEX_SHA256):
+            errors.append("evaluation publisher identity differs from pinned seal")
         gold_path = ev.get("gold_path")
         gold = []
         if not isinstance(gold_path, str) or not Path(gold_path).is_file():
@@ -427,16 +432,69 @@ def validate_inputs(candidate_path, lineage_path, qualification_path, labels_pat
                     "selection_sha256": selection_sha}
 
 
+def stage_silver_config(config_text, staged):
+    """Replace one TOML silver string array, allowing comments and literal paths."""
+    starts = list(re.finditer(r"(?m)^silver[ \t]*=[ \t]*\[", config_text))
+    if len(starts) != 1:
+        raise ValueError("detector config needs exactly one silver array")
+    opening = starts[0].end() - 1
+    index = opening + 1
+    expect_path = True
+    closing = None
+    while index < len(config_text):
+        char = config_text[index]
+        if char.isspace():
+            index += 1
+            continue
+        if char == "#":
+            next_line = config_text.find("\n", index)
+            index = len(config_text) if next_line == -1 else next_line + 1
+            continue
+        if char == "]":
+            closing = index
+            break
+        if expect_path:
+            if char not in ("'", '"'):
+                raise ValueError("detector silver array must contain only paths")
+            quote = char
+            index += 1
+            while index < len(config_text):
+                char = config_text[index]
+                if char == "\n":
+                    raise ValueError("detector silver array is malformed")
+                if char == "\\" and quote == '"':
+                    index += 2
+                    continue
+                if char == quote:
+                    break
+                index += 1
+            if index >= len(config_text):
+                raise ValueError("detector silver array is malformed")
+            index += 1
+            expect_path = False
+        elif char == ",":
+            index += 1
+            expect_path = True
+        else:
+            raise ValueError("detector silver array is malformed")
+    if closing is None:
+        raise ValueError("detector silver array is malformed")
+    line_end = config_text.find("\n", closing)
+    if line_end == -1:
+        line_end = len(config_text)
+    suffix = config_text[closing + 1:line_end].strip()
+    if suffix and not suffix.startswith("#"):
+        raise ValueError("detector silver array is malformed")
+    return config_text[:starts[0].start()] + 'silver = [' + json.dumps(str(staged)) + ']' + config_text[closing + 1:]
+
+
 def preflight(output, config, trainer):
     with tempfile.TemporaryDirectory(prefix="tessera-silver-gate-") as tmp:
         tmp = Path(tmp)
         staged = tmp / "train.jsonl"
         staged.write_bytes(b"".join(canonical(row) + b"\n" for row in output))
         config_text = config.read_text()
-        replacement = 'silver = [' + json.dumps(str(staged)) + ']'
-        config_text, changes = re.subn(r"(?m)^silver\s*=\s*\[[^\n]*\]$", replacement, config_text)
-        if changes != 1:
-            raise ValueError("detector config needs exactly one single-line silver array")
+        config_text = stage_silver_config(config_text, staged)
         staged_config = tmp / "config.toml"
         staged_config.write_text(config_text)
         result = subprocess.run([str(trainer), "check-silver", "--config", str(staged_config)],

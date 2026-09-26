@@ -19,6 +19,9 @@ class OfficialCaptureReplayTest(unittest.TestCase):
         eqe = (b'<main><div class="block block--height box-shadow">'
                b'<h2>Contact</h2><p>Alice</p></div><footer>Outside</footer></main>')
         self.assertEqual(project(eqe, "ge_eqe_card_v1"), "Contact\n\nAlice")
+        with_break = (b'<div class="block block--height box-shadow">'
+                      b'<p>Line<br>Next</p></div>')
+        self.assertEqual(project(with_break, "ge_eqe_card_v1"), "Line\nNext")
         gardabani = (b'<main><article class="post-10022"><h1>Office</h1>'
                      b'<p>Main Street 1</p></article><footer>Outside</footer></main>')
         self.assertEqual(project(gardabani, "ge_gardabani_article_v1"),

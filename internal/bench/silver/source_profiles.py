@@ -184,6 +184,8 @@ def render(node):
 def plain_text(node):
     if isinstance(node, str):
         return node
+    if node.tag == "br":
+        return " "
     content = "".join(plain_text(child) for child in node.children)
     return f" {content} " if node.tag in BLOCK_TAGS else content
 

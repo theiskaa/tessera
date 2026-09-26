@@ -99,6 +99,14 @@ class ExportGateTest(unittest.TestCase):
                           "selected": [{"source": "unit", "id": "one",
                                         "candidate_text_sha256": self.lineage["candidate_text_sha256"]}]}
         self.write()
+        eval_gold_patch = patch.object(gate, "EVAL_GOLD_SHA256",
+                                       gate.digest(self.gold_path.read_bytes()))
+        eval_index_patch = patch.object(gate, "EVAL_PUBLISHER_INDEX_SHA256",
+                                        gate.digest(self.index_path.read_bytes()))
+        eval_gold_patch.start()
+        eval_index_patch.start()
+        self.addCleanup(eval_gold_patch.stop)
+        self.addCleanup(eval_index_patch.stop)
 
     def write(self):
         self.candidate_path.write_bytes(gate.canonical(self.candidate) + b"\n")
@@ -189,6 +197,14 @@ class ExportGateTest(unittest.TestCase):
         _, report = self.check()
         self.assertTrue(any("development host gold SHA mismatch" in e for e in report["errors"]))
 
+    def test_self_hashed_alternate_evaluation_publisher_index_fails(self):
+        self.index["publisher_group"] = "unit:forged-agency"
+        self.index["publisher_groups"] = ["unit:forged-agency"]
+        self.write()
+        _, report = self.check()
+        self.assertTrue(any("identity differs from pinned seal" in e
+                            for e in report["errors"]))
+
     def test_missing_development_host_manifest_fails(self):
         _, report = gate.validate_inputs(self.candidate_path, self.lineage_path,
                                          self.qualification_path, self.labels_path,
@@ -229,6 +245,31 @@ class ExportGateTest(unittest.TestCase):
             self.assertEqual(counts["documents"], 1)
             self.assertEqual(counts["unreachable_spans"], 0)
             self.assertEqual(len(data.splitlines()), 1)
+
+    def test_stage_multiline_silver_array(self):
+        config = ('[detector]\n'
+                  'silver = [\n'
+                  '    "old-one.jsonl",\n'
+                  '    "old-two.jsonl",\n'
+                  ']\n'
+                  'silver_repeat = 10\n')
+        staged = gate.stage_silver_config(config, Path('/tmp/new.jsonl'))
+        self.assertIn('silver = ["/tmp/new.jsonl"]\n', staged)
+        self.assertNotIn('old-one.jsonl', staged)
+        self.assertIn('silver_repeat = 10', staged)
+        commented = ('[detector]\n'
+                     "silver = [ # reviewed sources\n"
+                     "  'old-one.jsonl', # first\n"
+                     '  "old]two.jsonl",\n'
+                     '] # end\n')
+        staged = gate.stage_silver_config(commented, Path('/tmp/new.jsonl'))
+        self.assertIn('silver = ["/tmp/new.jsonl"] # end', staged)
+        self.assertNotIn('old]two.jsonl', staged)
+        with self.assertRaisesRegex(ValueError, "exactly one silver array"):
+            gate.stage_silver_config(config + config, Path('/tmp/new.jsonl'))
+        with self.assertRaisesRegex(ValueError, "only paths"):
+            gate.stage_silver_config('[detector]\nsilver = ["old.jsonl", 7]\n',
+                                     Path('/tmp/new.jsonl'))
 
     def test_missing_or_held_decision_fails(self):
         _, report = self.check(qualification=False)
@@ -300,7 +341,8 @@ class ExportGateTest(unittest.TestCase):
                                                    "doc_type": "bounded_office_contact_excerpt"}) + b"\n")
         self.evaluation["gold_sha256"] = gate.digest(self.gold_path.read_bytes())
         self.write()
-        output, report = self.check()
+        with patch.object(gate, "EVAL_GOLD_SHA256", self.evaluation["gold_sha256"]):
+            output, report = self.check()
         self.assertEqual(report["errors"], [])
         self.assertEqual(len(output), 1)
 
