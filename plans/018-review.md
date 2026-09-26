@@ -1,0 +1,7 @@
+# Phase 018 checkpoint review — 2026-09-26
+
+The contact evaluator skipped the field-error loop for every predicted card without a gold anchor. Two new focused tests reproduced the defect: a false card with a person and phone recorded zero extra assigned fields instead of two, and a false card taking a gold phone recorded zero wrong-ownership fields instead of one. The original eight grouping tests passed before the fix.
+
+The evaluator now treats the matching gold-member set as optional and classifies members of every predicted card. Exact-card matching and production `tessera/src/group.rs` are untouched. The contact Markdown report declares metric version 3 and says that false-anchor card members are included in extra assigned fields. All ten release-profile `group_eval` tests pass; `cargo fmt --all --check`, release Clippy with warnings denied, and `git diff --check` pass.
+
+The rebuilt release trainer scored the existing 18 V17 contact fixtures. The total end-to-end primary row is unchanged from version 2: 22 exact matches / 24 predicted / 27 gold, 91.7% precision, 81.5% recall, 86.3% F1, 11.1% false-card documents, and 20 / 21 high-confidence matches. Existing fixture field-error totals also happen to remain 2 extra and 2 wrong-ownership fields; the new focused cases exercise the previously missing false-card members. The report is `internal/reports/m7/v17-group-fixtures-v3.md`. The real 250-document contact queue still lacks independently reviewed ownership labels, so neither fixture report is a real accuracy claim.
