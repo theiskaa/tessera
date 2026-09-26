@@ -28,3 +28,6 @@ ureq = "3"
 zip = { version = "7", default-features = false, features = ["deflate-flate2"] }
 csv = "1"
 unicode-normalization = "0.1"
+
+[dev-dependencies]
+tempfile = "3"

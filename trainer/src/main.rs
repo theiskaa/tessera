@@ -87,6 +87,11 @@ enum Command {
         #[arg(long, value_enum, default_value = "wgpu")]
         backend: train::BackendKind,
     },
+    /// Validate detector silver labels and report distinct supervision before training.
+    CheckSilver {
+        #[arg(long)]
+        config: PathBuf,
+    },
     /// Score a run, the deterministic baselines, or external predictions.
     Eval(EvalArgs),
     /// Time each pipeline stage natively on the profiling fixtures and append to the report.
@@ -167,6 +172,9 @@ struct EvalArgs {
     /// with `--baseline` and each `--predictions` file beside it.
     #[arg(long)]
     gold: Option<PathBuf>,
+    /// With `--gold`: use the gold country as a phone hint or infer it from the document.
+    #[arg(long, value_enum, default_value = "known")]
+    country_hint_mode: detect_eval::CountryHintMode,
     /// With `--gold`: an external system's predictions by case name (repeatable).
     #[arg(long)]
     predictions: Vec<PathBuf>,
@@ -216,6 +224,7 @@ fn main() -> anyhow::Result<()> {
             epochs,
             backend,
         }),
+        Command::CheckSilver { config } => train::check_silver(&config),
         Command::Eval(args) => eval::run(args),
         Command::Bench {
             model,

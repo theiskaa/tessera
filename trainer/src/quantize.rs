@@ -11,6 +11,7 @@
 //! kernels reproduce exactly this.
 
 use std::collections::{BTreeMap, HashMap};
+use std::io::ErrorKind;
 use std::path::Path;
 
 use anyhow::{Context, bail};
@@ -326,6 +327,112 @@ pub fn load_best<B: Backend>(
 
 /// F1 may drop by at most this much when the weights go to int8.
 const MAX_F1_DROP: f64 = 0.002;
+const GATE_VERSION: u64 = 2;
+
+/// Remove approval before any operation that may change the run's effective artifacts.
+pub(crate) fn invalidate_gate(run_dir: &Path) -> anyhow::Result<()> {
+    let path = run_dir.join("quantize.json");
+    match std::fs::remove_file(&path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e).with_context(|| format!("removing {}", path.display())),
+    }
+}
+
+fn file_hash(path: &Path) -> anyhow::Result<String> {
+    let bytes = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
+    Ok(crate::export::sha256_hex(&bytes))
+}
+
+fn artifact_hashes(run_dir: &Path, quantized: &Path) -> anyhow::Result<serde_json::Value> {
+    Ok(serde_json::json!({
+        "config_sha256": file_hash(&run_dir.join("config.toml"))?,
+        "best_sha256": file_hash(&run_dir.join("best.mpk"))?,
+        "input_snapshot_sha256": file_hash(&run_dir.join("input_snapshot.json"))?,
+        "quantized_sha256": file_hash(quantized)?,
+    }))
+}
+
+/// Fail closed on legacy gates and on any changed run artifact. Used for both network tasks.
+pub(crate) fn verify_gate(run_dir: &Path) -> anyhow::Result<()> {
+    let path = run_dir.join("quantize.json");
+    let gate: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).with_context(|| {
+            format!("reading {}; run `trainer quantize` first", path.display())
+        })?)
+        .with_context(|| format!("parsing {}; requantize this run", path.display()))?;
+    anyhow::ensure!(
+        gate["gate_version"].as_u64() == Some(GATE_VERSION),
+        "{} has a legacy or unsupported quantization gate; requantize this run",
+        run_dir.display()
+    );
+    anyhow::ensure!(
+        gate["passed"] == true,
+        "{} did not pass the quantization gate; run `trainer quantize` first",
+        run_dir.display()
+    );
+    let current = artifact_hashes(run_dir, &run_dir.join("quantized.safetensors"))?;
+    for key in [
+        "config_sha256",
+        "best_sha256",
+        "input_snapshot_sha256",
+        "quantized_sha256",
+    ] {
+        anyhow::ensure!(
+            gate[key].as_str() == current[key].as_str(),
+            "{} changed since quantization ({key}); requantize this run",
+            run_dir.display()
+        );
+    }
+    Ok(())
+}
+
+fn write_gate(
+    run_dir: &Path,
+    summary: &serde_json::Map<String, serde_json::Value>,
+) -> anyhow::Result<()> {
+    let pending = run_dir.join("quantize.pending.json");
+    std::fs::write(&pending, serde_json::to_string_pretty(summary)? + "\n")
+        .with_context(|| format!("writing {}", pending.display()))?;
+    std::fs::rename(&pending, run_dir.join("quantize.json"))
+        .with_context(|| format!("publishing {}", run_dir.join("quantize.json").display()))
+}
+
+fn publish_validated(
+    run_dir: &Path,
+    pending: &Path,
+    initial_hashes: &serde_json::Value,
+    summary: &mut serde_json::Map<String, serde_json::Value>,
+) -> anyhow::Result<()> {
+    invalidate_gate(run_dir)?;
+    let hashes = artifact_hashes(run_dir, pending)?;
+    anyhow::ensure!(
+        hashes["config_sha256"] == initial_hashes["config_sha256"]
+            && hashes["best_sha256"] == initial_hashes["best_sha256"]
+            && hashes["input_snapshot_sha256"] == initial_hashes["input_snapshot_sha256"],
+        "config, checkpoint, or input snapshot changed during quantization; requantize this run"
+    );
+    for key in [
+        "config_sha256",
+        "best_sha256",
+        "input_snapshot_sha256",
+        "quantized_sha256",
+    ] {
+        summary.insert(key.into(), hashes[key].clone());
+    }
+    std::fs::rename(pending, run_dir.join("quantized.safetensors"))?;
+    write_gate(run_dir, summary)
+}
+
+fn reject_quantization(
+    run_dir: &Path,
+    pending: &Path,
+    summary: &serde_json::Map<String, serde_json::Value>,
+) -> anyhow::Result<()> {
+    invalidate_gate(run_dir)?;
+    std::fs::rename(pending, run_dir.join("quantized.rejected.safetensors"))?;
+    write_gate(run_dir, summary)
+}
 
 /// Validation F1 of the f32 and the int8 model, with the summary keys to record them under:
 /// component F1 and exact parses for the parser, macro exact span F1 for the detector.
@@ -346,6 +453,12 @@ fn validation_scores<B: Backend>(
                     .filter(|e| !e.augmented)
                     .collect();
             let (kept, items) = encode_examples(&valid, &fc);
+            anyhow::ensure!(
+                !valid.is_empty() && items.len() == valid.len(),
+                "parser quantization validation has {} encoded rows out of {}; repair the validation labels",
+                items.len(),
+                valid.len()
+            );
             let f32_score = quick_score(model, &kept, &items, cfg.train.batch_size, device);
             let int8_score = quick_score(int8_model, &kept, &items, cfg.train.batch_size, device);
             fields.insert(
@@ -362,6 +475,10 @@ fn validation_scores<B: Backend>(
         }
         crate::config::Task::Detector => {
             let (docs, _) = detector::load_split(&processed, Split::Valid, &fc)?;
+            anyhow::ensure!(
+                !docs.is_empty(),
+                "detector quantization validation has no encoded documents"
+            );
             let gold: Vec<_> = docs.iter().map(|d| d.gold.clone()).collect();
             let score = |m: &TaggerNet<B>| {
                 detector::score(
@@ -387,13 +504,20 @@ fn validation_scores<B: Backend>(
 /// `trainer quantize`: quantizes the best checkpoint and fails if validation F1 drops by more
 /// than the allowed margin.
 pub fn run<B: Backend>(run_dir: &Path, device: &B::Device) -> anyhow::Result<()> {
+    invalidate_gate(run_dir)?;
+    crate::train::verify_input_snapshot(run_dir)?;
+    let initial_hashes = serde_json::json!({
+        "config_sha256": file_hash(&run_dir.join("config.toml"))?,
+        "best_sha256": file_hash(&run_dir.join("best.mpk"))?,
+        "input_snapshot_sha256": file_hash(&run_dir.join("input_snapshot.json"))?,
+    });
     let cfg = crate::config::load(&run_dir.join("config.toml"))?;
     let net = cfg.net_name();
     let model = load_best::<B>(run_dir, &cfg, device)?;
     let tensors = extract(&model, net);
     let (q, biases, dequantized) = quantize_all(&tensors);
-    let path = run_dir.join("quantized.safetensors");
-    write_safetensors(&path, &q, &biases, None)?;
+    let pending = run_dir.join("quantized.pending.safetensors");
+    write_safetensors(&pending, &q, &biases, None)?;
 
     let max_err = tensors
         .iter()
@@ -402,30 +526,32 @@ pub fn run<B: Backend>(run_dir: &Path, device: &B::Device) -> anyhow::Result<()>
         .fold(0f32, f32::max);
     let int8_model = inject::<B>(&cfg.tagger_net_config(), &dequantized, net, device)?;
     let (f32_f1, int8_f1, fields) = validation_scores(&cfg, &model, &int8_model, device)?;
-    let file_bytes = std::fs::metadata(&path)?.len();
+    anyhow::ensure!(
+        f32_f1.is_finite() && int8_f1.is_finite(),
+        "quantization validation produced a non-finite score"
+    );
+    let file_bytes = std::fs::metadata(&pending)?.len();
     let drop = f32_f1 - int8_f1;
     let passed = drop <= MAX_F1_DROP;
     let mut summary = serde_json::Map::new();
+    summary.insert("gate_version".into(), GATE_VERSION.into());
     summary.insert("passed".into(), passed.into());
     summary.extend(fields);
     summary.insert("max_abs_weight_error".into(), max_err.into());
     summary.insert("file_bytes".into(), file_bytes.into());
-    std::fs::write(
-        run_dir.join("quantize.json"),
-        serde_json::to_string_pretty(&summary)? + "\n",
-    )?;
     println!(
         "{net} validation F1: f32 {f32_f1:.4}, int8 {int8_f1:.4}; max weight error {max_err:.2e}; {file_bytes} bytes"
     );
     if !passed {
-        // Renamed so that `export`, which reads `quantized.safetensors`, cannot ship it.
         let rejected = run_dir.join("quantized.rejected.safetensors");
-        std::fs::rename(&path, &rejected)?;
+        reject_quantization(run_dir, &pending, &summary)?;
         bail!(
             "int8 weights lose {drop:.4} F1, over the {MAX_F1_DROP} limit; {} kept for inspection",
             rejected.display()
         );
     }
+    crate::train::verify_input_snapshot(run_dir)?;
+    publish_validated(run_dir, &pending, &initial_hashes, &mut summary)?;
     Ok(())
 }
 
@@ -434,6 +560,105 @@ mod tests {
     use burn::backend::NdArray;
 
     use super::*;
+
+    fn gate_run() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("config.toml"), b"config").unwrap();
+        std::fs::write(dir.path().join("best.mpk"), b"checkpoint").unwrap();
+        std::fs::write(dir.path().join("input_snapshot.json"), b"inputs").unwrap();
+        std::fs::write(
+            dir.path().join("quantized.safetensors"),
+            b"previous weights",
+        )
+        .unwrap();
+        dir
+    }
+
+    fn passing_summary() -> serde_json::Map<String, serde_json::Value> {
+        serde_json::json!({"gate_version": GATE_VERSION, "passed": true, "file_bytes": 11})
+            .as_object()
+            .unwrap()
+            .clone()
+    }
+
+    #[test]
+    fn validated_weights_publish_with_bound_gate() {
+        let dir = gate_run();
+        let pending = dir.path().join("quantized.pending.safetensors");
+        std::fs::write(&pending, b"new weights").unwrap();
+        let hashes = artifact_hashes(dir.path(), &pending).unwrap();
+        let mut summary = passing_summary();
+        publish_validated(dir.path(), &pending, &hashes, &mut summary).unwrap();
+        assert!(!pending.exists());
+        assert_eq!(
+            std::fs::read(dir.path().join("quantized.safetensors")).unwrap(),
+            b"new weights"
+        );
+        verify_gate(dir.path()).unwrap();
+    }
+
+    #[test]
+    fn rejected_weights_cannot_keep_a_previous_passing_gate() {
+        let dir = gate_run();
+        std::fs::write(dir.path().join("quantize.json"), r#"{"passed":true}"#).unwrap();
+        let pending = dir.path().join("quantized.pending.safetensors");
+        std::fs::write(&pending, b"bad weights").unwrap();
+        let mut summary = passing_summary();
+        summary.insert("passed".into(), false.into());
+        reject_quantization(dir.path(), &pending, &summary).unwrap();
+        assert_eq!(
+            std::fs::read(dir.path().join("quantized.rejected.safetensors")).unwrap(),
+            b"bad weights"
+        );
+        assert!(
+            verify_gate(dir.path())
+                .unwrap_err()
+                .to_string()
+                .contains("did not pass")
+        );
+    }
+
+    #[test]
+    fn failure_after_weight_publish_leaves_no_gate() {
+        let dir = gate_run();
+        let pending = dir.path().join("quantized.pending.safetensors");
+        std::fs::write(&pending, b"new weights").unwrap();
+        let hashes = artifact_hashes(dir.path(), &pending).unwrap();
+        std::fs::write(dir.path().join("quantize.json"), r#"{"passed":true}"#).unwrap();
+        // Force the final gate write to fail after the weights have been renamed.
+        std::fs::create_dir(dir.path().join("quantize.pending.json")).unwrap();
+        let err =
+            publish_validated(dir.path(), &pending, &hashes, &mut passing_summary()).unwrap_err();
+        assert!(err.to_string().contains("writing"));
+        assert!(!dir.path().join("quantize.json").exists());
+        assert!(!pending.exists());
+        assert!(verify_gate(dir.path()).is_err());
+    }
+
+    #[test]
+    fn checkpoint_changed_during_quantization_cannot_publish() {
+        let dir = gate_run();
+        let pending = dir.path().join("quantized.pending.safetensors");
+        std::fs::write(&pending, b"new weights").unwrap();
+        let hashes = artifact_hashes(dir.path(), &pending).unwrap();
+        std::fs::write(dir.path().join("best.mpk"), b"changed checkpoint").unwrap();
+        assert!(publish_validated(dir.path(), &pending, &hashes, &mut passing_summary()).is_err());
+        assert!(!dir.path().join("quantize.json").exists());
+        assert!(pending.exists());
+    }
+
+    #[test]
+    fn input_snapshot_changed_during_quantization_cannot_publish() {
+        let dir = gate_run();
+        let pending = dir.path().join("quantized.pending.safetensors");
+        std::fs::write(&pending, b"new weights").unwrap();
+        let hashes = artifact_hashes(dir.path(), &pending).unwrap();
+        std::fs::write(dir.path().join("input_snapshot.json"), b"changed inputs").unwrap();
+        let error =
+            publish_validated(dir.path(), &pending, &hashes, &mut passing_summary()).unwrap_err();
+        assert!(error.to_string().contains("input snapshot"), "{error:#}");
+        assert!(!dir.path().join("quantize.json").exists());
+    }
 
     fn t(shape: Vec<usize>, data: Vec<f32>) -> F32Tensor {
         F32Tensor {

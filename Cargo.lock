@@ -8929,6 +8929,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "tempfile",
  "tessera",
  "thiserror 2.0.20",
  "toml",

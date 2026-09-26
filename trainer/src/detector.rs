@@ -2,20 +2,21 @@
 //! email and phone spans as features, BIO labels over person, org, and address, greedy
 //! decoding that keeps rule spans out of model spans, and exact and lenient span scores.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
 use std::path::Path;
 
-use anyhow::Context;
+use anyhow::{Context, bail, ensure};
 use burn::data::dataloader::batcher::Batcher;
 use burn::prelude::*;
 use burn::tensor::activation::softmax;
 use polars::prelude::{ParquetReader, SerReader};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use tessera::Kind;
 use tessera::internal::{
-    DETECT_MIN_ADDRESS, DETECT_MIN_ORG, DETECT_MIN_PERSON, FeatureConfig, decode_detector,
-    featurize, flag, is_content, paragraph_breaks, scan_rules, tokenize,
+    DETECT_MIN_ADDRESS, DETECT_MIN_ORG, DETECT_MIN_PERSON, FeatureConfig, MAX_ENTITY_TOKENS,
+    decode_detector, featurize, flag, is_content, paragraph_breaks, scan_rules, tokenize,
 };
 
 use crate::data::Split;
@@ -61,6 +62,8 @@ pub enum DetectorEncodeError {
     PartialToken(KindSpan),
     #[error("span {0:?} overlaps an email or phone found by the rules")]
     RuleOverlap(KindSpan),
+    #[error("span {0:?} contains {1} content tokens, above the decoder limit")]
+    EntityTooLong(KindSpan, usize),
 }
 
 /// Encodes one document. Rule spans come from the rules layer, not from gold, so training
@@ -113,6 +116,10 @@ pub fn encode_document(
         if last < first {
             return Err(DetectorEncodeError::PartialToken(*g));
         }
+        let span_tokens = last + 1 - first;
+        if span_tokens > MAX_ENTITY_TOKENS {
+            return Err(DetectorEncodeError::EntityTooLong(*g, span_tokens));
+        }
         enc.labels[first] = label(g.kind, true);
         for l in &mut enc.labels[first + 1..=last] {
             *l = label(g.kind, false);
@@ -128,7 +135,46 @@ struct GoldJson {
     end: u32,
 }
 
-/// Documents skipped while loading a split, by reason.
+/// Validates every declared span before dropping the rule-layer kinds from BIO targets.
+fn model_spans(text: &str, declared: &[GoldJson]) -> anyhow::Result<Vec<KindSpan>> {
+    let mut targets = Vec::new();
+    for (index, span) in declared.iter().enumerate() {
+        let start = span.start as usize;
+        let end = span.end as usize;
+        ensure!(
+            start < end && text.get(start..end).is_some(),
+            "entity {index} has an empty, out-of-range, or non-UTF-8 span {}..{}",
+            span.start,
+            span.end
+        );
+        let Some(kind) = Kind::from_str_label(&span.kind) else {
+            bail!("entity {index} has unknown kind {:?}", span.kind);
+        };
+        if let Some(kind) = kind_index(kind) {
+            targets.push((
+                index,
+                KindSpan {
+                    kind,
+                    start: span.start,
+                    end: span.end,
+                },
+            ));
+        }
+    }
+    let mut by_start = targets.clone();
+    by_start.sort_by_key(|(_, span)| (span.start, span.end));
+    for pair in by_start.windows(2) {
+        ensure!(
+            pair[0].1.end <= pair[1].1.start,
+            "entities {} and {} overlap as detector targets",
+            pair[0].0,
+            pair[1].0
+        );
+    }
+    Ok(targets.into_iter().map(|(_, span)| span).collect())
+}
+
+/// Documents loaded from a synthetic split. Invalid rows fail the load.
 #[derive(Debug, Default, Clone, Serialize)]
 pub struct LoadCounts {
     pub encoded: usize,
@@ -157,32 +203,35 @@ pub fn load_split(
     let mut docs = Vec::with_capacity(df.height());
     let mut counts = LoadCounts::default();
     for i in 0..df.height() {
-        let row_text = text.get(i).context("null text")?;
-        let gold: Vec<KindSpan> =
-            serde_json::from_str::<Vec<GoldJson>>(entities.get(i).context("null entities")?)?
-                .into_iter()
-                .filter_map(|g| {
-                    let kind = kind_index(Kind::from_str_label(&g.kind)?)?;
-                    Some(KindSpan {
-                        kind,
-                        start: g.start,
-                        end: g.end,
-                    })
-                })
-                .collect();
-        match encode_document(row_text, &gold, fc) {
-            Ok(mut enc) => {
-                enc.country = country.get(i).unwrap_or_default().to_string();
-                docs.push(DetectorDoc {
-                    enc,
-                    gold,
-                    breaks: breaks_of(row_text),
-                });
-                counts.encoded += 1;
-            }
-            Err(DetectorEncodeError::PartialToken(_)) => counts.partial_token += 1,
-            Err(DetectorEncodeError::RuleOverlap(_)) => counts.rule_overlap += 1,
-        }
+        let row_text = text
+            .get(i)
+            .with_context(|| format!("{} row {} has null text", path.display(), i + 1))?;
+        let row_country = country
+            .get(i)
+            .with_context(|| format!("{} row {} has null country", path.display(), i + 1))?;
+        ensure!(
+            row_country.len() == 2 && row_country.bytes().all(|b| b.is_ascii_uppercase()),
+            "{} row {} has invalid country {row_country:?}",
+            path.display(),
+            i + 1
+        );
+        let declared: Vec<GoldJson> = serde_json::from_str(
+            entities
+                .get(i)
+                .with_context(|| format!("{} row {} has null entities", path.display(), i + 1))?,
+        )
+        .with_context(|| format!("{} row {} has invalid entities JSON", path.display(), i + 1))?;
+        let gold = model_spans(row_text, &declared)
+            .with_context(|| format!("{} row {}", path.display(), i + 1))?;
+        let mut enc = encode_document(row_text, &gold, fc)
+            .with_context(|| format!("{} row {}", path.display(), i + 1))?;
+        enc.country = row_country.to_string();
+        docs.push(DetectorDoc {
+            enc,
+            gold,
+            breaks: breaks_of(row_text),
+        });
+        counts.encoded += 1;
     }
     Ok((docs, counts))
 }
@@ -198,11 +247,23 @@ struct SilverJson {
 #[derive(Debug, Default, Clone, Serialize)]
 pub struct SilverCounts {
     pub documents: usize,
+    /// Exact-text copies with identical detector labels that were not encoded again.
+    pub duplicate_documents: usize,
     pub pieces: usize,
     pub spans: usize,
-    /// Spans no BIO tagging can produce: inside a token (`EPA` in `EPA's`) or over a rule
-    /// email or phone. Their tokens stay `O`, which is the cost of keeping the document.
+    /// Spans no BIO tagging can produce. A nonzero count rejects the whole input before training.
     pub unreachable_spans: usize,
+    /// Actual distinct training supervision after deduplication, by country and kind.
+    pub by_country: BTreeMap<String, SilverCountryCounts>,
+}
+
+#[derive(Debug, Default, Clone, Serialize)]
+pub struct SilverCountryCounts {
+    pub documents: usize,
+    pub pieces: usize,
+    pub person: usize,
+    pub org: usize,
+    pub address: usize,
 }
 
 /// Reads silver-labelled real documents and encodes them. A document longer than
@@ -215,25 +276,46 @@ pub fn load_silver(
 ) -> anyhow::Result<(Vec<DetectorDoc>, SilverCounts)> {
     let mut docs = Vec::new();
     let mut counts = SilverCounts::default();
+    let mut seen: HashMap<[u8; 32], (Vec<KindSpan>, String)> = HashMap::new();
+    let mut unreachable_details = Vec::new();
     for path in paths {
         let text = std::fs::read_to_string(path).with_context(|| format!("reading {path}"))?;
-        for line in text.lines().filter(|l| !l.trim().is_empty()) {
-            let doc: SilverJson =
-                serde_json::from_str(line).with_context(|| format!("a line of {path}"))?;
+        for (line_no, line) in text
+            .lines()
+            .enumerate()
+            .filter(|(_, l)| !l.trim().is_empty())
+        {
+            let doc: SilverJson = serde_json::from_str(line)
+                .with_context(|| format!("{path}:{} invalid silver JSON", line_no + 1))?;
+            let gold = model_spans(&doc.text, &doc.entities)
+                .with_context(|| format!("{path}:{}", line_no + 1))?;
+            let mut sorted_gold = gold.clone();
+            sorted_gold.sort_by_key(|span| (span.start, span.end, span.kind));
+            let text_hash: [u8; 32] = Sha256::digest(doc.text.as_bytes()).into();
+            if let Some((previous, location)) = seen.get(&text_hash) {
+                ensure!(
+                    previous == &sorted_gold,
+                    "{path}:{} conflicts with {location}: identical silver text has different detector labels",
+                    line_no + 1
+                );
+                counts.duplicate_documents += 1;
+                continue;
+            }
+            seen.insert(text_hash, (sorted_gold, format!("{path}:{}", line_no + 1)));
             counts.documents += 1;
-            let gold: Vec<KindSpan> = doc
-                .entities
-                .iter()
-                .filter_map(|g| {
-                    Some(KindSpan {
-                        kind: kind_index(Kind::from_str_label(&g.kind)?)?,
-                        start: g.start,
-                        end: g.end,
-                    })
-                })
-                .collect();
+            let per_country = counts.by_country.entry(doc.country.clone()).or_default();
+            per_country.documents += 1;
             for (start, end) in pieces(&doc.text, &gold, max_tokens) {
                 let piece = &doc.text[start..end];
+                let content_tokens = tokenize(piece)
+                    .iter()
+                    .filter(|token| is_content(token))
+                    .count();
+                ensure!(
+                    content_tokens <= max_tokens,
+                    "{path}:{} silver piece has {content_tokens} content tokens above limit {max_tokens}; split the source text at a safe paragraph boundary before training",
+                    line_no + 1
+                );
                 let rebased: Vec<KindSpan> = gold
                     .iter()
                     .filter(|g| g.start as usize >= start && g.end as usize <= end)
@@ -244,8 +326,27 @@ pub fn load_silver(
                     })
                     .collect();
                 let reachable = reachable_spans(piece, &rebased);
+                for unreachable in rebased.iter().filter(|span| !reachable.contains(span)) {
+                    unreachable_details.push(format!(
+                        "{path}:{} {} {}..{} ({})",
+                        line_no + 1,
+                        KINDS[unreachable.kind].as_str(),
+                        unreachable.start + start as u32,
+                        unreachable.end + start as u32,
+                        unreachable_reason(piece, unreachable),
+                    ));
+                }
                 counts.spans += reachable.len();
                 counts.unreachable_spans += rebased.len() - reachable.len();
+                per_country.pieces += 1;
+                for span in &reachable {
+                    match span.kind {
+                        0 => per_country.person += 1,
+                        1 => per_country.org += 1,
+                        2 => per_country.address += 1,
+                        _ => unreachable!(),
+                    }
+                }
                 let mut enc = encode_document(piece, &reachable, fc)
                     .map_err(|e| anyhow::anyhow!("{path}: {e}"))?;
                 enc.country = doc.country.clone();
@@ -258,7 +359,56 @@ pub fn load_silver(
             }
         }
     }
+    ensure!(
+        unreachable_details.is_empty(),
+        "{} silver spans are unreachable by the detector encoder; review labels or tokenization before training:\n{}",
+        unreachable_details.len(),
+        unreachable_details.join("\n")
+    );
     Ok((docs, counts))
+}
+
+fn unreachable_reason(text: &str, span: &KindSpan) -> String {
+    let (start, end) = (span.start as usize, span.end as usize);
+    let tokens = tokenize(text);
+    let mut reasons = Vec::new();
+    if !tokens
+        .iter()
+        .filter(|token| is_content(token))
+        .any(|token| token.start == start)
+        || !tokens
+            .iter()
+            .filter(|token| is_content(token))
+            .any(|token| token.end == end)
+    {
+        reasons.push("token_boundary");
+    }
+    let retained: Vec<_> = tokens.iter().filter(|token| is_content(token)).collect();
+    if retained
+        .iter()
+        .zip(breaks_of(text))
+        .any(|(token, is_break)| is_break && start < token.start && token.start < end)
+    {
+        reasons.push("blank_line");
+    }
+    if scan_rules(text, &[])
+        .iter()
+        .any(|rule| start < rule.end && rule.start < end)
+    {
+        reasons.push("rule_overlap");
+    }
+    if retained
+        .iter()
+        .filter(|token| start <= token.start && token.end <= end)
+        .count()
+        > MAX_ENTITY_TOKENS
+    {
+        reasons.push("entity_too_long");
+    }
+    if reasons.is_empty() {
+        reasons.push("unknown");
+    }
+    reasons.join(",")
 }
 
 /// The byte ranges `text` is cut into: whole paragraphs, at most `max_tokens` content tokens
@@ -297,10 +447,21 @@ fn pieces(text: &str, gold: &[KindSpan], max_tokens: usize) -> Vec<(usize, usize
 }
 
 /// The spans of `gold` a tagger can produce on `text`: on token boundaries, within one
-/// paragraph (the decoder closes every span at a blank line), and clear of the rules layer's
-/// emails and phones.
+/// paragraph (the decoder closes every span at a blank line), at most the decoder's span
+/// length, and clear of the rules layer's emails and phones.
 fn reachable_spans(text: &str, gold: &[KindSpan]) -> Vec<KindSpan> {
     let tokens = tokenize(text);
+    let retained_indices: Vec<_> = tokens
+        .iter()
+        .enumerate()
+        .filter(|(_, token)| is_content(token))
+        .map(|(index, _)| index)
+        .collect();
+    let break_positions: Vec<_> = paragraph_breaks(&tokens, &retained_indices)
+        .into_iter()
+        .zip(&retained_indices)
+        .filter_map(|(is_break, &index)| is_break.then_some(tokens[index].start))
+        .collect();
     let rules: Vec<(usize, usize)> = scan_rules(text, &[])
         .iter()
         .map(|e| (e.start, e.end))
@@ -308,21 +469,20 @@ fn reachable_spans(text: &str, gold: &[KindSpan]) -> Vec<KindSpan> {
     gold.iter()
         .filter(|g| {
             let (s, e) = (g.start as usize, g.end as usize);
-            tokens.iter().any(|t| t.start == s)
-                && tokens.iter().any(|t| t.end == e)
-                && !has_blank_line(&text[s..e])
+            retained_indices
+                .iter()
+                .any(|&index| tokens[index].start == s)
+                && retained_indices.iter().any(|&index| tokens[index].end == e)
+                && retained_indices
+                    .iter()
+                    .filter(|&&index| s <= tokens[index].start && tokens[index].end <= e)
+                    .count()
+                    <= MAX_ENTITY_TOKENS
+                && !break_positions.iter().any(|&at| s < at && at < e)
                 && !rules.iter().any(|&(rs, re)| s < re && rs < e)
         })
         .copied()
         .collect()
-}
-
-fn has_blank_line(s: &str) -> bool {
-    let lines: Vec<&str> = s.split('\n').collect();
-    lines.len() > 2
-        && lines[1..lines.len() - 1]
-            .iter()
-            .any(|l| l.trim().is_empty())
 }
 
 /// Whether a paragraph break comes before each retained token of `text`, as the library's
@@ -433,7 +593,53 @@ fn iou(a: KindSpan, b: KindSpan) -> f64 {
 
 /// Scores predictions against gold, document by document. Each prediction matches at most
 /// one gold span and the reverse, so repeated overlapping predictions are not all credited.
+fn matched_spans(
+    gold: &[KindSpan],
+    pred: &[KindSpan],
+    matches: impl Fn(KindSpan, KindSpan) -> bool,
+) -> usize {
+    fn assign(
+        p: usize,
+        edges: &[Vec<usize>],
+        seen: &mut [bool],
+        owner: &mut [Option<usize>],
+    ) -> bool {
+        for &g in &edges[p] {
+            if seen[g] {
+                continue;
+            }
+            seen[g] = true;
+            if owner[g].is_none_or(|previous| assign(previous, edges, seen, owner)) {
+                owner[g] = Some(p);
+                return true;
+            }
+        }
+        false
+    }
+
+    let edges: Vec<Vec<usize>> = pred
+        .iter()
+        .map(|p| {
+            gold.iter()
+                .enumerate()
+                .filter_map(|(g, span)| matches(*p, *span).then_some(g))
+                .collect()
+        })
+        .collect();
+    let mut owner = vec![None; gold.len()];
+    for p in 0..pred.len() {
+        let mut seen = vec![false; gold.len()];
+        assign(p, &edges, &mut seen, &mut owner);
+    }
+    owner.iter().filter(|owner| owner.is_some()).count()
+}
+
 pub fn score(gold: &[Vec<KindSpan>], pred: &[Vec<KindSpan>]) -> SpanScores {
+    assert_eq!(
+        gold.len(),
+        pred.len(),
+        "detector evaluation needs one prediction list per document"
+    );
     #[derive(Default, Clone, Copy)]
     struct Counts {
         exact: usize,
@@ -448,14 +654,8 @@ pub fn score(gold: &[Vec<KindSpan>], pred: &[Vec<KindSpan>]) -> SpanScores {
             let pk: Vec<KindSpan> = p.iter().filter(|s| s.kind == k).copied().collect();
             c.pred += pk.len();
             c.gold += gk.len();
-            c.exact += pk.iter().filter(|s| gk.contains(s)).count();
-            let mut used = vec![false; gk.len()];
-            for s in &pk {
-                if let Some(j) = (0..gk.len()).find(|&j| !used[j] && iou(*s, gk[j]) >= 0.5) {
-                    used[j] = true;
-                    c.lenient += 1;
-                }
-            }
+            c.exact += matched_spans(&gk, &pk, |p, g| p == g);
+            c.lenient += matched_spans(&gk, &pk, |p, g| iou(p, g) >= 0.5);
         }
     }
     let mut out = SpanScores::default();
@@ -480,6 +680,7 @@ pub fn score(gold: &[Vec<KindSpan>], pred: &[Vec<KindSpan>]) -> SpanScores {
 #[cfg(test)]
 mod tests {
     use burn::backend::NdArray;
+    use polars::prelude::{Column, DataFrame, ParquetWriter};
 
     use super::*;
     use crate::train::masked_loss;
@@ -491,6 +692,257 @@ mod tests {
             start,
             end: start + part.len() as u32,
         }
+    }
+
+    fn declared(kind: &str, start: u32, end: u32) -> GoldJson {
+        GoldJson {
+            kind: kind.into(),
+            start,
+            end,
+        }
+    }
+
+    #[test]
+    fn declared_detector_spans_fail_closed_before_encoding() {
+        let text = "Nino Straße";
+        for (name, spans) in [
+            ("unknown", vec![declared("unknown", 0, 4)]),
+            ("empty", vec![declared("person", 0, 0)]),
+            ("past end", vec![declared("person", 0, 80)]),
+            ("inside UTF-8", vec![declared("address", 5, 10)]),
+            (
+                "overlap",
+                vec![declared("person", 0, 4), declared("org", 2, 4)],
+            ),
+        ] {
+            assert!(model_spans(text, &spans).is_err(), "{name}");
+        }
+        let good = model_spans(
+            "Nino nino@example.org Berlin",
+            &[
+                declared("person", 0, 4),
+                declared("email", 5, 21),
+                declared("address", 22, 28),
+            ],
+        )
+        .unwrap();
+        assert_eq!(good.len(), 2);
+        assert_eq!(good[0].kind, 0);
+        assert_eq!(good[1].kind, 2);
+    }
+
+    #[test]
+    fn silver_loader_reports_path_line_and_label() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("silver.jsonl");
+        std::fs::write(
+            &path,
+            "{\"text\":\"Nino\",\"country\":\"GE\",\"entities\":[{\"kind\":\"person\",\"start\":0,\"end\":4}]}\n{\"text\":\"Nino\",\"country\":\"GE\",\"entities\":[{\"kind\":\"bogus\",\"start\":0,\"end\":4}]}\n",
+        )
+        .unwrap();
+        let error = format!(
+            "{:#}",
+            load_silver(
+                &[path.display().to_string()],
+                &FeatureConfig::default(),
+                900
+            )
+            .unwrap_err()
+        );
+        assert!(error.contains("silver.jsonl:2"), "{error}");
+        assert!(error.contains("entity 0 has unknown kind"), "{error}");
+    }
+
+    #[test]
+    fn silver_loader_skips_identical_copies_and_rejects_conflicting_labels() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("silver.jsonl");
+        let person = serde_json::json!({
+            "text": "Nino", "country": "GE",
+            "entities": [{"kind": "person", "start": 0, "end": 4}]
+        });
+        std::fs::write(&path, format!("{person}\n{person}\n")).unwrap();
+        let (docs, counts) = load_silver(
+            &[path.display().to_string()],
+            &FeatureConfig::default(),
+            900,
+        )
+        .unwrap();
+        assert_eq!(docs.len(), 1);
+        assert_eq!(counts.documents, 1);
+        assert_eq!(counts.duplicate_documents, 1);
+        assert_eq!(counts.by_country["GE"].documents, 1);
+        assert_eq!(counts.by_country["GE"].person, 1);
+
+        let unlabeled = serde_json::json!({
+            "text": "Nino", "country": "GE", "entities": []
+        });
+        let other = dir.path().join("other.jsonl");
+        std::fs::write(&other, format!("{unlabeled}\n")).unwrap();
+        let error = format!(
+            "{:#}",
+            load_silver(
+                &[path.display().to_string(), other.display().to_string()],
+                &FeatureConfig::default(),
+                900,
+            )
+            .unwrap_err()
+        );
+        assert!(error.contains("other.jsonl:1 conflicts with"), "{error}");
+        assert!(error.contains("silver.jsonl:1"), "{error}");
+    }
+
+    #[test]
+    fn silver_loader_rejects_unreachable_positive_instead_of_training_it_as_negative() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("silver.jsonl");
+        let row = serde_json::json!({
+            "text": "the office opened", "country": "US",
+            "entities": [{"kind": "org", "start": 5, "end": 8}]
+        });
+        std::fs::write(&path, format!("{row}\n")).unwrap();
+        let error = format!(
+            "{:#}",
+            load_silver(
+                &[path.display().to_string()],
+                &FeatureConfig::default(),
+                900,
+            )
+            .unwrap_err()
+        );
+        assert!(error.contains("silver.jsonl:1"), "{error}");
+        assert!(error.contains("org 5..8 (token_boundary)"), "{error}");
+    }
+
+    #[test]
+    fn silver_loader_and_encoder_reject_spans_longer_than_decoder_limit() {
+        let at_limit = vec!["office"; MAX_ENTITY_TOKENS].join(" ");
+        assert!(
+            encode_document(
+                &at_limit,
+                &[KindSpan {
+                    kind: 1,
+                    start: 0,
+                    end: at_limit.len() as u32,
+                }],
+                &FeatureConfig::default()
+            )
+            .is_ok()
+        );
+        let text = vec!["office"; MAX_ENTITY_TOKENS + 1].join(" ");
+        let target = KindSpan {
+            kind: 1,
+            start: 0,
+            end: text.len() as u32,
+        };
+        assert!(matches!(
+            encode_document(&text, &[target], &FeatureConfig::default()),
+            Err(DetectorEncodeError::EntityTooLong(span, count))
+                if span == target && count == MAX_ENTITY_TOKENS + 1
+        ));
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("silver.jsonl");
+        let row = serde_json::json!({
+            "text": text, "country": "US",
+            "entities": [{"kind": "org", "start": 0, "end": target.end}]
+        });
+        std::fs::write(&path, format!("{row}\n")).unwrap();
+        let error = format!(
+            "{:#}",
+            load_silver(
+                &[path.display().to_string()],
+                &FeatureConfig::default(),
+                900
+            )
+            .unwrap_err()
+        );
+        assert!(error.contains("silver.jsonl:1"), "{error}");
+        assert!(error.contains("entity_too_long"), "{error}");
+    }
+
+    #[test]
+    fn silver_loader_rejects_one_long_paragraph_above_piece_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("silver.jsonl");
+        let row = serde_json::json!({
+            "text": "one two three", "country": "US", "entities": []
+        });
+        std::fs::write(&path, format!("{row}\n")).unwrap();
+        let error = format!(
+            "{:#}",
+            load_silver(&[path.display().to_string()], &FeatureConfig::default(), 2,).unwrap_err()
+        );
+        assert!(error.contains("silver.jsonl:1"), "{error}");
+        assert!(error.contains("3 content tokens above limit 2"), "{error}");
+    }
+
+    #[test]
+    fn synthetic_loader_reports_path_row_and_label() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("train.parquet");
+        let mut df = DataFrame::new_infer_height(vec![
+            Column::new("text".into(), vec!["Nino"]),
+            Column::new(
+                "entities_json".into(),
+                vec!["[{\"kind\":\"bogus\",\"start\":0,\"end\":4}]"],
+            ),
+            Column::new("country".into(), vec!["GE"]),
+        ])
+        .unwrap();
+        ParquetWriter::new(std::fs::File::create(&path).unwrap())
+            .finish(&mut df)
+            .unwrap();
+        let error = format!(
+            "{:#}",
+            load_split(dir.path(), Split::Train, &FeatureConfig::default()).unwrap_err()
+        );
+        assert!(error.contains("train.parquet row 1"), "{error}");
+        assert!(error.contains("entity 0 has unknown kind"), "{error}");
+    }
+
+    #[test]
+    fn synthetic_loader_rejects_unreachable_gold_instead_of_skipping_row() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("train.parquet");
+        let mut df = DataFrame::new_infer_height(vec![
+            Column::new("text".into(), vec!["Nino"]),
+            Column::new(
+                "entities_json".into(),
+                vec!["[{\"kind\":\"person\",\"start\":1,\"end\":4}]"],
+            ),
+            Column::new("country".into(), vec!["GE"]),
+        ])
+        .unwrap();
+        ParquetWriter::new(std::fs::File::create(&path).unwrap())
+            .finish(&mut df)
+            .unwrap();
+        let error = format!(
+            "{:#}",
+            load_split(dir.path(), Split::Train, &FeatureConfig::default()).unwrap_err()
+        );
+        assert!(error.contains("train.parquet row 1"), "{error}");
+        assert!(error.contains("token boundary"), "{error}");
+    }
+
+    #[test]
+    fn synthetic_loader_rejects_invalid_country() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("train.parquet");
+        let mut df = DataFrame::new_infer_height(vec![
+            Column::new("text".into(), vec!["Nino"]),
+            Column::new("entities_json".into(), vec!["[]"]),
+            Column::new("country".into(), vec!["??"]),
+        ])
+        .unwrap();
+        ParquetWriter::new(std::fs::File::create(&path).unwrap())
+            .finish(&mut df)
+            .unwrap();
+        let error = format!(
+            "{:#}",
+            load_split(dir.path(), Split::Train, &FeatureConfig::default()).unwrap_err()
+        );
+        assert!(error.contains("train.parquet row 1"), "{error}");
+        assert!(error.contains("invalid country"), "{error}");
     }
 
     #[test]
@@ -558,6 +1010,17 @@ mod tests {
         );
         let broken = "7290 Investment Drive, South\n\n[[Page 7]]\n\nCarolina 29418";
         assert!(reachable_spans(broken, &[span(2, broken, broken)]).is_empty());
+        for separated in ["12 Main St\r\rTbilisi", "12 Main St\u{2028}\u{2028}Tbilisi"] {
+            assert!(
+                reachable_spans(separated, &[span(2, separated, separated)]).is_empty(),
+                "runtime closes spans at this paragraph break: {separated:?}"
+            );
+        }
+        let leading_space = " Nino";
+        assert!(
+            reachable_spans(leading_space, &[span(0, leading_space, leading_space)]).is_empty(),
+            "a span starting on skipped whitespace cannot be encoded"
+        );
     }
 
     #[test]
@@ -627,5 +1090,38 @@ mod tests {
         assert_eq!(org.lenient.f1, 1.0);
         assert_eq!(org.boundary_accuracy, 0.0);
         assert_eq!(s.per_kind["address"].exact.precision, 0.0);
+    }
+
+    #[test]
+    fn duplicate_predictions_match_one_gold_only_once() {
+        let span = KindSpan {
+            kind: 0,
+            start: 0,
+            end: 10,
+        };
+        let scores = score(&[vec![span]], &[vec![span, span]]);
+        let person = &scores.per_kind["person"];
+        assert_eq!(person.exact.precision, 0.5);
+        assert_eq!(person.exact.recall, 1.0);
+        assert_eq!(person.lenient.precision, 0.5);
+        assert_eq!(person.lenient.recall, 1.0);
+        assert!(person.exact.f1 <= 1.0);
+    }
+
+    #[test]
+    fn lenient_matching_finds_maximum_one_to_one_assignment() {
+        let s = |start, end| KindSpan {
+            kind: 0,
+            start,
+            end,
+        };
+        let scores = score(&[vec![s(0, 10), s(10, 20)]], &[vec![s(0, 20), s(0, 10)]]);
+        assert_eq!(scores.per_kind["person"].lenient.f1, 1.0);
+    }
+
+    #[test]
+    #[should_panic(expected = "one prediction list per document")]
+    fn score_rejects_missing_prediction_documents() {
+        score(&[vec![]], &[]);
     }
 }

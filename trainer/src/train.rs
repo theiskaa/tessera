@@ -23,6 +23,7 @@ use burn::tensor::backend::AutodiffBackend;
 use rand::SeedableRng;
 use rand::seq::SliceRandom;
 use rand_chacha::ChaCha8Rng;
+use serde::{Deserialize, Serialize};
 
 use crate::config::Config;
 use crate::data::{LabelledExample, Split, read_shard};
@@ -116,15 +117,182 @@ fn train<B: AutodiffBackend>(args: &TrainArgs<'_>, device: &B::Device) -> anyhow
         cfg.train.epochs = e;
     }
     let run_dir = PathBuf::from("runs").join(&cfg.name);
+    initialize_run(&run_dir, &cfg)?;
+    capture_input_snapshot(&cfg, &run_dir)?;
+    B::seed(device, cfg.seed);
+    let result = match cfg.task {
+        crate::config::Task::Parser => train_parser::<B>(args, &cfg, &run_dir, device),
+        crate::config::Task::Detector => train_detector::<B>(&cfg, &run_dir, device),
+    };
+    result?;
+    verify_input_snapshot(&run_dir)
+}
+
+const INPUT_SNAPSHOT_VERSION: u64 = 1;
+
+#[derive(Debug, Serialize, Deserialize)]
+pub(crate) struct InputFile {
+    pub path: String,
+    pub sha256: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub(crate) struct InputSnapshot {
+    pub version: u64,
+    pub config_sha256: String,
+    pub inputs: std::collections::BTreeMap<String, InputFile>,
+}
+
+fn hash_file(path: &Path) -> anyhow::Result<String> {
+    let bytes = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
+    Ok(crate::export::sha256_hex(&bytes))
+}
+
+pub(crate) fn input_paths(cfg: &Config) -> Vec<(String, PathBuf)> {
+    let processed = Path::new(&cfg.data.processed);
+    let mut paths = vec![
+        ("train_shard".to_string(), processed.join("train.parquet")),
+        ("valid_shard".to_string(), processed.join("valid.parquet")),
+    ];
+    match cfg.task {
+        crate::config::Task::Parser => paths.push((
+            "parser_sample_manifest".to_string(),
+            PathBuf::from(&cfg.data.sample_manifest),
+        )),
+        crate::config::Task::Detector => {
+            if let Some(detector) = &cfg.detector {
+                paths.extend(
+                    detector
+                        .silver
+                        .iter()
+                        .enumerate()
+                        .map(|(i, path)| (format!("silver_{i:04}"), PathBuf::from(path))),
+                );
+            }
+            if let Some(from) = &cfg.net.ngram_from {
+                paths.push((
+                    "ngram_source_config".to_string(),
+                    Path::new(from).join("config.toml"),
+                ));
+                paths.push((
+                    "ngram_source_best".to_string(),
+                    Path::new(from).join("best.mpk"),
+                ));
+            }
+        }
+    }
+    paths
+}
+
+pub(crate) fn capture_input_snapshot(cfg: &Config, run_dir: &Path) -> anyhow::Result<()> {
+    let inputs = input_paths(cfg)
+        .into_iter()
+        .map(|(role, path)| {
+            Ok((
+                role,
+                InputFile {
+                    path: path.display().to_string(),
+                    sha256: hash_file(&path)?,
+                },
+            ))
+        })
+        .collect::<anyhow::Result<std::collections::BTreeMap<_, _>>>()?;
+    let snapshot = InputSnapshot {
+        version: INPUT_SNAPSHOT_VERSION,
+        config_sha256: hash_file(&run_dir.join("config.toml"))?,
+        inputs,
+    };
+    std::fs::write(
+        run_dir.join("input_snapshot.json"),
+        serde_json::to_string_pretty(&snapshot)? + "\n",
+    )?;
+    Ok(())
+}
+
+pub(crate) fn load_input_snapshot(run_dir: &Path) -> anyhow::Result<InputSnapshot> {
+    let path = run_dir.join("input_snapshot.json");
+    let snapshot: InputSnapshot =
+        serde_json::from_slice(&std::fs::read(&path).with_context(|| {
+            format!(
+                "{} has no run-bound input snapshot; retrain before export",
+                run_dir.display()
+            )
+        })?)
+        .with_context(|| format!("parsing {}", path.display()))?;
+    anyhow::ensure!(
+        snapshot.version == INPUT_SNAPSHOT_VERSION && !snapshot.inputs.is_empty(),
+        "{} has an unsupported or empty input snapshot; retrain before export",
+        run_dir.display()
+    );
+    anyhow::ensure!(
+        snapshot.config_sha256 == hash_file(&run_dir.join("config.toml"))?,
+        "{} config changed after input snapshot; retrain before export",
+        run_dir.display()
+    );
+    let cfg = crate::config::load(&run_dir.join("config.toml"))?;
+    let expected: std::collections::BTreeMap<_, _> = input_paths(&cfg)
+        .into_iter()
+        .map(|(role, path)| (role, path.display().to_string()))
+        .collect();
+    let actual: std::collections::BTreeMap<_, _> = snapshot
+        .inputs
+        .iter()
+        .map(|(role, input)| (role.clone(), input.path.clone()))
+        .collect();
+    anyhow::ensure!(
+        actual == expected,
+        "{} input snapshot omits or changes a configured training source; retrain before export",
+        run_dir.display()
+    );
+    Ok(snapshot)
+}
+
+pub(crate) fn verify_input_snapshot(run_dir: &Path) -> anyhow::Result<()> {
+    let snapshot = load_input_snapshot(run_dir)?;
+    for (role, input) in &snapshot.inputs {
+        anyhow::ensure!(
+            input.sha256 == hash_file(Path::new(&input.path))?,
+            "{role} ({}) changed during training; discard this run",
+            input.path
+        );
+    }
+    Ok(())
+}
+
+fn initialize_run(run_dir: &Path, cfg: &Config) -> anyhow::Result<()> {
+    let best = run_dir.join("best.mpk");
+    let has_best = match std::fs::symlink_metadata(&best) {
+        Ok(_) => true,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
+        Err(e) => return Err(e).with_context(|| format!("checking {}", best.display())),
+    };
+    let checkpoints = run_dir.join("checkpoints");
+    let has_checkpoint = if checkpoints.exists() {
+        let mut found = false;
+        for entry in std::fs::read_dir(&checkpoints)
+            .with_context(|| format!("reading {}", checkpoints.display()))?
+        {
+            if entry?.path().extension().is_some_and(|ext| ext == "mpk") {
+                found = true;
+                break;
+            }
+        }
+        found
+    } else {
+        false
+    };
+    anyhow::ensure!(
+        !has_best && !has_checkpoint,
+        "{} already contains a checkpoint; choose a new run name",
+        run_dir.display()
+    );
     std::fs::create_dir_all(run_dir.join("checkpoints"))?;
+    // A reused run must not retain approval for its previous config and checkpoint.
+    crate::quantize::invalidate_gate(run_dir)?;
     // The effective config, overrides applied, so every later step reads what was trained.
     std::fs::write(run_dir.join("config.toml"), toml::to_string(&cfg)?)
         .context("writing the run config")?;
-    B::seed(device, cfg.seed);
-    match cfg.task {
-        crate::config::Task::Parser => train_parser::<B>(args, &cfg, &run_dir, device),
-        crate::config::Task::Detector => train_detector::<B>(&cfg, &run_dir, device),
-    }
+    Ok(())
 }
 
 fn train_parser<B: AutodiffBackend>(
@@ -149,6 +317,7 @@ fn train_parser<B: AutodiffBackend>(
         "{} has no passing data checks; run prepare again",
         cfg.data.sample_manifest
     );
+    crate::data::check_parser_manifest(cfg, &sample)?;
     anyhow::ensure!(
         sample["augment_copies"].as_u64() == Some(cfg.augment.copies as u64),
         "{} was prepared with augment_copies {}, but the config says {}; copies would map to \
@@ -162,16 +331,28 @@ fn train_parser<B: AutodiffBackend>(
     let train_rows = read_shard(&processed.join("train.parquet"), Split::Train)?;
     let (train_ds, train_stats) =
         ParserDataset::from_rows(&train_rows, &fc, args.train_per_country, cfg.augment.copies);
+    anyhow::ensure!(
+        train_stats.unencodable == 0,
+        "parser training has {} unencodable rows out of {}; repair the shard before training",
+        train_stats.unencodable,
+        train_stats.encoded + train_stats.unencodable
+    );
     let valid_rows: Vec<LabelledExample> =
         read_shard(&processed.join("valid.parquet"), Split::Valid)?
             .into_iter()
             .filter(|e| !e.augmented)
             .collect();
     let (valid_kept, valid_items) = encode_examples(&valid_rows, &fc);
+    anyhow::ensure!(
+        !valid_rows.is_empty() && valid_items.len() == valid_rows.len(),
+        "parser validation has {} encoded rows out of {}; repair the invalid or missing validation labels before training",
+        valid_items.len(),
+        valid_rows.len()
+    );
     eprintln!(
-        "train rows {} ({} dropped: a span cuts a token), valid rows {}",
+        "train rows {} ({} unencodable), valid rows {}",
         train_stats.encoded,
-        train_stats.cuts_token,
+        train_stats.unencodable,
         valid_items.len()
     );
     let weights = class_weights(&train_ds.items).to_vec();
@@ -182,7 +363,10 @@ fn train_parser<B: AutodiffBackend>(
         cfg,
         run_dir,
         model,
-        &train_ds.items,
+        TrainingData {
+            items: &train_ds.items,
+            draws: (0..train_ds.items.len()).collect(),
+        },
         &weights,
         device,
         |model| {
@@ -219,6 +403,47 @@ fn train_parser<B: AutodiffBackend>(
 /// The longest silver piece in content tokens: the synthetic documents' limit.
 const SILVER_MAX_TOKENS: usize = 900;
 
+/// Validate and count the complete detector silver input without creating a run or GPU state.
+pub fn check_silver(config: &Path) -> anyhow::Result<()> {
+    let cfg = crate::config::load(config)?;
+    anyhow::ensure!(
+        matches!(cfg.task, crate::config::Task::Detector),
+        "check-silver requires a detector config"
+    );
+    let detector_cfg = cfg
+        .detector
+        .as_ref()
+        .context("a detector config needs a [detector] section")?;
+    let (_docs, counts) = detector::load_silver(
+        &detector_cfg.silver,
+        &cfg.features.to_tessera(),
+        SILVER_MAX_TOKENS,
+    )?;
+    println!("{}", serde_json::to_string_pretty(&counts)?);
+    Ok(())
+}
+
+/// The old materialized order: synthetic entries once, then each silver entry per repeat.
+fn detector_draw_indices(
+    synthetic_count: usize,
+    silver_count: usize,
+    silver_repeat: usize,
+) -> anyhow::Result<Vec<usize>> {
+    let unique_count = synthetic_count
+        .checked_add(silver_count)
+        .context("detector example count overflow")?;
+    let draw_count = silver_count
+        .checked_mul(silver_repeat)
+        .and_then(|n| synthetic_count.checked_add(n))
+        .context("detector draw count overflow")?;
+    let mut draws = Vec::with_capacity(draw_count);
+    draws.extend(0..synthetic_count);
+    for _ in 0..silver_repeat {
+        draws.extend(synthetic_count..unique_count);
+    }
+    Ok(draws)
+}
+
 /// Trains the detector on the synthetic corpus of phase 4.2 with the configured class
 /// weights, validating on exact span F1 macro-averaged over person, org, and address.
 fn train_detector<B: AutodiffBackend>(
@@ -238,17 +463,26 @@ fn train_detector<B: AutodiffBackend>(
     let dir = PathBuf::from(&cfg.data.processed);
     let (train_docs, train_counts) = detector::load_split(&dir, Split::Train, &fc)?;
     let (valid_docs, valid_counts) = detector::load_split(&dir, Split::Valid, &fc)?;
+    anyhow::ensure!(
+        !valid_docs.is_empty(),
+        "detector validation has no encoded documents"
+    );
     eprintln!("train {train_counts:?}, valid {valid_counts:?}");
     let mut train_items: Vec<Encoded> = train_docs.into_iter().map(|d| d.enc).collect();
     let (silver_docs, silver_counts) =
         detector::load_silver(&detector_cfg.silver, &fc, SILVER_MAX_TOKENS)?;
+    let draws = detector_draw_indices(
+        train_items.len(),
+        silver_docs.len(),
+        detector_cfg.silver_repeat,
+    )?;
     if !silver_docs.is_empty() {
         eprintln!(
             "silver {silver_counts:?}, each piece repeated {} times",
             detector_cfg.silver_repeat
         );
-        for _ in 0..detector_cfg.silver_repeat {
-            train_items.extend(silver_docs.iter().map(|d| d.enc.clone()));
+        if detector_cfg.silver_repeat > 0 {
+            train_items.extend(silver_docs.into_iter().map(|d| d.enc));
         }
     }
     let valid_gold: Vec<Vec<KindSpan>> = valid_docs.iter().map(|d| d.gold.clone()).collect();
@@ -261,7 +495,10 @@ fn train_detector<B: AutodiffBackend>(
         cfg,
         run_dir,
         model,
-        &train_items,
+        TrainingData {
+            items: &train_items,
+            draws,
+        },
         &detector_cfg.class_weights,
         device,
         |model| {
@@ -336,6 +573,11 @@ struct FitSummary {
     embedding: usize,
 }
 
+struct TrainingData<'a> {
+    items: &'a [Encoded],
+    draws: Vec<usize>,
+}
+
 /// The shared training loop: AdamW with warmup then cosine decay, masked class-weighted
 /// cross-entropy, one validation per epoch through `validate` (a score to maximize and the
 /// metrics to log), a checkpoint per epoch, `best` for the highest score, and early stopping
@@ -344,11 +586,25 @@ fn fit<B: AutodiffBackend>(
     cfg: &Config,
     run_dir: &Path,
     mut model: TaggerNet<B>,
-    items: &[Encoded],
+    data: TrainingData<'_>,
     weights: &[f32],
     device: &B::Device,
     mut validate: impl FnMut(&TaggerNet<B::InnerBackend>) -> (f64, serde_json::Value),
 ) -> anyhow::Result<FitSummary> {
+    let TrainingData {
+        items,
+        draws: mut order,
+    } = data;
+    anyhow::ensure!(cfg.train.epochs > 0, "training requires at least one epoch");
+    anyhow::ensure!(!order.is_empty(), "training has no examples");
+    anyhow::ensure!(
+        order.iter().all(|&index| index < items.len()),
+        "training draw index is outside the encoded examples"
+    );
+    anyhow::ensure!(
+        weights.iter().all(|w| w.is_finite() && *w > 0.0),
+        "class weights must be finite and positive"
+    );
     let (dense, embedding) =
         net::assert_size(&model, cfg.net.max_params, cfg.net.max_embedding_bytes)?;
     eprintln!("parameters: {dense} dense, {embedding} in the n-gram table");
@@ -359,12 +615,11 @@ fn fit<B: AutodiffBackend>(
         .init::<B, TaggerNet<B>>();
     let recorder = NamedMpkFileRecorder::<FullPrecisionSettings>::new();
     let batch_size = cfg.train.batch_size.max(1);
-    let total_steps = cfg.train.epochs * items.len().div_ceil(batch_size);
+    let total_steps = cfg.train.epochs * order.len().div_ceil(batch_size);
     let mut metrics = File::create(run_dir.join("metrics.jsonl"))?;
     let mut best = (f64::MIN, 0usize, serde_json::Value::Null);
     let (mut since_best, mut step) = (0usize, 0usize);
     let started = std::time::Instant::now();
-    let mut order: Vec<usize> = (0..items.len()).collect();
 
     for epoch in 1..=cfg.train.epochs {
         order.shuffle(&mut ChaCha8Rng::seed_from_u64(cfg.seed ^ epoch as u64));
@@ -400,6 +655,10 @@ fn fit<B: AutodiffBackend>(
             }
         }
         let (score, logged) = validate(&model.valid());
+        anyhow::ensure!(
+            score.is_finite(),
+            "epoch {epoch} produced a non-finite validation score; refusing to select a checkpoint"
+        );
         let train_loss = epoch_loss / batches.max(1) as f64;
         let mut line = serde_json::json!({
             "epoch": epoch,
@@ -449,6 +708,201 @@ fn fit<B: AutodiffBackend>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn changed_training_file_after_snapshot_invalidates_run() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut cfg = crate::config::load(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../configs/parser-small.toml"),
+        )
+        .unwrap();
+        cfg.data.processed = dir.path().join("processed").display().to_string();
+        cfg.data.sample_manifest = dir.path().join("sample.json").display().to_string();
+        std::fs::create_dir_all(&cfg.data.processed).unwrap();
+        for path in [
+            Path::new(&cfg.data.processed).join("train.parquet"),
+            Path::new(&cfg.data.processed).join("valid.parquet"),
+            PathBuf::from(&cfg.data.sample_manifest),
+        ] {
+            std::fs::write(path, b"original data").unwrap();
+        }
+        std::fs::write(
+            dir.path().join("config.toml"),
+            toml::to_string(&cfg).unwrap(),
+        )
+        .unwrap();
+        capture_input_snapshot(&cfg, dir.path()).unwrap();
+        verify_input_snapshot(dir.path()).unwrap();
+        std::fs::write(
+            Path::new(&cfg.data.processed).join("train.parquet"),
+            b"changed data",
+        )
+        .unwrap();
+        let error = verify_input_snapshot(dir.path()).unwrap_err();
+        assert!(error.to_string().contains("train_shard"), "{error:#}");
+    }
+
+    #[test]
+    fn input_snapshot_cannot_omit_configured_silver_sources() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../configs/detector-silver.toml"),
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("config.toml"), &config).unwrap();
+        let snapshot = InputSnapshot {
+            version: INPUT_SNAPSHOT_VERSION,
+            config_sha256: hash_file(&dir.path().join("config.toml")).unwrap(),
+            inputs: std::collections::BTreeMap::from([(
+                "train_shard".to_string(),
+                InputFile {
+                    path: "train.parquet".into(),
+                    sha256: "irrelevant".into(),
+                },
+            )]),
+        };
+        std::fs::write(
+            dir.path().join("input_snapshot.json"),
+            serde_json::to_vec(&snapshot).unwrap(),
+        )
+        .unwrap();
+        let error = load_input_snapshot(dir.path()).unwrap_err();
+        assert!(error.to_string().contains("omits or changes"), "{error:#}");
+    }
+
+    #[test]
+    fn repeated_silver_draws_keep_expanded_example_order_and_steps() {
+        let synthetic = [10usize, 11];
+        let silver = [20usize, 21];
+        let unique = [synthetic.as_slice(), silver.as_slice()].concat();
+        let seed = 42u64;
+        for repeat in [0, 1, 3] {
+            let expanded = synthetic
+                .iter()
+                .copied()
+                .chain((0..repeat).flat_map(|_| silver.iter().copied()))
+                .collect::<Vec<_>>();
+            let draws = detector_draw_indices(synthetic.len(), silver.len(), repeat).unwrap();
+            assert_eq!(
+                draws.iter().map(|&index| unique[index]).collect::<Vec<_>>(),
+                expanded
+            );
+            for batch_size in [1, 2, 3] {
+                assert_eq!(
+                    draws.len().div_ceil(batch_size),
+                    expanded.len().div_ceil(batch_size)
+                );
+            }
+            let mut old_order = (0..expanded.len()).collect::<Vec<_>>();
+            let mut new_order = draws;
+            for epoch in 1..=2 {
+                let epoch_seed = seed ^ epoch;
+                old_order.shuffle(&mut ChaCha8Rng::seed_from_u64(epoch_seed));
+                new_order.shuffle(&mut ChaCha8Rng::seed_from_u64(epoch_seed));
+                assert_eq!(
+                    new_order
+                        .iter()
+                        .map(|&index| unique[index])
+                        .collect::<Vec<_>>(),
+                    old_order
+                        .iter()
+                        .map(|&index| expanded[index])
+                        .collect::<Vec<_>>(),
+                    "repeat={repeat}, epoch={epoch}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn repeated_silver_draw_count_overflow_is_an_error() {
+        assert!(detector_draw_indices(1, usize::MAX, 2).is_err());
+        assert!(detector_draw_indices(usize::MAX, 1, 0).is_err());
+    }
+
+    #[test]
+    fn reused_run_without_checkpoint_loses_quantization_approval_before_training() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = crate::config::load(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../configs/parser-small.toml"),
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("quantize.json"), r#"{"passed":true}"#).unwrap();
+        std::fs::write(dir.path().join("quantized.safetensors"), b"old weights").unwrap();
+        std::fs::create_dir(dir.path().join("checkpoints")).unwrap();
+        std::fs::write(
+            dir.path().join("checkpoints/.DS_Store"),
+            b"not a checkpoint",
+        )
+        .unwrap();
+        initialize_run(dir.path(), &cfg).unwrap();
+        assert!(!dir.path().join("quantize.json").exists());
+        assert_eq!(
+            std::fs::read(dir.path().join("quantized.safetensors")).unwrap(),
+            b"old weights"
+        );
+        assert!(dir.path().join("config.toml").exists());
+        assert!(dir.path().join("checkpoints").exists());
+        assert_eq!(
+            std::fs::read(dir.path().join("checkpoints/.DS_Store")).unwrap(),
+            b"not a checkpoint"
+        );
+    }
+
+    #[test]
+    fn reused_run_with_best_is_rejected_before_mutation() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = crate::config::load(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../configs/parser-small.toml"),
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("best.mpk"), b"old checkpoint").unwrap();
+        std::fs::write(dir.path().join("config.toml"), b"old config").unwrap();
+        std::fs::write(dir.path().join("quantize.json"), b"old gate").unwrap();
+        std::fs::write(dir.path().join("quantized.safetensors"), b"old weights").unwrap();
+        let error = initialize_run(dir.path(), &cfg).unwrap_err().to_string();
+        assert!(error.contains("choose a new run name"), "{error}");
+        for (path, expected) in [
+            ("best.mpk", b"old checkpoint".as_slice()),
+            ("config.toml", b"old config".as_slice()),
+            ("quantize.json", b"old gate".as_slice()),
+            ("quantized.safetensors", b"old weights".as_slice()),
+        ] {
+            assert_eq!(std::fs::read(dir.path().join(path)).unwrap(), expected);
+        }
+        assert!(!dir.path().join("checkpoints").exists());
+    }
+
+    #[test]
+    fn reused_run_with_epoch_checkpoint_is_rejected_before_mutation() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = crate::config::load(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../configs/parser-small.toml"),
+        )
+        .unwrap();
+        std::fs::create_dir(dir.path().join("checkpoints")).unwrap();
+        std::fs::write(
+            dir.path().join("checkpoints/epoch-1.mpk"),
+            b"old checkpoint",
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("config.toml"), b"old config").unwrap();
+        std::fs::write(dir.path().join("quantize.json"), b"old gate").unwrap();
+        let error = initialize_run(dir.path(), &cfg).unwrap_err().to_string();
+        assert!(error.contains("choose a new run name"), "{error}");
+        assert_eq!(
+            std::fs::read(dir.path().join("config.toml")).unwrap(),
+            b"old config"
+        );
+        assert_eq!(
+            std::fs::read(dir.path().join("quantize.json")).unwrap(),
+            b"old gate"
+        );
+        assert_eq!(
+            std::fs::read(dir.path().join("checkpoints/epoch-1.mpk")).unwrap(),
+            b"old checkpoint"
+        );
+    }
 
     #[test]
     fn schedule_warms_up_then_decays() {

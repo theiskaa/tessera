@@ -74,7 +74,7 @@ const DETECTOR_GOLDEN_TEXTS: [(&str, &str); 8] = [
     ("one-word", "Hello"),
 ];
 
-fn sha256_hex(bytes: &[u8]) -> String {
+pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
     hex(&Sha256::digest(bytes))
 }
 
@@ -197,21 +197,14 @@ struct ShippedRun {
 }
 
 fn load_run(dir: &Path, task: Task) -> anyhow::Result<ShippedRun> {
+    crate::quantize::verify_gate(dir)?;
+    crate::train::verify_input_snapshot(dir)?;
     let cfg = crate::config::load(&dir.join("config.toml"))?;
     anyhow::ensure!(
         cfg.task == task,
         "{} is a {:?} run, not a {task:?} run",
         dir.display(),
         cfg.task
-    );
-    let gate: serde_json::Value = serde_json::from_slice(
-        &std::fs::read(dir.join("quantize.json"))
-            .with_context(|| format!("reading {}", dir.join("quantize.json").display()))?,
-    )?;
-    anyhow::ensure!(
-        gate["passed"] == true,
-        "{} did not pass the quantization gate; run `trainer quantize` first",
-        dir.display()
     );
     check_library_shape(&cfg)?;
     let (q, biases) = read_quantized(&dir.join("quantized.safetensors"))?;
@@ -277,30 +270,40 @@ fn check_same_features(parser: &Config, detector: &Config) -> anyhow::Result<()>
     Ok(())
 }
 
-/// Provenance of every data source the two networks learned from, as manifest checksums.
-fn training_snapshot(parser: &Config, detector: &Config) -> anyhow::Result<String> {
-    let manifests = PathBuf::from(&detector.data.manifests);
-    let mut parts = vec![(
-        "parser-sample".to_string(),
-        PathBuf::from(&parser.data.sample_manifest),
-    )];
-    for name in [
-        "detector-synthetic",
-        "wikidata-people",
-        "gleif-lei",
-        "wikidata-organizations",
+/// Run-bound hashes of the exact train/validation shards, silver files, and frozen n-gram
+/// source recorded before training. Current mutable source manifests cannot prove what a run saw.
+fn training_snapshot(parser_run: &Path, detector_run: &Path) -> anyhow::Result<String> {
+    let mut parts = Vec::new();
+    for (name, run) in [
+        ("parser-inputs", parser_run),
+        ("detector-inputs", detector_run),
     ] {
-        parts.push((name.to_string(), manifests.join(format!("{name}.json"))));
+        crate::train::load_input_snapshot(run)?;
+        let bytes = std::fs::read(run.join("input_snapshot.json"))?;
+        parts.push(format!("{name}:{}", sha256_hex(&bytes)));
     }
-    parts
-        .iter()
-        .map(|(name, path)| {
+    Ok(parts.join(","))
+}
+
+/// Bind the combined bundle to both gated checkpoints and their quantized weights.
+fn bind_artifact_hashes(
+    meta: &mut BTreeMap<String, String>,
+    parser_run: &Path,
+    detector_run: &Path,
+) -> anyhow::Result<()> {
+    for (net, run) in [("parser", parser_run), ("detector", detector_run)] {
+        for (name, file) in [
+            ("best_sha256", "best.mpk"),
+            ("quantized_sha256", "quantized.safetensors"),
+            ("input_snapshot_sha256", "input_snapshot.json"),
+        ] {
+            let path = run.join(file);
             let bytes =
-                std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
-            Ok(format!("{name}:{}", sha256_hex(&bytes)))
-        })
-        .collect::<anyhow::Result<Vec<_>>>()
-        .map(|p| p.join(","))
+                std::fs::read(&path).with_context(|| format!("reading {}", path.display()))?;
+            meta.insert(format!("{net}_{name}"), sha256_hex(&bytes));
+        }
+    }
+    Ok(())
 }
 
 /// `trainer export`: writes the two-network bundle, its checksum file, and the golden vectors
@@ -309,11 +312,12 @@ pub fn run(parser_run: &Path, detector_run: &Path, out: &Path, date: &str) -> an
     let parser = load_run(parser_run, Task::Parser)?;
     let detector = load_run(detector_run, Task::Detector)?;
     check_same_features(&parser.cfg, &detector.cfg)?;
-    let meta = metadata(
+    let mut meta = metadata(
         &parser.cfg,
-        &training_snapshot(&parser.cfg, &detector.cfg)?,
+        &training_snapshot(parser_run, detector_run)?,
         date,
     );
+    bind_artifact_hashes(&mut meta, parser_run, detector_run)?;
     std::fs::create_dir_all(out)?;
     let bundle = out.join("tessera-v1.safetensors");
     let shared = shares_parser_ngram(&parser, &detector)?;
@@ -602,6 +606,117 @@ fn golden_case(
 mod tests {
     use super::*;
 
+    fn gated_run(task: Task) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        let config_name = match task {
+            Task::Parser => "parser-small.toml",
+            Task::Detector => "detector-silver.toml",
+        };
+        let mut cfg = crate::config::load(
+            &Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../configs")
+                .join(config_name),
+        )
+        .unwrap();
+        cfg.data.processed = dir.path().join("processed").display().to_string();
+        cfg.data.sample_manifest = dir.path().join("sample.json").display().to_string();
+        if let Some(detector) = cfg.detector.as_mut() {
+            detector.silver = vec![dir.path().join("silver.jsonl").display().to_string()];
+            cfg.net.ngram_from = None;
+        }
+        let config = toml::to_string(&cfg).unwrap();
+        std::fs::write(dir.path().join("config.toml"), &config).unwrap();
+        std::fs::write(dir.path().join("best.mpk"), b"checkpoint").unwrap();
+        for (_, path) in crate::train::input_paths(&cfg) {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, b"training data").unwrap();
+        }
+        crate::train::capture_input_snapshot(&cfg, dir.path()).unwrap();
+        let snapshot_bytes = std::fs::read(dir.path().join("input_snapshot.json")).unwrap();
+        quantize::write_safetensors(&dir.path().join("quantized.safetensors"), &[], &[], None)
+            .unwrap();
+        let quantized = std::fs::read(dir.path().join("quantized.safetensors")).unwrap();
+        let gate = serde_json::json!({
+            "gate_version": 2,
+            "passed": true,
+            "config_sha256": sha256_hex(config.as_bytes()),
+            "best_sha256": sha256_hex(b"checkpoint"),
+            "input_snapshot_sha256": sha256_hex(&snapshot_bytes),
+            "quantized_sha256": sha256_hex(&quantized),
+        });
+        std::fs::write(dir.path().join("quantize.json"), gate.to_string()).unwrap();
+        dir
+    }
+
+    #[test]
+    fn both_networks_require_current_artifact_hashes() {
+        for task in [Task::Parser, Task::Detector] {
+            let dir = gated_run(task);
+            load_run(dir.path(), task).unwrap();
+            for (file, key) in [
+                ("config.toml", "config_sha256"),
+                ("best.mpk", "best_sha256"),
+                ("input_snapshot.json", "input_snapshot_sha256"),
+                ("quantized.safetensors", "quantized_sha256"),
+            ] {
+                let path = dir.path().join(file);
+                let original = std::fs::read(&path).unwrap();
+                let mut changed = original.clone();
+                changed.push(b' ');
+                std::fs::write(&path, changed).unwrap();
+                let err = match load_run(dir.path(), task) {
+                    Ok(_) => panic!("{file} mutation was accepted for {task:?}"),
+                    Err(err) => err,
+                };
+                assert!(err.to_string().contains(key), "{err:#}");
+                std::fs::write(&path, original).unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn export_rechecks_training_file_bytes_after_quantization() {
+        let dir = gated_run(Task::Detector);
+        load_run(dir.path(), Task::Detector).unwrap();
+        std::fs::write(
+            dir.path().join("processed/train.parquet"),
+            b"changed training data",
+        )
+        .unwrap();
+        let error = match load_run(dir.path(), Task::Detector) {
+            Ok(_) => panic!("changed training input was accepted"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("train_shard"), "{error:#}");
+        assert!(
+            error.to_string().contains("changed during training"),
+            "{error:#}"
+        );
+    }
+
+    #[test]
+    fn legacy_unbound_gate_requires_requantization() {
+        let dir = gated_run(Task::Parser);
+        std::fs::write(dir.path().join("quantize.json"), r#"{"passed":true}"#).unwrap();
+        let err = match load_run(dir.path(), Task::Parser) {
+            Ok(_) => panic!("legacy gate was accepted"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("requantize this run"), "{err:#}");
+    }
+
+    #[test]
+    fn export_rejects_runs_without_training_input_snapshots() {
+        let parser = gated_run(Task::Parser);
+        let detector = gated_run(Task::Detector);
+        std::fs::remove_file(parser.path().join("input_snapshot.json")).unwrap();
+        let error = training_snapshot(parser.path(), detector.path()).unwrap_err();
+        assert!(
+            error.to_string().contains("no run-bound input snapshot"),
+            "{error:#}"
+        );
+    }
+
     #[test]
     fn golden_json_is_compact_and_round_trips() {
         let v = serde_json::json!({
@@ -646,6 +761,30 @@ mod tests {
             "created",
         ] {
             assert!(m.contains_key(key), "{key}");
+        }
+    }
+
+    #[test]
+    fn artifact_metadata_binds_both_checkpoints_and_weight_files() {
+        let parser = tempfile::tempdir().unwrap();
+        let detector = tempfile::tempdir().unwrap();
+        for (run, net) in [(parser.path(), "parser"), (detector.path(), "detector")] {
+            for file in ["best.mpk", "quantized.safetensors", "input_snapshot.json"] {
+                let bytes = format!("{net} {file}");
+                std::fs::write(run.join(file), &bytes).unwrap();
+            }
+        }
+        let mut meta = BTreeMap::new();
+        bind_artifact_hashes(&mut meta, parser.path(), detector.path()).unwrap();
+        for (run, net) in [(parser.path(), "parser"), (detector.path(), "detector")] {
+            for (key, file) in [
+                ("best_sha256", "best.mpk"),
+                ("quantized_sha256", "quantized.safetensors"),
+                ("input_snapshot_sha256", "input_snapshot.json"),
+            ] {
+                let expected = sha256_hex(&std::fs::read(run.join(file)).unwrap());
+                assert_eq!(meta[&format!("{net}_{key}")], expected);
+            }
         }
     }
 }
