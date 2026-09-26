@@ -8,14 +8,12 @@
 //!
 //! Worked example: 2,500 retained positions with paragraph breaks before 900, 1,700, and 2,400
 //! and line breaks before the other multiples of 40, and no whitespace between any other
-//! two positions (as in a run of punctuation). Window 1 targets 1,024; the search over
-//! 768..=1,024 finds the paragraph break at 900, so it is `[0, 900)`. The next start is
-//! `900 - 384 = 516`, snapped back to the line break at 480. Window 2 targets 1,504 and cuts
-//! at the line break 1,480: `[480, 1480)`, next start 1,096 snapped to 1,080. Window 3
-//! targets 2,104 and cuts at 2,080: `[1080, 2080)`, next start 1,696 snapped to 1,680.
-//! Window 4 reaches the end: `[1680, 2500)`. Consecutive overlaps are 420, 400, and 400.
+//! two positions (as in a run of punctuation). Window 1 targets 2,048; the search over
+//! 1,792..=2,048 finds the line break at 2,040, so it is `[0, 2040)`. The next start is
+//! `2,040 - 384 = 1,656`, snapped back to the line break at 1,640. Window 2 reaches the end:
+//! `[1640, 2500)`. The overlap is 400 retained positions.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use crate::token::{Token, TokenClass};
 use crate::{Entity, Error, Source};
@@ -25,7 +23,7 @@ pub const MAX_ENTITY_TOKENS: usize = 256;
 /// Positions at a window's inner edges whose predictions the window does not trust.
 pub(crate) const CONTEXT_MARGIN_TOKENS: usize = 64;
 /// Most retained positions in one window.
-pub(crate) const WINDOW_TOKENS: usize = 1024;
+pub(crate) const WINDOW_TOKENS: usize = 2048;
 /// Least overlap between consecutive windows: a longest entity plus a margin on each side.
 pub(crate) const OVERLAP_TOKENS: usize = MAX_ENTITY_TOKENS + 2 * CONTEXT_MARGIN_TOKENS;
 /// A longer run of retained tokens with no whitespace anywhere inside is `InputTooLarge`.
@@ -89,8 +87,8 @@ impl Mask {
     }
 
     /// The ranges, sorted and disjoint.
-    #[cfg(test)]
-    pub fn ranges(&self) -> &[(usize, usize)] {
+    #[cfg(any(test, feature = "markdown"))]
+    pub(crate) fn ranges(&self) -> &[(usize, usize)] {
         &self.ranges
     }
 }
@@ -168,9 +166,12 @@ pub(crate) fn windows(
         return Ok(Vec::new());
     }
     let breaks = breaks_before(tokens, retained);
-    check_unbroken(&breaks)?;
+    let pieces = pieces(masked, n);
+    for &(from, to) in &pieces {
+        check_unbroken(&breaks[from..to])?;
+    }
     let mut out = Vec::new();
-    for (from, to) in pieces(masked, n) {
+    for (from, to) in pieces {
         window_piece(
             tokens,
             retained,
@@ -334,8 +335,6 @@ pub(crate) fn merge(mut spans: Vec<Entity>, mask: Option<&Mask>) -> Vec<Entity> 
     if let Some(mask) = mask {
         spans.retain(|e| mask.contains(e.start, e.end));
     }
-    spans.sort_by(|a, b| a.start.cmp(&b.start).then(b.end.cmp(&a.end)));
-    spans.dedup_by(|a, b| a.start == b.start && a.end == b.end && a.kind == b.kind);
     let rank = |e: &Entity| {
         (
             e.source == Source::Rules,
@@ -344,6 +343,20 @@ pub(crate) fn merge(mut spans: Vec<Entity>, mask: Option<&Mask>) -> Vec<Entity> 
             std::cmp::Reverse(e.start),
         )
     };
+    let mut unique = Vec::with_capacity(spans.len());
+    let mut indices = HashMap::with_capacity(spans.len());
+    for span in spans {
+        let key = (span.start, span.end, span.kind);
+        if let Some(&i) = indices.get(&key) {
+            if rank(&span) > rank(&unique[i]) {
+                unique[i] = span;
+            }
+        } else {
+            indices.insert(key, unique.len());
+            unique.push(span);
+        }
+    }
+    let mut spans = unique;
     spans.sort_by_key(|e| std::cmp::Reverse(rank(e)));
     let mut kept: BTreeMap<usize, Entity> = BTreeMap::new();
     for s in spans {
@@ -426,7 +439,7 @@ mod tests {
     fn the_worked_example_cuts_where_the_module_doc_says() {
         let (w, _) = cover(&example());
         let got: Vec<(usize, usize)> = w.iter().map(|w| (w.tok_start, w.tok_end)).collect();
-        assert_eq!(got, vec![(0, 900), (480, 1480), (1080, 2080), (1680, 2500)]);
+        assert_eq!(got, vec![(0, 2040), (1640, 2500)]);
     }
 
     #[test]
@@ -536,6 +549,18 @@ mod tests {
     }
 
     #[test]
+    fn merge_prefers_higher_confidence_duplicate_in_either_order() {
+        for confidences in [[0.7, 0.9], [0.9, 0.7]] {
+            let out = merge(vec![
+                entity(Kind::Person, Source::Model, 0, 10, confidences[0]),
+                entity(Kind::Person, Source::Model, 0, 10, confidences[1]),
+            ]);
+            assert_eq!(out.len(), 1);
+            assert_eq!(out[0].confidence, 0.9);
+        }
+    }
+
+    #[test]
     fn merge_keeps_a_rules_span_over_a_longer_model_span() {
         let out = merge(vec![
             entity(Kind::Org, Source::Model, 15, 40, 0.95),
@@ -602,6 +627,28 @@ mod tests {
         for win in &w {
             assert!((win.tok_start..win.tok_end).all(|i| !masked[i]));
         }
+    }
+
+    #[test]
+    fn a_long_unbroken_masked_run_does_not_reject_visible_text() {
+        let text = format!(
+            "before ```\n{}\n``` after",
+            ".".repeat(MAX_UNBROKEN_TOKENS + 1)
+        );
+        let tokens = tokenize(&text);
+        let r = retained(&tokens);
+        let code_start = text.find("```").unwrap();
+        let code_end = text.rfind("```").unwrap() + 3;
+        let mask = Mask::new(&[(0, text.len())], &[(code_start, code_end)]);
+        let masked: Vec<bool> = r.iter().map(|&i| !mask.covers(&tokens[i])).collect();
+        let windows = super::windows(&tokens, &r, WINDOW_TOKENS, OVERLAP_TOKENS, Some(&masked))
+            .expect("skipped code does not count against the visible run limit");
+        assert_eq!(windows.len(), 2);
+        assert!(
+            windows
+                .iter()
+                .all(|w| w.tok_end - w.tok_start <= WINDOW_TOKENS)
+        );
     }
 
     #[test]

@@ -7,6 +7,9 @@
 //! dictionaries for en, de, nl, ka, ja (MIT); legal forms from GLEIF's entity
 //! legal form list; honorifics, salutations, and closings hand-written.
 
+use std::collections::HashMap;
+use std::sync::OnceLock;
+
 use crate::chunk::Mask;
 use crate::token::{INVISIBLE, Token, TokenClass};
 
@@ -615,11 +618,6 @@ pub(crate) fn house_number_like(text: &str) -> bool {
     (1..=5).contains(&digits) && (s.len() == digits || (s.len() == digits + 1 && s.ends_with('A')))
 }
 
-/// Whether the lowercased `lower` is an entry of `dict`.
-pub(crate) fn is_term(dict: &[&str], lower: &str) -> bool {
-    dict.contains(&lower)
-}
-
 /// Shape code: 0 lower, 1 upper, 2 title, 3 digit, 4 alnum, 5 punct, 6 space, 7 newline,
 /// 8 other, 9 mixed case.
 fn shape_code(t: &Token, s: &str) -> u8 {
@@ -700,6 +698,16 @@ fn term_flags(text: &str, tokens: &[Token]) -> Vec<u32> {
         (SALUTATIONS, flag::SALUTATION),
         (CLOSINGS, flag::CLOSING),
     ];
+    static TERMS: OnceLock<HashMap<&'static str, u32>> = OnceLock::new();
+    let terms = TERMS.get_or_init(|| {
+        let mut index = HashMap::new();
+        for (dict, bit) in DICTS {
+            for &term in dict {
+                *index.entry(term).or_insert(0) |= bit;
+            }
+        }
+        index
+    });
     let mut out = vec![0u32; tokens.len()];
     let mut phrase = String::new();
     for i in 0..tokens.len() {
@@ -723,10 +731,7 @@ fn term_flags(text: &str, tokens: &[Token]) -> Vec<u32> {
                 ),
             }
             used += 1;
-            let bits = DICTS
-                .iter()
-                .filter(|(dict, _)| is_term(dict, &phrase))
-                .fold(0, |acc, (_, bit)| acc | bit);
+            let bits = terms.get(phrase.as_str()).copied().unwrap_or(0);
             if bits != 0 {
                 for (slot, tok) in out.iter_mut().zip(tokens).take(k + 1).skip(i) {
                     if is_content(tok) {
@@ -987,6 +992,74 @@ mod tests {
         assert!(has(&v, "Grüßen", flag::CLOSING));
         assert!(!has(&v, "Nino", flag::CLOSING));
         assert!(has(&feats("日本", None), "日", flag::COUNTRY_TERM));
+    }
+
+    #[test]
+    fn indexed_term_flags_match_linear_dictionary_scan() {
+        let dicts: [(&[&str], u32); 8] = [
+            (ROAD_TERMS, flag::ROAD_TERM),
+            (UNIT_TERMS, flag::UNIT_TERM),
+            (REGION_TERMS, flag::REGION_TERM),
+            (COUNTRY_TERMS, flag::COUNTRY_TERM),
+            (LEGAL_FORMS, flag::LEGAL_FORM),
+            (HONORIFICS, flag::HONORIFIC),
+            (SALUTATIONS, flag::SALUTATION),
+            (CLOSINGS, flag::CLOSING),
+        ];
+        let all_terms = dicts
+            .iter()
+            .flat_map(|(terms, _)| terms.iter().copied())
+            .collect::<Vec<_>>()
+            .join("\n");
+        for text in [
+            include_str!("../../fixtures/profile/document-10k.txt"),
+            all_terms.as_str(),
+            "Dear Dr Smith,\nAcme e.V.\n株式会社トヨタ\nMit freundlichen Grüßen\nStra\u{ad}ße",
+        ] {
+            let tokens = tokenize(text);
+            let indexed = term_flags(text, &tokens);
+            let mut linear = vec![0u32; tokens.len()];
+            let mut phrase = String::new();
+            for i in 0..tokens.len() {
+                if !is_content(&tokens[i]) {
+                    continue;
+                }
+                phrase.clear();
+                let mut used = 0;
+                for (k, token) in tokens.iter().enumerate().skip(i) {
+                    match token.class {
+                        TokenClass::Newline => break,
+                        TokenClass::Space => {
+                            phrase.push(' ');
+                            continue;
+                        }
+                        _ => phrase.extend(
+                            token
+                                .text(text)
+                                .chars()
+                                .filter(|c| !INVISIBLE.contains(c))
+                                .flat_map(char::to_lowercase),
+                        ),
+                    }
+                    used += 1;
+                    let bits = dicts
+                        .iter()
+                        .filter(|(terms, _)| terms.contains(&phrase.as_str()))
+                        .fold(0, |acc, (_, bit)| acc | bit);
+                    if bits != 0 {
+                        for (slot, token) in linear.iter_mut().zip(&tokens).take(k + 1).skip(i) {
+                            if is_content(token) {
+                                *slot |= bits;
+                            }
+                        }
+                    }
+                    if used == MAX_TERM_TOKENS {
+                        break;
+                    }
+                }
+            }
+            assert_eq!(indexed, linear);
+        }
     }
 
     #[test]

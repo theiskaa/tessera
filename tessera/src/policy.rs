@@ -14,8 +14,8 @@ pub(crate) const MEDIUM: f32 = 0.50;
 pub const DETECT_MIN_PERSON: f32 = 0.80;
 /// Lowest mean label probability a detected org keeps.
 pub const DETECT_MIN_ORG: f32 = 0.80;
-/// Lowest mean label probability a detected address keeps. Address is recall-first: the parser
-/// rejects spans it cannot decompose.
+/// Lowest mean label probability a detected address keeps. Address is recall-first; parser
+/// components annotate the detected span without vetoing it.
 pub const DETECT_MIN_ADDRESS: f32 = 0.50;
 
 /// The detection threshold for a model kind; rule kinds are never thresholded here.

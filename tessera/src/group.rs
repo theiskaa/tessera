@@ -317,11 +317,13 @@ fn place(blocks: &[Block], entities: &[Entity]) -> Vec<Option<Placed>> {
         .iter()
         .enumerate()
         .map(|(entity, e)| {
-            let block = blocks.iter().rposition(|b| b.start <= e.start)?;
+            let block = blocks
+                .partition_point(|b| b.start <= e.start)
+                .checked_sub(1)?;
             let line = blocks[block]
                 .lines
-                .iter()
-                .rposition(|l| l.start <= e.start)?;
+                .partition_point(|l| l.start <= e.start)
+                .checked_sub(1)?;
             Some(Placed {
                 entity,
                 block,
@@ -475,13 +477,11 @@ struct Draft {
 /// One contact per person, and per org in a block with no person.
 fn anchors(blocks: &[Block], entities: &[Entity], placed: &[Option<Placed>]) -> Build {
     let mut contacts = Vec::new();
-    for block in 0..blocks.len() {
-        let in_block: Vec<Placed> = placed
-            .iter()
-            .flatten()
-            .copied()
-            .filter(|p| p.block == block)
-            .collect();
+    let mut by_block = vec![Vec::new(); blocks.len()];
+    for p in placed.iter().flatten() {
+        by_block[p.block].push(*p);
+    }
+    for in_block in by_block {
         let has_person = in_block
             .iter()
             .any(|p| entities[p.entity].kind == Kind::Person);

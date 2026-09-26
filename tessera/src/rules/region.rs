@@ -28,6 +28,9 @@ const MAX_NAME_MENTIONS: usize = 3;
 /// Longest piece scanned at once, so a long document costs bounded memory; pieces are cut at
 /// line breaks, which no number or address crosses.
 const PIECE_BYTES: usize = 64 * 1024;
+/// Look past an arbitrary piece boundary so a phone, email, or postcode beginning before it
+/// can be read whole. Valid emails are at most 320 bytes; phone runs are bounded as well.
+const PIECE_LOOKAHEAD_BYTES: usize = 1024;
 
 const US_STATES: [&str; 51] = [
     "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "DC", "FL", "GA", "HI", "ID", "IL", "IN", "IA",
@@ -82,47 +85,100 @@ const NAMES: [(&str, &str); 25] = [
 
 /// The regions `text` points to, heaviest evidence first, ties in order of first evidence.
 pub(crate) fn infer(text: &str) -> Vec<&'static str> {
-    let mut votes: Vec<(&'static str, u32, usize)> = Vec::new();
-    let mut vote = |region: &'static str, weight: u32, at: usize| match votes
-        .iter_mut()
-        .find(|(r, _, _)| *r == region)
-    {
-        Some(v) => {
-            v.1 += weight;
-            v.2 = v.2.min(at);
+    let mut evidence = Evidence::default();
+    evidence.scan(text, 0);
+    evidence.rank()
+}
+
+/// Accumulates country clues across visible Markdown ranges without keeping a second copy of
+/// the document. `scan` accepts each independent visible range in source order.
+#[derive(Default)]
+pub(crate) struct Evidence {
+    votes: Vec<(&'static str, u32, usize)>,
+    name_counts: [usize; NAMES.len()],
+    script_counts: [usize; 2],
+    script_first: [Option<usize>; 2],
+}
+
+impl Evidence {
+    fn vote(&mut self, region: &'static str, weight: u32, at: usize) {
+        match self.votes.iter_mut().find(|(r, _, _)| *r == region) {
+            Some(v) => {
+                v.1 += weight;
+                v.2 = v.2.min(at);
+            }
+            None => self.votes.push((region, weight, at)),
         }
-        None => votes.push((region, weight, at)),
-    };
-    for (base, piece) in pieces(text) {
-        for p in phone::scan(piece, &[]) {
-            if let Some(region) = p.region.as_deref().and_then(known) {
-                vote(region, INTERNATIONAL, base + p.start);
+    }
+
+    pub(crate) fn scan(&mut self, text: &str, base: usize) {
+        for (piece_base, owned) in pieces(text) {
+            let limit = (piece_base + owned.len() + PIECE_LOOKAHEAD_BYTES).min(text.len());
+            let end = (piece_base + owned.len()..=limit)
+                .rev()
+                .find(|&at| text.is_char_boundary(at))
+                .unwrap_or(piece_base + owned.len());
+            let piece = &text[piece_base..end];
+            for p in phone::scan(piece, &[]) {
+                if p.start >= owned.len() {
+                    continue;
+                }
+                if let Some(region) = p.region.as_deref().and_then(known) {
+                    self.vote(region, INTERNATIONAL, base + piece_base + p.start);
+                }
+            }
+            for e in email::scan(piece) {
+                if e.start >= owned.len() {
+                    continue;
+                }
+                let tld = e
+                    .normalized
+                    .as_deref()
+                    .and_then(|n| n.rsplit('.').next())
+                    .unwrap_or("");
+                if let Some(&(_, region)) =
+                    DOMAINS.iter().find(|(d, _)| tld.eq_ignore_ascii_case(d))
+                {
+                    self.vote(region, DOMAIN, base + piece_base + e.start);
+                }
+            }
+            for (region, weight, at) in postcodes(piece) {
+                if at < owned.len() {
+                    self.vote(region, weight, base + piece_base + at);
+                }
             }
         }
-        for e in email::scan(piece) {
-            let tld = e
-                .normalized
-                .as_deref()
-                .and_then(|n| n.rsplit('.').next())
-                .unwrap_or("");
-            if let Some(&(_, region)) = DOMAINS.iter().find(|(d, _)| tld.eq_ignore_ascii_case(d)) {
-                vote(region, DOMAIN, base + e.start);
+        for (at, c) in text.char_indices() {
+            for (i, range) in ['\u{10a0}'..='\u{10ff}', '\u{3040}'..='\u{30ff}']
+                .into_iter()
+                .enumerate()
+            {
+                if range.contains(&c) {
+                    self.script_counts[i] += 1;
+                    self.script_first[i].get_or_insert(base + at);
+                }
             }
         }
-        for (region, weight, at) in postcodes(piece) {
-            vote(region, weight, base + at);
+        for (i, &(name, region)) in NAMES.iter().enumerate() {
+            for at in mentions(text, name).take(MAX_NAME_MENTIONS - self.name_counts[i]) {
+                self.vote(region, NAME, base + at);
+                self.name_counts[i] += 1;
+            }
         }
     }
-    for (region, first) in scripts(text) {
-        vote(region, SCRIPT, first);
-    }
-    for &(name, region) in &NAMES {
-        for at in mentions(text, name).take(MAX_NAME_MENTIONS) {
-            vote(region, NAME, at);
+
+    pub(crate) fn rank(mut self) -> Vec<&'static str> {
+        for (i, region) in ["GE", "JP"].into_iter().enumerate() {
+            if self.script_counts[i] >= SCRIPT_CHARS {
+                self.vote(region, SCRIPT, self.script_first[i].unwrap_or(0));
+            }
         }
+        self.votes.sort_by(|a, b| b.1.cmp(&a.1).then(a.2.cmp(&b.2)));
+        self.votes
+            .into_iter()
+            .map(|(region, _, _)| region)
+            .collect()
     }
-    votes.sort_by(|a, b| b.1.cmp(&a.1).then(a.2.cmp(&b.2)));
-    votes.into_iter().map(|(region, _, _)| region).collect()
 }
 
 /// `text` in pieces of at most `PIECE_BYTES`, each with its offset, cut after a line break
@@ -226,24 +282,6 @@ fn known(region: &str) -> Option<&'static str> {
         .find(|r| r.eq_ignore_ascii_case(region))
 }
 
-/// GE for Georgian text and JP for kana, each with the byte offset of its first character.
-/// Kanji alone could be Chinese, so only kana count for Japanese.
-fn scripts(text: &str) -> Vec<(&'static str, usize)> {
-    let mut out = Vec::new();
-    for (region, range) in [
-        ("GE", '\u{10a0}'..='\u{10ff}'),
-        ("JP", '\u{3040}'..='\u{30ff}'),
-    ] {
-        let mut seen = text.char_indices().filter(|(_, c)| range.contains(c));
-        if let Some((first, _)) = seen.next()
-            && seen.count() + 1 >= SCRIPT_CHARS
-        {
-            out.push((region, first));
-        }
-    }
-    out
-}
-
 /// Byte offsets where `name` is mentioned. A Latin-script name must stand as a word of its
 /// own, since a letter or digit beside it makes it part of another word; scripts written
 /// without spaces have no such boundary.
@@ -317,6 +355,21 @@ mod tests {
         let unbroken = "é".repeat(PIECE_BYTES);
         let parts: Vec<(usize, &str)> = pieces(&unbroken).collect();
         assert_eq!(parts.iter().map(|(_, p)| *p).collect::<String>(), unbroken);
+    }
+
+    #[test]
+    fn email_crossing_a_piece_cut_still_names_the_region_once() {
+        let text = format!("{}a@b.de", ":".repeat(PIECE_BYTES - 2));
+        assert_eq!(pieces(&text).count(), 2);
+        assert_eq!(infer(&text), ["DE"]);
+    }
+
+    #[cfg(feature = "phone-metadata")]
+    #[test]
+    fn international_phone_crossing_a_piece_cut_still_names_the_region() {
+        let text = format!("{}+44 20 7946 0958", "!".repeat(PIECE_BYTES - 2));
+        assert_eq!(pieces(&text).count(), 2);
+        assert_eq!(infer(&text), ["GB"]);
     }
 
     #[test]

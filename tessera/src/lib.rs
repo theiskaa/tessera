@@ -583,26 +583,27 @@ impl Tessera {
     /// Every supported entity in `text`, as non-overlapping spans sorted by position.
     ///
     /// Emails and phones come from the rules; people, organizations, and addresses from the
-    /// detector, run over windows of a long document. A detected address is then parsed into
-    /// components and kept only if the parser finds at least two distinct labels in it, unless
-    /// `include_uncertain`, which keeps it as uncertain. With `query.format` Markdown, only prose
-    /// is scanned and offsets index the Markdown source; a build without the `markdown` feature
-    /// returns [`Error::UnsupportedFormat`] for it.
+    /// detector, run over windows of a long document. Detected addresses are parsed into
+    /// components; failure to decompose an address does not discard it. With `query.format`
+    /// Markdown, only prose is scanned and offsets index the Markdown source; a build without the
+    /// `markdown` feature returns [`Error::UnsupportedFormat`] for it.
     pub fn detect(&self, text: &str, query: &Query<'_>) -> Result<Vec<Entity>, Error> {
-        let inferred: Vec<&str>;
-        let with_regions: Query<'_>;
-        let query = if query.country_hint.is_empty() {
-            inferred = rules::region::infer(text);
-            with_regions = Query {
-                country_hint: &inferred,
-                ..query.clone()
-            };
-            &with_regions
-        } else {
-            query
-        };
         match &query.format {
-            Format::Text => self.detect_masked(text, query, None, Vec::new()),
+            Format::Text => {
+                let inferred: Vec<&str>;
+                let with_regions: Query<'_>;
+                let query = if query.country_hint.is_empty() {
+                    inferred = rules::region::infer(text);
+                    with_regions = Query {
+                        country_hint: &inferred,
+                        ..query.clone()
+                    };
+                    &with_regions
+                } else {
+                    query
+                };
+                self.detect_masked(text, query, None, Vec::new())
+            }
             #[cfg(feature = "markdown")]
             Format::Markdown(options) => self.detect_markdown(text, query, options),
             // Scanning Markdown as text would return entities from code blocks and link
@@ -622,14 +623,51 @@ impl Tessera {
         query: &Query<'_>,
         options: &MarkdownOptions,
     ) -> Result<Vec<Entity>, Error> {
+        let inferred: Vec<&str>;
+        let with_regions: Query<'_>;
+        let query = if query.country_hint.is_empty() {
+            let mut evidence = rules::region::Evidence::default();
+            for (_, selection) in markdown::segments(text, options) {
+                let visible = selection.mask();
+                for &(start, end) in visible.ranges() {
+                    evidence.scan(&text[start..end], start);
+                }
+                for link in &selection.links {
+                    if visible.contains(link.text_start, link.text_end)
+                        && (link
+                            .dest
+                            .get(..7)
+                            .is_some_and(|s| s.eq_ignore_ascii_case("mailto:"))
+                            || link
+                                .dest
+                                .get(..4)
+                                .is_some_and(|s| s.eq_ignore_ascii_case("tel:")))
+                    {
+                        evidence.scan(&link.dest, link.start);
+                    }
+                }
+            }
+            inferred = evidence.rank();
+            with_regions = Query {
+                country_hint: &inferred,
+                ..query.clone()
+            };
+            &with_regions
+        } else {
+            query
+        };
         let mut out = Vec::new();
         for (segment, selection) in markdown::segments(text, options) {
+            let mask = selection.mask_from(segment.start);
             let linked = rules::from_links(&selection.links, query.country_hint)
                 .into_iter()
                 .map(|e| e.rebased(segment.start, 0))
+                .filter(|e| mask.contains(e.start, e.end))
                 .collect();
+            if mask.ranges().is_empty() {
+                continue;
+            }
             let piece = &text[segment.start..segment.end];
-            let mask = selection.mask_from(segment.start);
             let found = self.detect_masked(piece, query, Some(&mask), linked)?;
             out.extend(found.into_iter().map(|e| e.rebased(0, segment.start)));
         }
@@ -844,6 +882,89 @@ mod tests {
             Some("GB"),
             "an explicit hint wins"
         );
+    }
+
+    #[cfg(feature = "markdown")]
+    #[test]
+    fn markdown_hidden_phone_does_not_choose_visible_phone_region() {
+        let t = rules_only();
+        let text = "Germany\n030 23125 480\n\n```text\n+44 20 7946 0958\n```\n";
+        let phones: Vec<_> = t
+            .detect(text, &markdown_query())
+            .unwrap()
+            .into_iter()
+            .filter(|e| e.kind == Kind::Phone)
+            .collect();
+        assert_eq!(phones.len(), 1);
+        assert_eq!(phones[0].region.as_deref(), Some("DE"));
+
+        let included = Query {
+            format: Format::Markdown(MarkdownOptions {
+                include_code: true,
+                ..MarkdownOptions::default()
+            }),
+            ..Query::default()
+        };
+        let visible_phone = t
+            .detect(text, &included)
+            .unwrap()
+            .into_iter()
+            .find(|e| e.text(text) == "030 23125 480")
+            .unwrap();
+        assert_eq!(visible_phone.region.as_deref(), Some("GB"));
+    }
+
+    #[cfg(feature = "markdown")]
+    #[test]
+    fn markdown_tel_destination_can_name_the_visible_phone_region() {
+        let t = rules_only();
+        let text = "Call the [office](tel:+44-20-7946-0958) or 020 7946 0321.";
+        let phones: Vec<_> = t
+            .detect(text, &markdown_query())
+            .unwrap()
+            .into_iter()
+            .filter(|e| e.kind == Kind::Phone)
+            .collect();
+        assert_eq!(phones.len(), 2);
+        assert_eq!(phones[1].text(text), "020 7946 0321");
+        assert_eq!(phones[1].region.as_deref(), Some("GB"));
+    }
+
+    #[cfg(feature = "markdown")]
+    #[test]
+    fn markdown_link_with_only_inline_code_text_is_not_detected() {
+        let t = rules_only();
+        let text = "Write to [`hidden`](mailto:hidden@example.com) or visible@example.com.";
+        let found = t.detect(text, &markdown_query()).unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].text(text), "visible@example.com");
+
+        let included = Query {
+            format: Format::Markdown(MarkdownOptions {
+                include_code: true,
+                ..MarkdownOptions::default()
+            }),
+            ..Query::default()
+        };
+        let found = t.detect(text, &included).unwrap();
+        assert_eq!(found.len(), 2);
+        assert_eq!(found[0].normalized.as_deref(), Some("hidden@example.com"));
+    }
+
+    #[cfg(all(feature = "markdown", feature = "phone-metadata"))]
+    #[test]
+    fn markdown_hidden_link_target_does_not_choose_phone_region() {
+        let t = rules_only();
+        let text = "Germany: 030 23125 480. [`hidden`](tel:+44-20-7946-0958)";
+        let phones: Vec<_> = t
+            .detect(text, &markdown_query())
+            .unwrap()
+            .into_iter()
+            .filter(|e| e.kind == Kind::Phone)
+            .collect();
+        assert_eq!(phones.len(), 1);
+        assert_eq!(phones[0].text(text), "030 23125 480");
+        assert_eq!(phones[0].region.as_deref(), Some("DE"));
     }
 
     #[cfg(feature = "markdown")]

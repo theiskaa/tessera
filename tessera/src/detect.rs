@@ -21,7 +21,7 @@ impl Tessera {
 
     /// The detector's entities of the wanted kinds: features over the whole document once,
     /// the network per window, spans kept only where their window trusts them, merged across
-    /// windows and against the rule spans, and addresses checked by the parser.
+    /// windows and against the rule spans, and address components attached by the parser.
     pub(crate) fn detect_model(
         &self,
         text: &str,

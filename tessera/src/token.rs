@@ -486,6 +486,115 @@ pub fn tokenize(text: &str) -> Vec<Token> {
     tokens
 }
 
+/// Experimental token-boundary contract. This is deliberately not wired into `tokenize`,
+/// runtime detection, parsing, or any model bundle. Each switch can be ablated separately.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BoundaryV1 {
+    WordJoiner,
+    AsciiElision,
+    AcronymHyphen,
+    TitlecaseHyphen,
+    /// Both ASCII hyphen rules, without the word-joiner or elision changes.
+    CapitalHyphen,
+    Combined,
+}
+
+/// Opt-in v1 boundary prototype. The old tokenizer remains the only production path.
+/// Every output byte belongs to exactly one token, including isolated joiner bytes.
+#[allow(dead_code)]
+pub(crate) fn tokenize_boundary_v1(text: &str, variant: BoundaryV1) -> Vec<Token> {
+    let mut out = Vec::new();
+    for original in tokenize(text) {
+        let part = original.text(text);
+        let bytes = part.as_bytes();
+        let mut cuts = vec![0, part.len()];
+        if matches!(variant, BoundaryV1::WordJoiner | BoundaryV1::Combined) {
+            for (at, _) in part.match_indices('\u{2060}') {
+                cuts.extend([at, at + '\u{2060}'.len_utf8()]);
+            }
+        }
+        if matches!(variant, BoundaryV1::AsciiElision | BoundaryV1::Combined)
+            && bytes.len() >= 4
+            && bytes[0].is_ascii_lowercase()
+            && bytes[1] == b'\''
+        {
+            let run = bytes[2..]
+                .iter()
+                .take_while(|b| b.is_ascii_alphabetic())
+                .collect::<Vec<_>>();
+            let after_run = part[2 + run.len()..].chars().next();
+            if run.len() >= 2
+                && run.iter().all(|b| b.is_ascii_uppercase())
+                && !after_run.is_some_and(char::is_alphanumeric)
+            {
+                cuts.extend([1, 2]);
+            }
+        }
+        if matches!(
+            variant,
+            BoundaryV1::AcronymHyphen
+                | BoundaryV1::TitlecaseHyphen
+                | BoundaryV1::CapitalHyphen
+                | BoundaryV1::Combined
+        ) {
+            for (at, &byte) in bytes.iter().enumerate() {
+                if byte != b'-' {
+                    continue;
+                }
+                let left = bytes[..at]
+                    .iter()
+                    .rev()
+                    .take_while(|b| b.is_ascii_alphabetic())
+                    .count();
+                let right = bytes[at + 1..]
+                    .iter()
+                    .take_while(|b| b.is_ascii_alphabetic())
+                    .collect::<Vec<_>>();
+                if left < 2 || right.is_empty() || !right.iter().all(|b| b.is_ascii_lowercase()) {
+                    continue;
+                }
+                let before_prefix = part[..at - left].chars().next_back();
+                let after_suffix = part[at + 1 + right.len()..].chars().next();
+                if before_prefix.is_some_and(char::is_alphanumeric)
+                    || after_suffix.is_some_and(char::is_alphanumeric)
+                {
+                    continue;
+                }
+                let prefix = &bytes[at - left..at];
+                let acronym = prefix.iter().all(u8::is_ascii_uppercase);
+                let title = prefix[0].is_ascii_uppercase()
+                    && prefix[1..].iter().all(u8::is_ascii_lowercase);
+                let accepted = match variant {
+                    BoundaryV1::AcronymHyphen => acronym,
+                    BoundaryV1::TitlecaseHyphen => title,
+                    BoundaryV1::CapitalHyphen | BoundaryV1::Combined => acronym || title,
+                    _ => false,
+                };
+                if accepted {
+                    cuts.extend([at, at + 1]);
+                }
+            }
+        }
+        cuts.sort_unstable();
+        cuts.dedup();
+        if cuts.len() == 2 {
+            out.push(original);
+            continue;
+        }
+        for pair in cuts.windows(2) {
+            let start = original.start + pair[0];
+            let end = original.start + pair[1];
+            for mut token in tokenize(&text[start..end]) {
+                token.start += start;
+                token.end += start;
+                out.push(token);
+            }
+        }
+    }
+    out
+}
+
 fn alnum_script(s: Script) -> bool {
     matches!(s, Script::Latin | Script::Cyrillic | Script::Greek)
 }
@@ -600,6 +709,23 @@ mod tests {
             .collect()
     }
 
+    fn boundary_parts(text: &str, variant: BoundaryV1) -> Vec<(&str, TokenClass, Script)> {
+        let tokens = tokenize_boundary_v1(text, variant);
+        assert_eq!(tokens.first().map(|t| t.start).unwrap_or(0), 0);
+        assert_eq!(tokens.last().map(|t| t.end).unwrap_or(0), text.len());
+        for pair in tokens.windows(2) {
+            assert_eq!(pair[0].end, pair[1].start);
+        }
+        assert_eq!(
+            tokens.iter().map(|t| t.text(text)).collect::<String>(),
+            text
+        );
+        tokens
+            .iter()
+            .map(|t| (t.text(text), t.class, t.script))
+            .collect()
+    }
+
     use Script::{Arabic, Cyrillic, Georgian, Han, Hiragana, Katakana, Latin};
     use TokenClass::{Alnum, Alpha, Digit, Newline, Punct, Space};
 
@@ -654,6 +780,269 @@ mod tests {
             parts("-Luc"),
             vec![("-", Punct, Script::Other), ("Luc", Alpha, Latin)]
         );
+    }
+
+    #[test]
+    fn boundary_v1_word_joiner_exposes_both_byte_edges() {
+        assert_eq!(
+            boundary_parts("UBA\u{2060}", BoundaryV1::WordJoiner),
+            vec![
+                ("UBA", Alpha, Latin),
+                ("\u{2060}", TokenClass::Other, Script::Other)
+            ]
+        );
+        assert_eq!(
+            boundary_parts("Te\u{2060}kom", BoundaryV1::WordJoiner),
+            vec![
+                ("Te", Alpha, Latin),
+                ("\u{2060}", TokenClass::Other, Script::Other),
+                ("kom", Alpha, Latin)
+            ]
+        );
+        assert_eq!(
+            parts("Te\u{2060}kom"),
+            vec![("Te\u{2060}kom", Alpha, Latin)]
+        );
+        assert_eq!(
+            boundary_parts("Te\u{AD}le\u{AD}kom", BoundaryV1::WordJoiner),
+            parts("Te\u{AD}le\u{AD}kom")
+        );
+    }
+
+    #[test]
+    fn boundary_v1_elision_only_before_ascii_all_caps_run() {
+        for example in ["l'ANSSI", "l'AI"] {
+            let got = boundary_parts(example, BoundaryV1::AsciiElision);
+            assert_eq!(got[0], ("l", Alpha, Latin));
+            assert_eq!(got[1], ("'", Punct, Script::Other));
+            assert!(got[2].0.bytes().all(|b| b.is_ascii_uppercase()));
+        }
+        for example in [
+            "d'Italia",
+            "l'Anssi",
+            "O'Connor",
+            "D'Artagnan",
+            "al'ANSSI",
+            "l'ANSSIx",
+            "l'ANSSIé",
+            "l'AI2",
+            "l’ANSSI",
+        ] {
+            assert_eq!(
+                boundary_parts(example, BoundaryV1::AsciiElision),
+                parts(example),
+                "unexpected elision split: {example}"
+            );
+        }
+        assert_eq!(parts("l'ANSSI"), vec![("l'ANSSI", Alpha, Latin)]);
+    }
+
+    #[test]
+    fn boundary_v1_capital_hyphen_is_narrow_and_ablatable() {
+        for (text, prefix, suffix) in [
+            ("Administration-approved", "Administration", "approved"),
+            ("FDIC-insured", "FDIC", "insured"),
+            ("NIH-funded", "NIH", "funded"),
+            ("FSA-related", "FSA", "related"),
+        ] {
+            assert_eq!(
+                boundary_parts(text, BoundaryV1::CapitalHyphen),
+                vec![
+                    (prefix, Alpha, Latin),
+                    ("-", Punct, Script::Other),
+                    (suffix, Alpha, Latin)
+                ]
+            );
+            assert_eq!(parts(text), vec![(text, Alpha, Latin)]);
+        }
+        for example in [
+            "self-employed",
+            "AAa-foo",
+            "A-foo",
+            "éFDIC-insured",
+            "FDIC-insuredé",
+            "FDIC-insured2",
+            "O'Brien",
+            "თბილისი-საქართველო",
+            "Tbilisi-ში",
+        ] {
+            assert_eq!(
+                boundary_parts(example, BoundaryV1::CapitalHyphen),
+                parts(example),
+                "unexpected capital-hyphen split: {example}"
+            );
+        }
+        assert_eq!(
+            boundary_parts("Jean-Luc", BoundaryV1::CapitalHyphen),
+            parts("Jean-Luc")
+        );
+    }
+
+    #[test]
+    fn boundary_v1_acronym_and_titlecase_hyphens_are_independent() {
+        for (text, prefix, suffix) in [
+            ("FDIC-insured", "FDIC", "insured"),
+            ("NIH-funded", "NIH", "funded"),
+            ("FSA-related", "FSA", "related"),
+        ] {
+            assert_eq!(
+                boundary_parts(text, BoundaryV1::AcronymHyphen),
+                vec![
+                    (prefix, Alpha, Latin),
+                    ("-", Punct, Script::Other),
+                    (suffix, Alpha, Latin),
+                ]
+            );
+            assert_eq!(
+                boundary_parts(text, BoundaryV1::TitlecaseHyphen),
+                parts(text)
+            );
+        }
+        assert_eq!(
+            boundary_parts("Administration-approved", BoundaryV1::TitlecaseHyphen),
+            vec![
+                ("Administration", Alpha, Latin),
+                ("-", Punct, Script::Other),
+                ("approved", Alpha, Latin),
+            ]
+        );
+        assert_eq!(
+            boundary_parts("Administration-approved", BoundaryV1::AcronymHyphen),
+            parts("Administration-approved")
+        );
+        for text in ["FDIC-insured", "Administration-approved", "self-employed"] {
+            let broad = boundary_parts(text, BoundaryV1::CapitalHyphen);
+            let selected = if text == "FDIC-insured" {
+                boundary_parts(text, BoundaryV1::AcronymHyphen)
+            } else if text == "Administration-approved" {
+                boundary_parts(text, BoundaryV1::TitlecaseHyphen)
+            } else {
+                parts(text)
+            };
+            assert_eq!(broad, selected);
+        }
+    }
+
+    #[test]
+    fn boundary_v1_switches_are_independent_and_cover_utf8() {
+        let text = "l'ANSSI FDIC-insured UBA\u{2060} Te\u{AD}le\u{AD}kom საქართველო-საქართველო";
+        let word = boundary_parts(text, BoundaryV1::WordJoiner);
+        let elision = boundary_parts(text, BoundaryV1::AsciiElision);
+        let hyphen = boundary_parts(text, BoundaryV1::CapitalHyphen);
+        let all = boundary_parts(text, BoundaryV1::Combined);
+        assert!(word.iter().any(|p| p.0 == "l'ANSSI"));
+        assert!(word.iter().any(|p| p.0 == "FDIC-insured"));
+        assert!(elision.iter().any(|p| p.0 == "FDIC-insured"));
+        assert!(hyphen.iter().any(|p| p.0 == "l'ANSSI"));
+        assert!(all.iter().any(|p| p.0 == "ANSSI"));
+        assert!(all.iter().any(|p| p.0 == "FDIC"));
+        assert!(all.iter().any(|p| p.0 == "\u{2060}"));
+    }
+
+    #[test]
+    #[ignore = "private frozen-corpus structural audit; run explicitly with --ignored --nocapture"]
+    fn boundary_v1_frozen_corpus_audit() {
+        use serde_json::Value;
+        use std::fs;
+        use std::path::PathBuf;
+
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
+        for (name, relative, text_field, spans_field) in [
+            (
+                "candidate",
+                "data/interim/silver/qa-dedup-20260926/train.jsonl",
+                "text",
+                "entities",
+            ),
+            (
+                "real_dev",
+                "data/interim/review/gold-all.jsonl",
+                "input",
+                "expected",
+            ),
+        ] {
+            let source = fs::read_to_string(root.join(relative)).expect("frozen corpus present");
+            let variants = [
+                ("word_joiner", BoundaryV1::WordJoiner),
+                ("ascii_elision", BoundaryV1::AsciiElision),
+                ("acronym_hyphen", BoundaryV1::AcronymHyphen),
+                ("titlecase_hyphen", BoundaryV1::TitlecaseHyphen),
+                ("capital_hyphen", BoundaryV1::CapitalHyphen),
+                ("combined", BoundaryV1::Combined),
+            ];
+            let mut changed_docs = [0usize; 6];
+            let mut added_tokens = [0usize; 6];
+            let mut newly_boundary_reachable = [0usize; 6];
+            let mut lost_boundary_reachable = [0usize; 6];
+            let mut gold_with_new_internal_boundaries = [0usize; 6];
+            let mut max_added_tokens_in_doc = [0usize; 6];
+            let mut total_docs = 0usize;
+            let mut total_gold = 0usize;
+            for line in source.lines() {
+                let row: Value = serde_json::from_str(line).unwrap();
+                let text = row[text_field].as_str().unwrap();
+                let base = tokenize(text);
+                let spans = row[spans_field].as_array().unwrap();
+                total_docs += 1;
+                total_gold += spans.len();
+                let boundary = |tokens: &[Token], start: usize, end: usize| {
+                    tokens.iter().any(|t| {
+                        !matches!(t.class, TokenClass::Space | TokenClass::Newline)
+                            && t.start == start
+                    }) && tokens.iter().any(|t| {
+                        !matches!(t.class, TokenClass::Space | TokenClass::Newline) && t.end == end
+                    })
+                };
+                for (i, (_, variant)) in variants.iter().enumerate() {
+                    let trial = tokenize_boundary_v1(text, *variant);
+                    assert_eq!(trial.first().map(|t| t.start).unwrap_or(0), 0);
+                    assert_eq!(trial.last().map(|t| t.end).unwrap_or(0), text.len());
+                    assert!(trial.windows(2).all(|pair| pair[0].end == pair[1].start));
+                    if trial != base {
+                        changed_docs[i] += 1;
+                    }
+                    assert!(trial.len() >= base.len());
+                    let added = trial.len() - base.len();
+                    added_tokens[i] += added;
+                    max_added_tokens_in_doc[i] = max_added_tokens_in_doc[i].max(added);
+                    let baseline_starts: std::collections::HashSet<usize> =
+                        base.iter().map(|t| t.start).collect();
+                    let new_starts: Vec<usize> = trial
+                        .iter()
+                        .map(|t| t.start)
+                        .filter(|start| !baseline_starts.contains(start))
+                        .collect();
+                    for span in spans {
+                        let (Some(start), Some(end)) =
+                            (span["start"].as_u64(), span["end"].as_u64())
+                        else {
+                            continue;
+                        };
+                        let old = boundary(&base, start as usize, end as usize);
+                        let new = boundary(&trial, start as usize, end as usize);
+                        newly_boundary_reachable[i] += usize::from(!old && new);
+                        lost_boundary_reachable[i] += usize::from(old && !new);
+                        let after_start = new_starts.partition_point(|&p| (p as u64) <= start);
+                        let internal = new_starts
+                            .get(after_start)
+                            .is_some_and(|&p| (p as u64) < end);
+                        gold_with_new_internal_boundaries[i] += usize::from(internal);
+                    }
+                }
+            }
+            for (i, (variant, _)) in variants.iter().enumerate() {
+                assert_eq!(
+                    lost_boundary_reachable[i], 0,
+                    "{name} {variant} lost old span boundary"
+                );
+                println!(
+                    "BOUNDARY_V1_AUDIT {name} {variant} docs={total_docs} gold={total_gold} changed_docs={} added_tokens={} max_added_tokens_in_doc={} newly_boundary_reachable={} lost_boundary_reachable={} gold_with_new_internal_boundaries={}",
+                    changed_docs[i], added_tokens[i], max_added_tokens_in_doc[i],
+                    newly_boundary_reachable[i], lost_boundary_reachable[i],
+                    gold_with_new_internal_boundaries[i]
+                );
+            }
+        }
     }
 
     #[test]

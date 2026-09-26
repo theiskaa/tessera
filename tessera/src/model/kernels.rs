@@ -117,6 +117,9 @@ pub(crate) fn accumulate_scalar(weights: &[f32], x: &[f32], y: &mut [f32]) {
         return;
     }
     for (&v, row) in x.iter().zip(weights.chunks_exact(y.len())) {
+        if v == 0.0 {
+            continue;
+        }
         for (acc, &w) in y.iter_mut().zip(row) {
             *acc += w * v;
         }
@@ -149,6 +152,9 @@ fn accumulate_simd(weights: &[f32], x: &[f32], y: &mut [f32]) {
             ]
         };
         for (&v, row) in rows() {
+            if v == 0.0 {
+                continue;
+            }
             let v = f32x4_splat(v);
             let w = &row[o..o + 16];
             // SAFETY: `w` holds sixteen f32, as above.
@@ -179,6 +185,9 @@ fn accumulate_simd(weights: &[f32], x: &[f32], y: &mut [f32]) {
         // SAFETY: `out` holds four f32, the bytes of one `v128`.
         let mut acc = unsafe { v128_load(out.as_ptr() as *const v128) };
         for (&v, row) in rows() {
+            if v == 0.0 {
+                continue;
+            }
             // SAFETY: the slice holds four f32.
             let w = unsafe { v128_load(row[o..o + 4].as_ptr() as *const v128) };
             acc = f32x4_add(acc, f32x4_mul(w, f32x4_splat(v)));
@@ -189,6 +198,9 @@ fn accumulate_simd(weights: &[f32], x: &[f32], y: &mut [f32]) {
     }
     if o < output {
         for (&v, row) in rows() {
+            if v == 0.0 {
+                continue;
+            }
             for (acc, &w) in y[o..].iter_mut().zip(&row[o..]) {
                 *acc += w * v;
             }
@@ -313,6 +325,31 @@ mod tests {
 
     fn close(a: f32, b: f32) -> bool {
         (a - b).abs() <= 1e-4 * a.abs().max(b.abs()).max(1.0)
+    }
+
+    #[test]
+    fn zero_activation_skip_keeps_dense_sums_bit_identical() {
+        let mut rng = XorShift(0x74a6_32e1_9bf0_457d);
+        for output in [1, 3, 4, 15, 16, 17, 96, 192] {
+            let input = 79;
+            let weights: Vec<f32> = (0..input * output).map(|_| rng.f32()).collect();
+            let x: Vec<f32> = (0..input)
+                .map(|i| if i % 3 == 0 { 0.0 } else { rng.f32() })
+                .collect();
+            let mut want = vec![0.0f32; output];
+            for (&v, row) in x.iter().zip(weights.chunks_exact(output)) {
+                for (acc, &w) in want.iter_mut().zip(row) {
+                    *acc += w * v;
+                }
+            }
+            let mut got = vec![0.0f32; output];
+            accumulate(&weights, &x, &mut got);
+            assert_eq!(
+                got.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+                want.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+                "output={output}"
+            );
+        }
     }
 
     #[test]
