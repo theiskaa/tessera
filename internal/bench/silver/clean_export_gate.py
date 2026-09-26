@@ -19,9 +19,11 @@ from urllib.parse import urlsplit
 ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_CANDIDATE = ROOT / "data/interim/silver/qa-dedup-20260926/train.jsonl"
 DEFAULT_LINEAGE = ROOT / "data/interim/silver/qa-dedup-20260926/source-lineage-pending-v2.jsonl"
+DEV_GOLD_SHA256 = "e283b6db04469fc67945f0204a597fe25da092fa2f91062073325f1213028887"
 KINDS = {"person", "org", "address"}
 BAD_VALUES = {"", "pending", "unknown", "todo", "tbd", "n/a", "none"}
 PUBLISHER_ID = re.compile(r"^[a-z][a-z0-9_-]*(?::[a-z0-9][a-z0-9._-]*)+$")
+HOST_ID = re.compile(r"^[a-z0-9.-]+$")
 
 
 def digest(data):
@@ -78,6 +80,67 @@ def publisher_ids(value):
             and len(value) == len(set(value)))
 
 
+def normalized_host(value):
+    if not isinstance(value, str):
+        return None
+    host = value.lower().rstrip(".")
+    if host.startswith("www."):
+        host = host[4:]
+    return host if HOST_ID.fullmatch(host) and "." in host else None
+
+
+def load_eval_hosts(path, errors):
+    if path is None:
+        errors.append("missing sealed development host manifest")
+        return None, None
+    manifest = json.loads(path.read_text())
+    if (manifest.get("status") != "sealed" or not filled(manifest.get("version"))
+            or not filled(manifest.get("reviewer")) or not filled(manifest.get("reviewed_at"))):
+        errors.append("development host manifest needs sealed status, version, reviewer, date")
+    gold_path = manifest.get("gold_path")
+    if manifest.get("gold_sha256") != DEV_GOLD_SHA256:
+        errors.append("development host gold identity differs from pinned gold")
+        return None, None
+    if not isinstance(gold_path, str) or not Path(gold_path).is_file():
+        errors.append("development host gold path missing")
+        return None, None
+    gold_bytes = Path(gold_path).read_bytes()
+    if digest(gold_bytes) != manifest.get("gold_sha256"):
+        errors.append("development host gold SHA mismatch")
+        return None, None
+    gold = rows(Path(gold_path))
+    if not gold:
+        errors.append("development host gold is empty")
+        return None, None
+    hosts = set()
+    hashes = set()
+    identities = set()
+    for row in gold:
+        try:
+            identity, value = eval_gold_identity_text(row)
+        except ValueError as exc:
+            errors.append(str(exc))
+            return None, None
+        if identity in identities:
+            errors.append(f"development gold duplicate identity {identity}")
+            return None, None
+        identities.add(identity)
+        source_host = row.get("source_host")
+        if not isinstance(source_host, str) or source_host.count("|") != 1:
+            errors.append(f"development gold missing source_host {identity}")
+            return None, None
+        country, host = source_host.split("|", 1)
+        host = normalized_host(host)
+        if country != row.get("country") or host is None:
+            errors.append(f"development gold invalid source_host {identity}")
+            return None, None
+        hosts.add(host)
+        hashes.add(digest(value.encode("utf-8")))
+    if len(gold) != manifest.get("rows"):
+        errors.append("development host gold row count mismatch")
+    return hosts, hashes
+
+
 def indexed(items, name, errors):
     out = {}
     for item in items:
@@ -115,7 +178,7 @@ def validate_spans(text, spans):
 
 
 def validate_inputs(candidate_path, lineage_path, qualification_path, labels_path, eval_path,
-                    root=ROOT, selection_path=None):
+                    root=ROOT, selection_path=None, eval_hosts_path=None):
     errors = []
     counts = Counter()
     candidate_bytes = candidate_path.read_bytes()
@@ -174,6 +237,7 @@ def validate_inputs(candidate_path, lineage_path, qualification_path, labels_pat
             errors.append("reviewed labels have keys outside selection")
     eval_publishers = None
     eval_text_hashes = None
+    eval_hosts, dev_text_hashes = load_eval_hosts(eval_hosts_path, errors)
     if eval_path:
         ev = json.loads(eval_path.read_text())
         if (ev.get("status") != "sealed" or not filled(ev.get("version"))
@@ -241,6 +305,13 @@ def validate_inputs(candidate_path, lineage_path, qualification_path, labels_pat
         counts["selected"] += 1
         if eval_text_hashes is not None and text_hash in eval_text_hashes:
             errors.append(prefix + "exact text overlaps sealed evaluation gold")
+        if dev_text_hashes is not None and text_hash in dev_text_hashes:
+            errors.append(prefix + "exact text overlaps development gold")
+        candidate_host = normalized_host(info.get("url_host"))
+        if candidate_host is None:
+            errors.append(prefix + "invalid candidate URL host")
+        if eval_hosts is not None and candidate_host in eval_hosts:
+            errors.append(prefix + "development host overlap")
         raw_path_value = info.get("raw_path")
         raw_path = root / raw_path_value if isinstance(raw_path_value, str) else None
         if raw_path is None or not raw_path.is_file() or not raw_path.resolve().is_relative_to((root / "data/raw/silver").resolve()):
@@ -357,13 +428,14 @@ def main():
     parser.add_argument("--selection", type=Path)
     parser.add_argument("--labels", type=Path)
     parser.add_argument("--eval-publishers", type=Path)
+    parser.add_argument("--eval-hosts", type=Path)
     parser.add_argument("--config", type=Path)
     parser.add_argument("--trainer", type=Path)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     output, report = validate_inputs(args.candidate, args.lineage, args.qualification,
                                      args.labels, args.eval_publishers,
-                                     selection_path=args.selection)
+                                     selection_path=args.selection, eval_hosts_path=args.eval_hosts)
     if not report["errors"]:
         if not args.config or not args.trainer:
             report["errors"].append("config and trainer executable required for runtime preflight")
@@ -385,6 +457,7 @@ def main():
                                 "qualification_sha256": digest(args.qualification.read_bytes()),
                                 "labels_sha256": digest(args.labels.read_bytes()),
                                 "eval_publishers_sha256": digest(args.eval_publishers.read_bytes()),
+                                "eval_hosts_sha256": digest(args.eval_hosts.read_bytes()),
                                 "trainer_sha256": digest(args.trainer.read_bytes()),
                                 "config_sha256": digest(args.config.read_bytes())}
                     with args.output.open("xb") as handle:

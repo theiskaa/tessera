@@ -5,6 +5,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import clean_export_gate as gate
@@ -32,7 +33,11 @@ class ExportGateTest(unittest.TestCase):
         self.selection_path = self.root / "selection.json"
         self.gold_path = self.root / "gold.jsonl"
         self.index_path = self.root / "publisher-index.jsonl"
+        self.dev_gold_path = self.root / "development-gold.jsonl"
+        self.eval_hosts_path = self.root / "development-hosts.json"
         self.gold_path.write_bytes(gate.canonical({"id": "gold-1", "text": "Other Agency"}) + b"\n")
+        self.dev_gold = {"name": "dev-1", "input": "Other development page", "country": "US",
+                         "source_host": "US|other.example"}
         self.index = {"id": "gold-1", "publisher_group": "unit:other-agency",
                       "publisher_groups": ["unit:other-agency"]}
         self.lineage = {"candidate_line": 1, "source": "unit", "id": "one", "country": "US",
@@ -90,13 +95,64 @@ class ExportGateTest(unittest.TestCase):
         self.index_path.write_bytes(gate.canonical(self.index) + b"\n")
         self.evaluation["publisher_index_sha256"] = gate.digest(self.index_path.read_bytes())
         self.eval_path.write_text(json.dumps(self.evaluation))
+        self.dev_gold_path.write_bytes(gate.canonical(self.dev_gold) + b"\n")
+        self.trusted_dev_sha256 = gate.digest(self.dev_gold_path.read_bytes())
+        self.eval_hosts_path.write_text(json.dumps({
+            "status": "sealed", "version": "fixture-v1", "reviewer": "fixture reviewer",
+            "reviewed_at": "2026-09-27", "gold_path": str(self.dev_gold_path),
+            "gold_sha256": gate.digest(self.dev_gold_path.read_bytes()), "rows": 1}))
 
     def check(self, qualification=True, labels=True, selection=False):
-        return gate.validate_inputs(
-            self.candidate_path, self.lineage_path,
-            self.qualification_path if qualification else None,
-            self.labels_path if labels else None, self.eval_path, self.root,
-            self.selection_path if selection else None)
+        with patch.object(gate, "DEV_GOLD_SHA256", self.trusted_dev_sha256):
+            return gate.validate_inputs(
+                self.candidate_path, self.lineage_path,
+                self.qualification_path if qualification else None,
+                self.labels_path if labels else None, self.eval_path, self.root,
+                self.selection_path if selection else None, self.eval_hosts_path)
+
+    def test_development_host_overlap_fails_even_when_qualifications_pass(self):
+        self.dev_gold["source_host"] = "US|www.example.org"
+        self.write()
+        _, report = self.check()
+        self.assertTrue(any("development host overlap" in e for e in report["errors"]))
+
+    def test_development_gold_hash_and_exact_text_are_checked(self):
+        self.dev_gold["input"] = self.text
+        self.write()
+        _, report = self.check()
+        self.assertTrue(any("exact text overlaps development gold" in e for e in report["errors"]))
+        self.dev_gold_path.write_bytes(self.dev_gold_path.read_bytes() + b" ")
+        _, report = self.check()
+        self.assertTrue(any("development host gold SHA mismatch" in e for e in report["errors"]))
+
+    def test_missing_development_host_manifest_fails(self):
+        _, report = gate.validate_inputs(self.candidate_path, self.lineage_path,
+                                         self.qualification_path, self.labels_path,
+                                         self.eval_path, self.root)
+        self.assertTrue(any("missing sealed development host manifest" in e
+                            for e in report["errors"]))
+
+    def test_substituted_empty_development_gold_fails(self):
+        self.dev_gold_path.write_bytes(b"")
+        manifest = json.loads(self.eval_hosts_path.read_text())
+        manifest["gold_sha256"] = gate.digest(b"")
+        manifest["rows"] = 0
+        self.eval_hosts_path.write_text(json.dumps(manifest))
+        _, report = self.check()
+        self.assertTrue(any("identity differs from pinned gold" in e
+                            for e in report["errors"]))
+
+    def test_invalid_candidate_host_fails(self):
+        self.raw["url"] = "https://localhost/one"
+        self.raw_path.write_text(json.dumps(self.raw))
+        self.lineage["raw_url"] = self.raw["url"]
+        self.lineage["url_host"] = "localhost"
+        self.lineage["raw_file_sha256"] = gate.digest(self.raw_path.read_bytes())
+        self.qualification["raw_url"] = self.raw["url"]
+        self.qualification["raw_file_sha256"] = self.lineage["raw_file_sha256"]
+        self.write()
+        _, report = self.check()
+        self.assertTrue(any("invalid candidate URL host" in e for e in report["errors"]))
 
     def test_complete_fixture_passes_and_trainer_preflight_passes(self):
         output, report = self.check()
