@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import clean_export_gate as gate
+from source_profiles import PROFILES, SourceProfile
 
 
 class ExportGateTest(unittest.TestCase):
@@ -23,12 +24,24 @@ class ExportGateTest(unittest.TestCase):
         self.raw = {"source": "unit", "id": "one", "country": "US", "text": self.text,
                     "url": "https://example.org/one"}
         self.raw_path.write_text(json.dumps(self.raw))
+        self.capture_path = self.root / "capture.html"
+        self.capture_path.write_text('<div class="s-richtext js-richtext"><p>Alice works at Acme.</p></div>')
+        self.profile_id = "unit_press_v1"
+        profile = SourceProfile(
+            self.profile_id, "unit", "one", "US", self.raw["url"],
+            gate.digest(self.raw_path.read_bytes()), "capture.html",
+            gate.digest(self.capture_path.read_bytes()), gate.digest(self.text.encode()),
+            "de_sh_press_v1")
+        profile_patch = patch.dict(PROFILES, {self.profile_id: profile})
+        profile_patch.start()
+        self.addCleanup(profile_patch.stop)
         self.candidate_path = self.root / "candidate.jsonl"
         self.candidate = {"source": "unit", "id": "one", "country": "US", "text": self.text,
                           "entities": []}
         self.lineage_path = self.root / "lineage.jsonl"
         self.qualification_path = self.root / "qualification.jsonl"
         self.labels_path = self.root / "labels.jsonl"
+        self.source_proofs_path = self.root / "source-proofs.jsonl"
         self.eval_path = self.root / "evaluation.json"
         self.selection_path = self.root / "selection.json"
         self.gold_path = self.root / "gold.jsonl"
@@ -60,6 +73,12 @@ class ExportGateTest(unittest.TestCase):
                               "rights_scope": "full page reuse reviewed",
                               "reviewer": "fixture reviewer", "reviewed_at": "2026-09-26",
                               "decision_version": "fixture-v1"}
+        self.source_proof = {"source": "unit", "id": "one",
+                             "candidate_text_sha256": self.lineage["candidate_text_sha256"],
+                             "raw_file_sha256": self.lineage["raw_file_sha256"],
+                             "raw_url": self.raw["url"], "profile_id": self.profile_id,
+                             "capture_sha256": profile.capture_sha256}
+        self.qualification["source_proof_sha256"] = gate.digest(gate.canonical(self.source_proof))
         self.spans = [{"kind": "person", "start": 0, "end": 5},
                       {"kind": "org", "start": 15, "end": 19}]
         self.labels = {"source": "unit", "id": "one",
@@ -91,6 +110,7 @@ class ExportGateTest(unittest.TestCase):
         self.selection["lineage_sha256"] = gate.digest(self.lineage_path.read_bytes())
         self.selection_path.write_text(json.dumps(self.selection))
         self.qualification_path.write_bytes(gate.canonical(self.qualification) + b"\n")
+        self.source_proofs_path.write_bytes(gate.canonical(self.source_proof) + b"\n")
         self.labels_path.write_bytes(gate.canonical(self.labels) + b"\n")
         self.index_path.write_bytes(gate.canonical(self.index) + b"\n")
         self.evaluation["publisher_index_sha256"] = gate.digest(self.index_path.read_bytes())
@@ -108,7 +128,51 @@ class ExportGateTest(unittest.TestCase):
                 self.candidate_path, self.lineage_path,
                 self.qualification_path if qualification else None,
                 self.labels_path if labels else None, self.eval_path, self.root,
-                self.selection_path if selection else None, self.eval_hosts_path)
+                self.selection_path if selection else None, self.eval_hosts_path,
+                self.source_proofs_path)
+
+    def test_approved_row_requires_allowlisted_replayed_source(self):
+        self.source_proofs_path.write_bytes(b"")
+        with patch.object(gate, "DEV_GOLD_SHA256", self.trusted_dev_sha256):
+            _, report = gate.validate_inputs(
+                self.candidate_path, self.lineage_path, self.qualification_path,
+                self.labels_path, self.eval_path, self.root,
+                eval_hosts_path=self.eval_hosts_path,
+                source_proofs_path=self.source_proofs_path)
+        self.assertTrue(any("missing typed source proof" in e for e in report["errors"]))
+        self.write()
+        self.source_proof["profile_id"] = "untrusted_script_v1"
+        self.qualification["source_proof_sha256"] = gate.digest(gate.canonical(self.source_proof))
+        self.write()
+        _, report = self.check()
+        self.assertTrue(any("not allowlisted" in e for e in report["errors"]))
+
+    def test_malformed_profile_id_fails_with_report(self):
+        self.source_proof["profile_id"] = []
+        self.qualification["source_proof_sha256"] = gate.digest(gate.canonical(self.source_proof))
+        self.write()
+        _, report = self.check()
+        self.assertTrue(any("not allowlisted" in e for e in report["errors"]))
+
+    def test_capture_tamper_and_self_hashed_receipt_fail(self):
+        self.capture_path.write_text(self.capture_path.read_text() + " ")
+        _, report = self.check()
+        self.assertTrue(any("capture SHA mismatch" in e for e in report["errors"]))
+        self.source_proof["capture_sha256"] = gate.digest(self.capture_path.read_bytes())
+        self.qualification["source_proof_sha256"] = gate.digest(gate.canonical(self.source_proof))
+        self.write()
+        _, report = self.check()
+        self.assertTrue(any("not allowlisted" in e for e in report["errors"]))
+
+    def test_duplicate_proof_and_unbound_qualification_fail(self):
+        self.source_proofs_path.write_bytes(self.source_proofs_path.read_bytes() * 2)
+        _, report = self.check()
+        self.assertTrue(any("duplicate source/id" in e for e in report["errors"]))
+        self.write()
+        self.qualification["source_proof_sha256"] = "0" * 64
+        self.write()
+        _, report = self.check()
+        self.assertTrue(any("qualification binding mismatch" in e for e in report["errors"]))
 
     def test_development_host_overlap_fails_even_when_qualifications_pass(self):
         self.dev_gold["source_host"] = "US|www.example.org"
@@ -171,6 +235,14 @@ class ExportGateTest(unittest.TestCase):
         self.assertEqual(report["counts"]["missing_qualification"], 1)
         self.qualification["source_eligibility"] = "held"
         self.write()
+        self.source_proofs_path.write_bytes(b"")
+        with patch.object(gate, "DEV_GOLD_SHA256", self.trusted_dev_sha256):
+            _, report = gate.validate_inputs(
+                self.candidate_path, self.lineage_path, self.qualification_path,
+                self.labels_path, self.eval_path, self.root,
+                eval_hosts_path=self.eval_hosts_path,
+                source_proofs_path=self.source_proofs_path)
+        self.assertFalse(any("source proof" in e for e in report["errors"]))
         _, report = self.check()
         self.assertEqual(report["counts"]["pending_or_held"], 1)
 

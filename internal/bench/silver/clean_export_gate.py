@@ -15,6 +15,8 @@ import subprocess
 import tempfile
 from urllib.parse import urlsplit
 
+from source_profiles import PROFILES, verify_source_profile
+
 
 ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_CANDIDATE = ROOT / "data/interim/silver/qa-dedup-20260926/train.jsonl"
@@ -178,7 +180,8 @@ def validate_spans(text, spans):
 
 
 def validate_inputs(candidate_path, lineage_path, qualification_path, labels_path, eval_path,
-                    root=ROOT, selection_path=None, eval_hosts_path=None):
+                    root=ROOT, selection_path=None, eval_hosts_path=None,
+                    source_proofs_path=None):
     errors = []
     counts = Counter()
     candidate_bytes = candidate_path.read_bytes()
@@ -195,8 +198,10 @@ def validate_inputs(candidate_path, lineage_path, qualification_path, labels_pat
         errors.append("candidate/lineage row count differs from manifest")
     qualifications = rows(qualification_path) if qualification_path else []
     reviewed = rows(labels_path) if labels_path else []
+    source_proofs = rows(source_proofs_path) if source_proofs_path else []
     qmap = indexed(qualifications, "qualification", errors)
     lmap = indexed(reviewed, "reviewed labels", errors)
+    pmap = indexed(source_proofs, "source proof", errors)
     cmap = indexed(candidate, "candidate", errors)
     imap = indexed(lineage, "lineage", errors)
     if set(cmap) != set(imap):
@@ -205,6 +210,8 @@ def validate_inputs(candidate_path, lineage_path, qualification_path, labels_pat
         errors.append("qualification has keys outside candidate")
     if set(lmap) - set(cmap):
         errors.append("reviewed labels have keys outside candidate")
+    if set(pmap) - set(cmap):
+        errors.append("source proof has keys outside candidate")
     selected = set(cmap)
     selection_sha = None
     if selection_path:
@@ -235,6 +242,8 @@ def validate_inputs(candidate_path, lineage_path, qualification_path, labels_pat
             errors.append("qualification has keys outside selection")
         if set(lmap) - selected:
             errors.append("reviewed labels have keys outside selection")
+        if set(pmap) - selected:
+            errors.append("source proof has keys outside selection")
     eval_publishers = None
     eval_text_hashes = None
     eval_hosts, dev_text_hashes = load_eval_hosts(eval_hosts_path, errors)
@@ -351,6 +360,26 @@ def validate_inputs(candidate_path, lineage_path, qualification_path, labels_pat
         if status != "approved":
             counts["pending_or_held"] += 1
             continue
+        proof = pmap.get(k)
+        if proof is None:
+            errors.append(prefix + "approved row missing typed source proof")
+        elif (set(proof) != {"source", "id", "candidate_text_sha256", "raw_file_sha256",
+                             "raw_url", "profile_id", "capture_sha256"}
+              or proof.get("candidate_text_sha256") != text_hash
+              or proof.get("raw_file_sha256") != info.get("raw_file_sha256")
+              or proof.get("raw_url") != info.get("raw_url")
+              or decision.get("source_proof_sha256") != digest(canonical(proof))):
+            errors.append(prefix + "source proof fields or qualification binding mismatch")
+        else:
+            profile_id = proof.get("profile_id")
+            profile = PROFILES.get(profile_id) if isinstance(profile_id, str) else None
+            if profile is None or proof.get("capture_sha256") != profile.capture_sha256:
+                errors.append(prefix + "source proof profile or capture is not allowlisted")
+            else:
+                try:
+                    verify_source_profile(root, profile_id, doc, info)
+                except (ValueError, OSError, UnicodeError) as exc:
+                    errors.append(prefix + f"source proof replay failed: {exc}")
         for field in ("publisher_group", "publisher_evidence_url", "qualification_evidence_url",
                       "rights_scope", "reviewer", "reviewed_at", "decision_version"):
             value = decision.get(field)
@@ -427,6 +456,7 @@ def main():
     parser.add_argument("--qualification", type=Path)
     parser.add_argument("--selection", type=Path)
     parser.add_argument("--labels", type=Path)
+    parser.add_argument("--source-proofs", type=Path)
     parser.add_argument("--eval-publishers", type=Path)
     parser.add_argument("--eval-hosts", type=Path)
     parser.add_argument("--config", type=Path)
@@ -435,7 +465,8 @@ def main():
     args = parser.parse_args()
     output, report = validate_inputs(args.candidate, args.lineage, args.qualification,
                                      args.labels, args.eval_publishers,
-                                     selection_path=args.selection, eval_hosts_path=args.eval_hosts)
+                                     selection_path=args.selection, eval_hosts_path=args.eval_hosts,
+                                     source_proofs_path=args.source_proofs)
     if not report["errors"]:
         if not args.config or not args.trainer:
             report["errors"].append("config and trainer executable required for runtime preflight")
@@ -455,6 +486,7 @@ def main():
                         raise FileExistsError("versioned output or manifest already exists")
                     manifest = {**report, "status": "source-qualified reviewed silver export",
                                 "qualification_sha256": digest(args.qualification.read_bytes()),
+                                "source_proofs_sha256": digest(args.source_proofs.read_bytes()),
                                 "labels_sha256": digest(args.labels.read_bytes()),
                                 "eval_publishers_sha256": digest(args.eval_publishers.read_bytes()),
                                 "eval_hosts_sha256": digest(args.eval_hosts.read_bytes()),
