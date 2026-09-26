@@ -38,6 +38,8 @@ pub struct Encoded {
 /// Why an example could not be encoded.
 #[derive(Debug, thiserror::Error)]
 pub enum EncodeError {
+    #[error("span {span:?} is empty, out of order, outside the text, or includes edge whitespace")]
+    InvalidSpan { span: (u32, u32) },
     #[error("span {span:?} cuts token {token:?}")]
     PartialToken { token: (u32, u32), span: (u32, u32) },
     #[error("span {span:?} is labelled `unknown`, which is not a training label")]
@@ -56,6 +58,21 @@ pub fn label_id(label: AddressLabel, begin: bool) -> Option<u8> {
 /// Encodes one address. Postcode shapes are matched for any known country, since inference
 /// gets no reliable country for a single address.
 pub fn encode(text: &str, spans: &[Span], fc: &FeatureConfig) -> Result<Encoded, EncodeError> {
+    let mut previous_end = 0usize;
+    for s in spans {
+        let (start, end) = (s.start as usize, s.end as usize);
+        let Some(part) = text.get(start..end) else {
+            return Err(EncodeError::InvalidSpan {
+                span: (s.start, s.end),
+            });
+        };
+        if start < previous_end || start == end || part != part.trim() {
+            return Err(EncodeError::InvalidSpan {
+                span: (s.start, s.end),
+            });
+        }
+        previous_end = end;
+    }
     let tokens = tokenize(text);
     let feats = featurize(text, &tokens, &[], None, fc, None);
     let mut enc = Encoded {
@@ -68,6 +85,7 @@ pub fn encode(text: &str, spans: &[Span], fc: &FeatureConfig) -> Result<Encoded,
         country: String::new(),
     };
     let mut span_idx = 0usize;
+    let mut seen = vec![false; spans.len()];
     for (t, f) in tokens.iter().zip(&feats) {
         if matches!(t.class, TokenClass::Space | TokenClass::Newline) {
             continue;
@@ -77,10 +95,12 @@ pub fn encode(text: &str, spans: &[Span], fc: &FeatureConfig) -> Result<Encoded,
             span_idx += 1;
         }
         let label = match spans.get(span_idx) {
-            Some(s) if s.start <= start && end <= s.end => label_id(s.label, s.start == start)
-                .ok_or(EncodeError::UnknownLabel {
+            Some(s) if s.start <= start && end <= s.end => {
+                seen[span_idx] = true;
+                label_id(s.label, s.start == start).ok_or(EncodeError::UnknownLabel {
                     span: (s.start, s.end),
-                })?,
+                })?
+            }
             Some(s) if start < s.end && s.start < end => {
                 return Err(EncodeError::PartialToken {
                     token: (start, end),
@@ -96,6 +116,11 @@ pub fn encode(text: &str, spans: &[Span], fc: &FeatureConfig) -> Result<Encoded,
         enc.shape.push(f.shape);
         enc.flags.push(f.flags);
         enc.labels.push(label);
+    }
+    if let Some((s, _)) = spans.iter().zip(seen).find(|(_, seen)| !seen) {
+        return Err(EncodeError::InvalidSpan {
+            span: (s.start, s.end),
+        });
     }
     Ok(enc)
 }
@@ -132,7 +157,7 @@ pub struct EncodeStats {
     /// Rows encoded.
     pub encoded: usize,
     /// Rows skipped because a span boundary falls inside a token.
-    pub cuts_token: usize,
+    pub unencodable: usize,
     /// Encoded original (not augmented) rows per country.
     pub originals: std::collections::BTreeMap<String, usize>,
 }
@@ -190,7 +215,7 @@ impl ParserDataset {
                         *stats.originals.entry(r.country.clone()).or_default() += 1;
                     }
                 }
-                Err(_) => stats.cuts_token += 1,
+                Err(_) => stats.unencodable += 1,
             }
         }
         (ParserDataset { items }, stats)
@@ -394,5 +419,41 @@ mod tests {
         assert_eq!(batch.script.dims(), [2, 6]);
         assert_eq!(batch.flags.dims(), [2, 6, FLAG_BITS]);
         assert_eq!(batch.mask.sum().into_scalar(), 9.0);
+    }
+
+    #[test]
+    fn malformed_gold_spans_cannot_disappear_during_encoding() {
+        let fc = FeatureConfig::default();
+        let text = "Baker Street";
+        let road = span(AddressLabel::Road, text, "Baker");
+        let street = span(AddressLabel::Road, text, "Street");
+        assert!(matches!(
+            encode(text, &[street, road], &fc),
+            Err(EncodeError::InvalidSpan { .. })
+        ));
+        assert!(matches!(
+            encode(
+                text,
+                &[Span {
+                    label: AddressLabel::Road,
+                    start: 100,
+                    end: 110
+                }],
+                &fc
+            ),
+            Err(EncodeError::InvalidSpan { .. })
+        ));
+        assert!(matches!(
+            encode(
+                text,
+                &[Span {
+                    label: AddressLabel::Road,
+                    start: 0,
+                    end: 0
+                }],
+                &fc
+            ),
+            Err(EncodeError::InvalidSpan { .. })
+        ));
     }
 }

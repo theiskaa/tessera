@@ -24,8 +24,8 @@ pub struct Checks {
     pub orphan_copies: usize,
     /// Augmented rows outside the train split.
     pub copies_outside_train: usize,
-    /// Valid or test originals whose labelled components, as a set, match a train original's:
-    /// the same address in two splits, whatever the split key says.
+    /// Originals whose labelled components, as a set, match an original in another split:
+    /// the same address in train/valid, train/test, or valid/test.
     pub components_in_two_splits: usize,
     /// Originals in valid or test sharing country, postcode, and house number with a train
     /// original: an independent look at leakage, since the split key cannot see it. Reported,
@@ -105,23 +105,23 @@ pub fn verify(
         parts.sort();
         (r.country.clone(), parts)
     };
-    let train_components: std::collections::HashSet<_> = rows
-        .iter()
-        .filter(|r| !r.augmented && r.split == Split::Train)
-        .map(components)
-        .collect();
-    for r in rows
-        .iter()
-        .filter(|r| !r.augmented && r.split != Split::Train)
-    {
-        if train_components.contains(&components(r)) {
-            checks.components_in_two_splits += 1;
-            note(
-                checks.components_in_two_splits,
-                "components in two splits",
-                r,
-                String::new(),
-            );
+    let mut components_seen = HashMap::new();
+    for r in rows.iter().filter(|r| !r.augmented) {
+        let key = components(r);
+        match components_seen.get(&key) {
+            Some(&split) if split != r.split => {
+                checks.components_in_two_splits += 1;
+                note(
+                    checks.components_in_two_splits,
+                    "components in two splits",
+                    r,
+                    String::new(),
+                );
+            }
+            Some(_) => {}
+            None => {
+                components_seen.insert(key, r.split);
+            }
         }
     }
     let train: std::collections::HashSet<_> = rows
@@ -285,7 +285,8 @@ mod tests {
         let c = verify(&rows, 2, &fc, 0).0;
         assert_eq!(c.keys_in_two_splits, 1);
         assert_eq!(c.invalid_spans, 1);
-        assert_eq!(c.unencodable_rows, 1);
+        // Both the token-cut span and the span including trailing whitespace fail encoding.
+        assert_eq!(c.unencodable_rows, 2);
         assert_eq!(c.orphan_copies, 1);
         assert_eq!(c.copies_outside_train, 1);
         assert_eq!(c.components_in_two_splits, 1);
@@ -322,5 +323,35 @@ mod tests {
         let c = verify(&rows, 2, &fc, 0).0;
         assert_eq!(c.postcode_and_number_shared, 1);
         assert!(c.passed());
+    }
+
+    #[test]
+    fn matching_components_across_valid_and_test_fail() {
+        let fc = FeatureConfig::default();
+        let rows = vec![
+            row(
+                1,
+                "1 Main Street",
+                vec![
+                    span(AddressLabel::HouseNumber, 0, 1),
+                    span(AddressLabel::Road, 2, 13),
+                ],
+                Split::Valid,
+                false,
+            ),
+            row(
+                2,
+                "Main Street, 1",
+                vec![
+                    span(AddressLabel::Road, 0, 11),
+                    span(AddressLabel::HouseNumber, 13, 14),
+                ],
+                Split::Test,
+                false,
+            ),
+        ];
+        let checks = verify(&rows, 2, &fc, 0).0;
+        assert_eq!(checks.components_in_two_splits, 1);
+        assert!(!checks.passed());
     }
 }

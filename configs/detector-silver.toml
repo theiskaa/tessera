@@ -8,7 +8,7 @@ train_per_country = 30000
 valid_per_country = 3000
 test_per_country = 3000
 manifests = "data/manifests"
-processed = "data/processed/detector"
+processed = "data/processed/detector-no-gold-overlap"
 
 [features]
 ngram_sizes = [2, 3, 4]
@@ -46,6 +46,8 @@ silver = [
     "data/interim/silver/r17/train.jsonl",
     "data/interim/silver/r19/train.jsonl",
     "data/interim/silver/r21/train.jsonl",
+    "data/interim/silver/r23/train.jsonl",
+    "data/interim/silver/r25/train.jsonl",
 ]
 silver_repeat = 10
 

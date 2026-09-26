@@ -1,8 +1,9 @@
 //! Run configuration, read from `configs/*.toml`. Unknown keys are errors.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
-use anyhow::Context;
+use anyhow::{Context, ensure};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -52,12 +53,24 @@ pub struct DataConfig {
     pub train_per_country: usize,
     pub valid_per_country: usize,
     pub test_per_country: usize,
+    /// Reviewed minimums for a country whose source cannot supply the requested quota.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub coverage_exceptions: BTreeMap<String, CoverageException>,
     pub manifests: String,
     pub processed: String,
     /// Where `prepare` records what it sampled. A learning-curve config points this outside
     /// `manifests` so it does not replace the shipped model's sample manifest.
     #[serde(default = "default_sample_manifest")]
     pub sample_manifest: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CoverageException {
+    pub train: usize,
+    pub valid: usize,
+    pub test: usize,
+    pub reason: String,
 }
 
 fn default_sample_manifest() -> String {
@@ -206,6 +219,82 @@ impl FeaturesConfig {
 }
 
 impl Config {
+    /// Reject settings that would panic during feature extraction or produce a model the
+    /// library cannot load. This runs when a config is read, before prepare or training.
+    pub fn validate(&self) -> anyhow::Result<()> {
+        ensure!(
+            !self.data.countries.is_empty(),
+            "data.countries must not be empty"
+        );
+        let mut countries = std::collections::HashSet::new();
+        for country in &self.data.countries {
+            ensure!(
+                country.len() == 2 && country.bytes().all(|b| b.is_ascii_uppercase()),
+                "country {country:?} must be a two-letter uppercase code"
+            );
+            ensure!(countries.insert(country), "duplicate country {country}");
+        }
+        let sizes = &self.features.ngram_sizes;
+        ensure!(
+            !sizes.is_empty()
+                && sizes.len() <= 8
+                && sizes.iter().all(|&n| (1..=8).contains(&n))
+                && sizes
+                    .iter()
+                    .enumerate()
+                    .all(|(i, n)| !sizes[..i].contains(n)),
+            "features.ngram_sizes must contain distinct lengths from 1 through 8"
+        );
+        ensure!(
+            self.features.hash_buckets > 0,
+            "features.hash_buckets must be positive"
+        );
+        ensure!(
+            self.features.ngram_dim == 48 && self.features.shape_dim == 16,
+            "the runtime requires features.ngram_dim=48 and shape_dim=16"
+        );
+        let dilations: &[usize] = match self.task {
+            Task::Parser => &[1, 2, 4, 8],
+            Task::Detector => &[1, 2, 4, 8, 16, 1],
+        };
+        ensure!(
+            self.net.kernel == 3
+                && self.net.dilations == dilations
+                && (1..=1024).contains(&self.net.hidden),
+            "the runtime requires kernel=3, dilations={dilations:?}, and hidden in 1..=1024"
+        );
+        ensure!(
+            self.net.dropout.is_finite() && (0.0..1.0).contains(&self.net.dropout),
+            "net.dropout must be finite and in [0, 1)"
+        );
+        ensure!(
+            self.train.epochs > 0
+                && self.train.batch_size > 0
+                && self.train.learning_rate.is_finite()
+                && self.train.learning_rate > 0.0,
+            "training epochs, batch_size, and learning_rate must be positive"
+        );
+        if self.task == Task::Detector {
+            let detector = self
+                .detector
+                .as_ref()
+                .context("detector task needs [detector]")?;
+            ensure!(
+                detector.class_weights.len() == crate::detector::DETECTOR_LABELS
+                    && detector
+                        .class_weights
+                        .iter()
+                        .all(|w| w.is_finite() && *w > 0.0),
+                "detector.class_weights must have seven finite positive values"
+            );
+            ensure!(
+                detector.silver_repeat > 0,
+                "detector.silver_repeat must be positive"
+            );
+        }
+        Ok(())
+    }
+
     /// The parser network these settings describe; script and shape each get half of `shape_dim`.
     pub fn parser_net_config(&self) -> crate::net::TaggerNetConfig {
         self.net_config(crate::dataset::PARSER_LABELS)
@@ -248,7 +337,12 @@ impl Config {
 pub fn load(path: &Path) -> anyhow::Result<Config> {
     let text =
         std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-    toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))
+    let config: Config =
+        toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
+    config
+        .validate()
+        .with_context(|| format!("validating {}", path.display()))?;
+    Ok(config)
 }
 
 #[cfg(test)]
@@ -279,5 +373,40 @@ mod tests {
         let back: Config = toml::from_str(&written).unwrap();
         assert_eq!(back.train.epochs, 3);
         assert_eq!(toml::to_string(&back).unwrap(), written);
+    }
+
+    #[test]
+    fn invalid_feature_and_runtime_settings_fail_before_training() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let mut c = load(&root.join("configs/detector-small.toml")).unwrap();
+        c.features.hash_buckets = 0;
+        assert!(
+            c.validate()
+                .unwrap_err()
+                .to_string()
+                .contains("hash_buckets")
+        );
+        c.features.hash_buckets = 32_768;
+        c.features.ngram_sizes = vec![2, 2];
+        assert!(
+            c.validate()
+                .unwrap_err()
+                .to_string()
+                .contains("ngram_sizes")
+        );
+        c.features.ngram_sizes = vec![2, 3, 4];
+        c.features.shape_dim = 15;
+        assert!(c.validate().unwrap_err().to_string().contains("shape_dim"));
+        c.features.shape_dim = 16;
+        c.net.kernel = 4;
+        assert!(c.validate().unwrap_err().to_string().contains("kernel"));
+        c.net.kernel = 3;
+        c.data.countries.push("US".into());
+        assert!(
+            c.validate()
+                .unwrap_err()
+                .to_string()
+                .contains("duplicate country")
+        );
     }
 }

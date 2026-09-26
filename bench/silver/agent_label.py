@@ -27,10 +27,12 @@ set's format as data/interim/review/gold-r<ROUND>.jsonl.
 
 import glob
 import json
+import os
 import pathlib
 import random
 import re
 import sys
+import tempfile
 
 KINDS = {"person", "org", "address", "email", "phone"}
 PER_SLICE = 10
@@ -91,12 +93,15 @@ def root(round_no):
 
 
 def cut(text):
-    """`text` cut at the last paragraph break before MAX_CHARS characters."""
+    """Cut at a late paragraph or line break, or keep the full MAX_CHARS prefix."""
     if len(text) <= MAX_CHARS:
         return text
     head = text[:MAX_CHARS]
     at = head.rfind("\n\n")
-    return head[:at] if at > MAX_CHARS // 2 else head[: head.rfind("\n")]
+    if at > MAX_CHARS // 2:
+        return head[:at]
+    at = head.rfind("\n")
+    return head[:at] if at > MAX_CHARS // 2 else head
 
 
 def used_ids(round_no):
@@ -106,6 +111,22 @@ def used_ids(round_no):
         if p.parent.name != f"r{round_no}":
             ids.update(json.loads(l)["id"] for l in p.read_text().splitlines() if l)
     return ids
+
+
+def draw_contact_sample(docs, n, rng):
+    """Draw up to `n` documents, preferring two thirds with contact details when possible."""
+    contact = [d for d in docs if CONTACT.search(d["text"])]
+    rest = [d for d in docs if not CONTACT.search(d["text"])]
+    contact_count = min(len(contact), n * 2 // 3)
+    chosen_contact = rng.sample(contact, contact_count)
+    rest_count = min(len(rest), n - contact_count)
+    chosen_rest = rng.sample(rest, rest_count)
+    # If the non-contact pool is short, fill the quota from remaining contact pages.
+    remaining = min(n - len(chosen_contact) - len(chosen_rest), len(contact) - contact_count)
+    if remaining:
+        chosen_ids = {id(d) for d in chosen_contact}
+        chosen_contact.extend(rng.sample([d for d in contact if id(d) not in chosen_ids], remaining))
+    return chosen_contact + chosen_rest
 
 
 def sample(round_no):
@@ -127,10 +148,7 @@ def sample(round_no):
             docs = [json.loads(l) for l in pathlib.Path(path).read_text().splitlines() if l]
             docs = [d for d in docs if d["id"] not in used]
         # Two thirds from documents with contact details, where the entities are.
-        contact = [d for d in docs if CONTACT.search(d["text"])]
-        rest = [d for d in docs if not CONTACT.search(d["text"])]
-        k = min(len(contact), n * 2 // 3)
-        chosen = rng.sample(contact, k) + rng.sample(rest, min(len(rest), n - k))
+        chosen = draw_contact_sample(docs, n, rng)
         for d in chosen:
             out.append({"id": d["id"], "source": source, "country": country, "url": d["url"],
                         "date": d["date"], "text": cut(d["text"])})
@@ -178,7 +196,7 @@ def joins(a, b):
     return sa == sb and sa != "han"
 
 
-def glued(b, at, end):
+def glued(b, at, end, kind=None):
     """Whether bytes `at..end` of `b` continue a word, an identifier, or an address on
     either side: `NRC` in `NRC-2025-0012`, `Smith` in `jsmith@x.gov`. A slash separates
     names (`DOL-OWCP/DFEC` is one org per segment), so it does not glue."""
@@ -190,6 +208,11 @@ def glued(b, at, end):
     if after and joins(value[-1], after[0]):
         return True
     if len(before) == 2 and before[-1] in "-@._" and before[0].isalnum() and value[0].isalnum():
+        # A phone following a printed label is not an identifier. Without this,
+        # `Tel-599...` and `TEL.03-...` become silent false negatives in gold.
+        if kind == "phone" and re.search(r"(?i)(?:tel|telephone|phone|fax)[.:-]$",
+                                          b[:at].decode("utf-8", "ignore")):
+            return False
         return True
     if len(after) == 2 and after[0] in "-@_" and after[1].isalnum() and value[-1].isalnum():
         return True
@@ -198,8 +221,17 @@ def glued(b, at, end):
 
 def occurrences(b, e):
     """Byte offsets of the entity's text in `b`; with `within`, only its first place inside
-    each occurrence of that longer context string."""
+    each occurrence of that longer context string. `occurrence` selects one 1-based match."""
     v = e["text"].encode("utf-8")
+    if "occurrence" in e:
+        if e.get("within") or type(e["occurrence"]) is not int or e["occurrence"] < 1:
+            return []
+        at, out = b.find(v), []
+        while at >= 0:
+            out.append(at)
+            at = b.find(v, at + 1)
+        index = e["occurrence"] - 1
+        return out[index:index + 1]
     if e.get("within"):
         w = e["within"].encode("utf-8")
         inner = w.find(v)
@@ -221,30 +253,55 @@ def short_cjk(text):
     return len(text) <= 2 and all(script(c) != "word" for c in text)
 
 
-def spans(text, entities):
+def spans_with_issues(text, entities, *, allow_glued=False):
     """Byte spans for `entities` (kind, text, optional within), every free occurrence,
-    longest first. Returns the spans, the entities not found, and short CJK strings without
-    `within` that matched more than once, which usually label unrelated characters."""
+    longest first. Same-kind shorter surfaces covered by an accepted span are resolved by
+    that ordering; cross-kind, duplicate, and crossing overlaps remain conflicts."""
     b = text.encode("utf-8")
     taken = []
     out = []
     missing = []
     risky = []
+    conflicts = []
+    unreachable = []
     for e in sorted(entities, key=lambda e: -len(e["text"].encode("utf-8"))):
         v = e["text"].encode("utf-8")
         if not v.strip():
+            unreachable.append(e)
             continue
         places = occurrences(b, e)
         if not places:
             missing.append(e)
         if short_cjk(e["text"]) and not e.get("within") and len(places) > 1:
             risky.append(e)
+        accepted = 0
+        blocked = False
         for at in places:
             end = at + len(v)
-            if not glued(b, at, end) and not any(at < te and ts < end for ts, te in taken):
-                taken.append((at, end))
-                out.append({"kind": e["kind"], "start": at, "end": end})
+            if not allow_glued and glued(b, at, end, e["kind"]):
+                blocked = True
+                continue
+            overlaps = [(ts, te, kind) for ts, te, kind in taken if at < te and ts < end]
+            if overlaps:
+                # A shorter surface covered by an already accepted label of the same kind
+                # is resolved by the existing longest-first rule. A different kind,
+                # duplicate full span, or crossing boundary still needs review.
+                if not all(kind == e["kind"] and ts <= at and end <= te
+                           and (ts, te) != (at, end) for ts, te, kind in overlaps):
+                    conflicts.append(e)
+                    blocked = True
+                continue
+            taken.append((at, end, e["kind"]))
+            out.append({"kind": e["kind"], "start": at, "end": end})
+            accepted += 1
+        if places and accepted == 0 and blocked:
+            unreachable.append(e)
     out.sort(key=lambda s: s["start"])
+    return out, missing, risky, conflicts, unreachable
+
+
+def spans(text, entities):
+    out, missing, risky, _, _ = spans_with_issues(text, entities)
     return out, missing, risky
 
 
@@ -259,6 +316,8 @@ def read_pass(round_no, pass_no):
                     problems.append(f"{p.name}: {doc_id}: bad entry {e}")
                 else:
                     good.append(e)
+            if doc_id in labels:
+                problems.append(f"{p.name}: duplicate document {doc_id}")
             labels[doc_id] = good
     return labels, problems
 
@@ -306,38 +365,90 @@ def apply(round_no, pass_no):
 def gold(round_no, pass_no):
     docs = load(round_no)
     labels, problems = read_pass(round_no, pass_no)
+    doc_ids = {d["id"] for d in docs}
+    if len(doc_ids) != len(docs):
+        problems.append("sample has duplicate document IDs")
+    for doc_id in labels.keys() - doc_ids:
+        problems.append(f"labels for unsampled document {doc_id}")
     rows = []
     for d in docs:
         if d["id"] not in labels:
             problems.append(f"{d['id']} has no labels")
             continue
         b = d["text"].encode("utf-8")
-        doc_spans, _, _ = spans(d["text"], labels[d["id"]])
+        doc_spans, missing, risky, conflicts, unreachable = spans_with_issues(d["text"], labels[d["id"]])
+        for name, items in (("missing string", missing), ("ambiguous short CJK", risky),
+                            ("overlapping labels", conflicts), ("unreachable label", unreachable)):
+            if items:
+                problems.append(f"{d['id']}: {name}: {len(items)}")
         rows.append({"name": d["id"], "input": d["text"], "country": d["country"],
                      "doc_type": d.get("doc_type", ""),
                      "expected": [s | {"text": b[s["start"]:s["end"]].decode("utf-8")} for s in doc_spans]})
+    if problems:
+        raise ValueError(f"gold export refused with {len(problems)} unresolved problems: {'; '.join(problems[:12])}")
     out = pathlib.Path(f"data/interim/review/gold-r{round_no}.jsonl")
-    out.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows))
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=out.parent, prefix="gold.", suffix=".tmp", delete=False) as stream:
+        temp = pathlib.Path(stream.name)
+        try:
+            for row in rows:
+                stream.write(json.dumps(row, ensure_ascii=False) + "\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        except BaseException:
+            temp.unlink(missing_ok=True)
+            raise
+    os.replace(temp, out)
     print(f"{len(rows)} documents in {out}")
-    for p in problems:
-        print("PROBLEM", p)
 
 
 def export(round_no, pass_no):
     docs = load(round_no)
     labels, problems = read_pass(round_no, pass_no)
+    directory = root(round_no)
+    exclusions_path = directory / "export-exclusions.json"
+    exclusions = [] if not exclusions_path.exists() else json.loads(exclusions_path.read_text())
+    excluded = {}
+    doc_ids = {d["id"] for d in docs}
+    if len(doc_ids) != len(docs):
+        problems.append("sample has duplicate document IDs")
+    for item in exclusions:
+        doc_id, reason = item.get("id"), item.get("reason")
+        if doc_id not in doc_ids or not isinstance(reason, str) or not reason.strip() or doc_id in excluded:
+            problems.append(f"invalid export exclusion for {doc_id}")
+        else:
+            excluded[doc_id] = reason
+    for doc_id in labels.keys() - doc_ids:
+        problems.append(f"labels for unsampled document {doc_id}")
     rows = []
     for d in docs:
-        if d["id"] not in labels:
+        if d["id"] in excluded:
             continue
-        doc_spans, _, _ = spans(d["text"], labels[d["id"]])
+        if d["id"] not in labels:
+            problems.append(f"{d['id']}: no labels")
+            continue
+        doc_spans, missing, risky, conflicts, unreachable = spans_with_issues(d["text"], labels[d["id"]])
+        for name, items in (("missing string", missing), ("ambiguous short CJK", risky),
+                            ("overlapping labels", conflicts), ("unreachable label", unreachable)):
+            if items:
+                problems.append(f"{d['id']}: {name}: {len(items)}")
         rows.append({"id": d["id"], "source": d["source"], "country": d["country"], "text": d["text"],
                      "entities": doc_spans})
-    out = root(round_no) / "train.jsonl"
-    out.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows))
-    print(f"{len(rows)} documents in {out}")
-    for p in problems:
-        print("PROBLEM", p)
+    if problems:
+        raise ValueError(f"export refused with {len(problems)} unresolved problems: {'; '.join(problems[:12])}")
+    out = directory / "train.jsonl"
+    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=directory, prefix="train.", suffix=".tmp", delete=False) as stream:
+        temp = pathlib.Path(stream.name)
+        try:
+            for row in rows:
+                stream.write(json.dumps(row, ensure_ascii=False) + "\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        except BaseException:
+            temp.unlink(missing_ok=True)
+            raise
+    os.replace(temp, out)
+    print(f"{len(rows)} documents in {out}; {len(excluded)} excluded with reasons")
 
 
 if __name__ == "__main__":

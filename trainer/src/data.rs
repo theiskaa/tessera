@@ -1521,6 +1521,47 @@ impl SourceManifest {
     }
 }
 
+/// Two-letter ASCII country codes have a direct dispatch slot, so the source scan does not
+/// search every configured country for every line. Other strings retain the old lookup path.
+struct CountryDispatch<'a> {
+    countries: &'a [String],
+    slots: [Option<&'a String>; 26 * 26],
+}
+
+fn country_slot(code: &str) -> Option<usize> {
+    let [a, b] = code.as_bytes() else {
+        return None;
+    };
+    let (a, b) = (a.to_ascii_uppercase(), b.to_ascii_uppercase());
+    if !a.is_ascii_uppercase() || !b.is_ascii_uppercase() {
+        return None;
+    }
+    Some(usize::from(a - b'A') * 26 + usize::from(b - b'A'))
+}
+
+impl<'a> CountryDispatch<'a> {
+    fn new(countries: &'a [String]) -> Self {
+        let mut slots = [None; 26 * 26];
+        for country in countries {
+            if let Some(slot) = country_slot(country) {
+                // Preserve the first match, as `iter().find` did for duplicate case variants.
+                slots[slot].get_or_insert(country);
+            }
+        }
+        Self { countries, slots }
+    }
+
+    fn get(&self, code: &str) -> Option<&'a String> {
+        if let Some(slot) = country_slot(code) {
+            self.slots[slot]
+        } else {
+            self.countries
+                .iter()
+                .find(|country| country.eq_ignore_ascii_case(code))
+        }
+    }
+}
+
 /// `trainer prepare`: streams the source corpus into split, deduplicated, augmented shards
 /// and writes the sample manifest.
 pub fn prepare(config_path: &Path, date: &str) -> anyhow::Result<()> {
@@ -1551,6 +1592,7 @@ pub fn prepare(config_path: &Path, date: &str) -> anyhow::Result<()> {
     let mut dropped = DroppedRows::default();
     let mut rows: Vec<LabelledExample> = Vec::new();
     let mut lines_read: u64 = 0;
+    let country_dispatch = CountryDispatch::new(&cfg.data.countries);
 
     let file = std::fs::File::open(&path).with_context(|| format!("opening {}", path.display()))?;
     let reader =
@@ -1580,12 +1622,7 @@ pub fn prepare(config_path: &Path, date: &str) -> anyhow::Result<()> {
         let Some(country_col) = line.split('\t').nth(1) else {
             continue;
         };
-        let Some(country) = cfg
-            .data
-            .countries
-            .iter()
-            .find(|c| c.eq_ignore_ascii_case(country_col))
-        else {
+        let Some(country) = country_dispatch.get(country_col) else {
             continue;
         };
         let Some(record) = parse_line(&line) else {
@@ -1683,6 +1720,7 @@ pub fn prepare(config_path: &Path, date: &str) -> anyhow::Result<()> {
             }
         }
     }
+    check_parser_coverage(&cfg, &counts)?;
     let augmented: Vec<LabelledExample> = rows
         .iter()
         .filter(|r| r.split == Split::Train)
@@ -1789,7 +1827,7 @@ fn write_manifest(
         "outside_tags": outside_tags,
         "dropped_rows": dropped,
         "lines_read": lines_read,
-        "checks": { "passed": checks.passed(), "counts": checks },
+        "checks": { "version": 2, "passed": checks.passed(), "counts": checks },
     });
     let path = PathBuf::from(&cfg.data.sample_manifest);
     std::fs::write(&path, serde_json::to_string_pretty(&manifest)? + "\n")
@@ -1810,6 +1848,84 @@ pub fn write_shards(dir: &Path, rows: &[LabelledExample]) -> anyhow::Result<()> 
 /// Reads one Parquet shard written by [`write_shards`].
 pub fn read_shard(path: &Path, split: Split) -> anyhow::Result<Vec<LabelledExample>> {
     shard::read(path, split)
+}
+
+/// Requires every requested parser country to have nonzero rows in all three splits, with only
+/// explicit reviewed exceptions allowed below the requested quotas.
+pub(crate) fn check_parser_coverage(
+    cfg: &Config,
+    counts: &BTreeMap<(String, Split), usize>,
+) -> anyhow::Result<()> {
+    let requested = [
+        (Split::Train, cfg.data.train_per_country),
+        (Split::Valid, cfg.data.valid_per_country),
+        (Split::Test, cfg.data.test_per_country),
+    ];
+    anyhow::ensure!(
+        requested.iter().all(|(_, n)| *n > 0),
+        "parser coverage quotas must be nonzero"
+    );
+    for (country, exception) in &cfg.data.coverage_exceptions {
+        anyhow::ensure!(
+            cfg.data.countries.contains(country),
+            "coverage exception for unconfigured country {country}"
+        );
+        anyhow::ensure!(
+            !exception.reason.trim().is_empty(),
+            "coverage exception for {country} needs a reason"
+        );
+        for ((split, quota), minimum) in
+            requested
+                .iter()
+                .zip([exception.train, exception.valid, exception.test])
+        {
+            anyhow::ensure!(
+                minimum > 0 && minimum <= *quota,
+                "{country} {} coverage exception {minimum} must be within 1..={quota}",
+                split.name()
+            );
+        }
+    }
+    for country in &cfg.data.countries {
+        let exception = cfg.data.coverage_exceptions.get(country);
+        for (split, quota) in requested {
+            let minimum = exception.map_or(quota, |e| match split {
+                Split::Train => e.train,
+                Split::Valid => e.valid,
+                Split::Test => e.test,
+            });
+            let count = counts.get(&(country.clone(), split)).copied().unwrap_or(0);
+            anyhow::ensure!(
+                count >= minimum,
+                "{country} {} coverage {count} is below required minimum {minimum}; review the source or exception before preparing/training",
+                split.name()
+            );
+        }
+    }
+    Ok(())
+}
+
+/// An old manifest's `passed=true` cannot stand in for the current coverage and split checks.
+pub(crate) fn check_parser_manifest(
+    cfg: &Config,
+    manifest: &serde_json::Value,
+) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        manifest["checks"]["version"].as_u64() == Some(2),
+        "parser sample manifest has old checks; run prepare again"
+    );
+    let mut counts = BTreeMap::new();
+    for country in &cfg.data.countries {
+        for split in Split::ALL {
+            let value = manifest["counts"][country][split.name()]
+                .as_u64()
+                .with_context(|| {
+                    format!("sample manifest lacks {country} {} count", split.name())
+                })?;
+            counts.insert((country.clone(), split), usize::try_from(value)?);
+        }
+    }
+    check_parser_coverage(cfg, &counts)
 }
 
 /// Parquet layout: flat scalar columns plus three parallel list columns for the spans.
@@ -1922,6 +2038,19 @@ mod shard {
             let l = labels.get_as_series(i).context("span_label")?;
             let s = starts.get_as_series(i).context("span_start")?;
             let e = ends.get_as_series(i).context("span_end")?;
+            anyhow::ensure!(
+                l.len() == s.len() && s.len() == e.len(),
+                "{} row {i}: span array lengths label={} start={} end={}",
+                path.display(),
+                l.len(),
+                s.len(),
+                e.len()
+            );
+            anyhow::ensure!(
+                l.null_count() == 0 && s.null_count() == 0 && e.null_count() == 0,
+                "{} row {i}: span arrays contain null elements",
+                path.display()
+            );
             let spans = l
                 .u8()?
                 .into_no_null_iter()
@@ -3184,6 +3313,7 @@ pub(crate) mod augment {
 
 #[cfg(test)]
 mod tests {
+    use polars::prelude::*;
     use rand_chacha::ChaCha8Rng;
 
     use super::*;
@@ -3206,6 +3336,33 @@ mod tests {
             .map(|s| (s.label, text[s.start as usize..s.end as usize].to_string()))
             .collect();
         Ok((text, named))
+    }
+
+    #[test]
+    fn country_dispatch_preserves_case_insensitive_first_match() {
+        let countries = vec!["GB", "GE", "DE", "uS", "US", "JP", "USA", "ñ"]
+            .into_iter()
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        let dispatch = CountryDispatch::new(&countries);
+        for a in b'A'..=b'Z' {
+            for b in b'A'..=b'Z' {
+                let code = String::from_utf8(vec![a.to_ascii_lowercase(), b]).unwrap();
+                let original = countries
+                    .iter()
+                    .find(|country| country.eq_ignore_ascii_case(&code));
+                assert_eq!(dispatch.get(&code), original, "{code}");
+            }
+        }
+        for code in ["us", "Us", "USA", "usa", "ñ", "", "u1"] {
+            assert_eq!(
+                dispatch.get(code),
+                countries
+                    .iter()
+                    .find(|country| country.eq_ignore_ascii_case(code)),
+                "{code}"
+            );
+        }
     }
 
     #[test]
@@ -3427,6 +3584,110 @@ mod tests {
             let err = format!("{:#}", got.unwrap_err());
             assert!(err.contains("test.parquet row 0"), "{name}: {err}");
         }
+    }
+
+    #[test]
+    fn a_shard_with_unequal_span_arrays_is_an_error() {
+        let list = |name: &str, values: Series| -> Column {
+            Series::new(name.into(), vec![values]).into()
+        };
+        let mut df = DataFrame::new_infer_height(vec![
+            Column::new("id".into(), vec![0u64]),
+            Column::new("group_id".into(), vec![0u64]),
+            Column::new("country".into(), vec!["DE"]),
+            Column::new("language".into(), vec!["de"]),
+            Column::new("text".into(), vec!["Berlin"]),
+            list("span_label", Series::new(PlSmallStr::EMPTY, vec![1u8])),
+            list(
+                "span_start",
+                Series::new(PlSmallStr::EMPTY, Vec::<u32>::new()),
+            ),
+            list("span_end", Series::new(PlSmallStr::EMPTY, vec![6u32])),
+            Column::new("augmented".into(), vec![false]),
+        ])
+        .unwrap();
+        let path = std::env::temp_dir().join(format!(
+            "tessera-unequal-shard-{}.parquet",
+            std::process::id()
+        ));
+        ParquetWriter::new(std::fs::File::create(&path).unwrap())
+            .finish(&mut df)
+            .unwrap();
+        let err = format!("{:#}", read_shard(&path, Split::Test).unwrap_err());
+        std::fs::remove_file(path).unwrap();
+        assert!(
+            err.contains("row 0: span array lengths label=1 start=0 end=1"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn parser_coverage_requires_each_country_and_the_jp_minima() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let mut cfg = crate::config::load(&root.join("configs/parser-small.toml")).unwrap();
+        let mut counts = BTreeMap::new();
+        for country in &cfg.data.countries {
+            for (split, quota) in [
+                (Split::Train, cfg.data.train_per_country),
+                (Split::Valid, cfg.data.valid_per_country),
+                (Split::Test, cfg.data.test_per_country),
+            ] {
+                counts.insert((country.clone(), split), quota);
+            }
+        }
+        counts.insert(("JP".into(), Split::Train), 27136);
+        counts.insert(("JP".into(), Split::Valid), 2693);
+        counts.insert(("JP".into(), Split::Test), 2624);
+        check_parser_coverage(&cfg, &counts).unwrap();
+        counts.insert(("JP".into(), Split::Test), 2623);
+        assert!(
+            check_parser_coverage(&cfg, &counts)
+                .unwrap_err()
+                .to_string()
+                .contains("JP test")
+        );
+        counts.insert(("JP".into(), Split::Test), 2624);
+        counts.insert(("GB".into(), Split::Valid), 2999);
+        assert!(
+            check_parser_coverage(&cfg, &counts)
+                .unwrap_err()
+                .to_string()
+                .contains("GB valid")
+        );
+        counts.insert(("GB".into(), Split::Valid), 3000);
+        cfg.data.countries.push("FR".into());
+        assert!(
+            check_parser_coverage(&cfg, &counts)
+                .unwrap_err()
+                .to_string()
+                .contains("FR train")
+        );
+        cfg.data.countries.pop();
+        cfg.data.coverage_exceptions.get_mut("JP").unwrap().valid = 0;
+        assert!(
+            check_parser_coverage(&cfg, &counts)
+                .unwrap_err()
+                .to_string()
+                .contains("JP valid")
+        );
+    }
+
+    #[test]
+    fn old_parser_manifest_cannot_reuse_a_passing_flag() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let cfg = crate::config::load(&root.join("configs/parser-small.toml")).unwrap();
+        let mut manifest: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(root.join("data/manifests/parser-sample.json")).unwrap(),
+        )
+        .unwrap();
+        assert!(
+            check_parser_manifest(&cfg, &manifest)
+                .unwrap_err()
+                .to_string()
+                .contains("run prepare again")
+        );
+        manifest["checks"]["version"] = serde_json::json!(2);
+        check_parser_manifest(&cfg, &manifest).unwrap();
     }
 
     fn example(country: &str, line: &str) -> LabelledExample {
