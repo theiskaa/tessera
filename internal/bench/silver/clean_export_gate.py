@@ -13,6 +13,7 @@ from pathlib import Path
 import re
 import subprocess
 import tempfile
+import unicodedata
 from urllib.parse import urlsplit
 
 from source_profiles import PROFILES, verify_source_profile
@@ -28,6 +29,8 @@ KINDS = {"person", "org", "address"}
 BAD_VALUES = {"", "pending", "unknown", "todo", "tbd", "n/a", "none"}
 PUBLISHER_ID = re.compile(r"^[a-z][a-z0-9_-]*(?::[a-z0-9][a-z0-9._-]*)+$")
 HOST_ID = re.compile(r"^[a-z0-9.-]+$")
+NEAR_COPY_SHINGLE = 20
+NEAR_COPY_MIN_CHARS = 200
 
 
 def digest(data):
@@ -93,10 +96,38 @@ def normalized_host(value):
     return host if HOST_ID.fullmatch(host) and "." in host else None
 
 
+def normalized_near_text(value):
+    return re.sub(r"\s+", " ", unicodedata.normalize("NFC", value).casefold()).strip()
+
+
+def character_shingles(value):
+    return {value[i:i + NEAR_COPY_SHINGLE]
+            for i in range(len(value) - NEAR_COPY_SHINGLE + 1)}
+
+
+def development_near_copy(value, pages):
+    normalized = normalized_near_text(value)
+    shingles = character_shingles(normalized) if len(normalized) >= NEAR_COPY_MIN_CHARS else set()
+    for identity, gold_text, gold_shingles in pages:
+        if normalized == gold_text:
+            return identity, "normalized whole text"
+        if min(len(normalized), len(gold_text)) < NEAR_COPY_MIN_CHARS:
+            continue
+        shared = len(shingles & gold_shingles)
+        if not shared:
+            continue
+        union = len(shingles) + len(gold_shingles) - shared
+        smaller = min(len(shingles), len(gold_shingles))
+        if 10 * shared >= 9 * union or 10 * shared >= 9 * smaller:
+            return identity, (f"20-character Jaccard {shared / union:.3f}, "
+                              f"containment {shared / smaller:.3f}")
+    return None
+
+
 def load_eval_hosts(path, errors):
     if path is None:
         errors.append("missing sealed development host manifest")
-        return None, None
+        return None, None, None
     manifest = json.loads(path.read_text())
     if (manifest.get("status") != "sealed" or not filled(manifest.get("version"))
             or not filled(manifest.get("reviewer")) or not filled(manifest.get("reviewed_at"))):
@@ -104,45 +135,53 @@ def load_eval_hosts(path, errors):
     gold_path = manifest.get("gold_path")
     if manifest.get("gold_sha256") != DEV_GOLD_SHA256:
         errors.append("development host gold identity differs from pinned gold")
-        return None, None
+        return None, None, None
     if not isinstance(gold_path, str) or not Path(gold_path).is_file():
         errors.append("development host gold path missing")
-        return None, None
+        return None, None, None
     gold_bytes = Path(gold_path).read_bytes()
     if digest(gold_bytes) != manifest.get("gold_sha256"):
         errors.append("development host gold SHA mismatch")
-        return None, None
+        return None, None, None
     gold = rows(Path(gold_path))
     if not gold:
         errors.append("development host gold is empty")
-        return None, None
+        return None, None, None
     hosts = set()
     hashes = set()
     identities = set()
+    near_pages = []
     for row in gold:
         try:
             identity, value = eval_gold_identity_text(row)
         except ValueError as exc:
             errors.append(str(exc))
-            return None, None
+            return None, None, None
         if identity in identities:
             errors.append(f"development gold duplicate identity {identity}")
-            return None, None
+            return None, None, None
         identities.add(identity)
         source_host = row.get("source_host")
         if not isinstance(source_host, str) or source_host.count("|") != 1:
             errors.append(f"development gold missing source_host {identity}")
-            return None, None
+            return None, None, None
         country, host = source_host.split("|", 1)
         host = normalized_host(host)
         if country != row.get("country") or host is None:
             errors.append(f"development gold invalid source_host {identity}")
-            return None, None
+            return None, None, None
+        normalized = normalized_near_text(value)
+        if not normalized:
+            errors.append(f"development gold empty normalized text {identity}")
+            return None, None, None
         hosts.add(host)
         hashes.add(digest(value.encode("utf-8")))
+        near_pages.append(
+            (identity, normalized,
+             character_shingles(normalized) if len(normalized) >= NEAR_COPY_MIN_CHARS else set()))
     if len(gold) != manifest.get("rows"):
         errors.append("development host gold row count mismatch")
-    return hosts, hashes
+    return hosts, hashes, near_pages
 
 
 def indexed(items, name, errors):
@@ -248,7 +287,7 @@ def validate_inputs(candidate_path, lineage_path, qualification_path, labels_pat
             errors.append("source proof has keys outside selection")
     eval_publishers = None
     eval_text_hashes = None
-    eval_hosts, dev_text_hashes = load_eval_hosts(eval_hosts_path, errors)
+    eval_hosts, dev_text_hashes, dev_near_pages = load_eval_hosts(eval_hosts_path, errors)
     if eval_path:
         ev = json.loads(eval_path.read_text())
         if (ev.get("status") != "sealed" or not filled(ev.get("version"))
@@ -365,6 +404,13 @@ def validate_inputs(candidate_path, lineage_path, qualification_path, labels_pat
         if status != "approved":
             counts["pending_or_held"] += 1
             continue
+        if len(normalized_near_text(text)) < NEAR_COPY_MIN_CHARS:
+            errors.append(prefix + f"approved text under {NEAR_COPY_MIN_CHARS} normalized characters "
+                          "requires a code-pinned development split exception")
+        if dev_near_pages is not None:
+            near = development_near_copy(text, dev_near_pages)
+            if near is not None:
+                errors.append(prefix + f"near-copy overlaps development gold {near[0]} ({near[1]})")
         proof = pmap.get(k)
         if proof is None:
             errors.append(prefix + "approved row missing typed source proof")

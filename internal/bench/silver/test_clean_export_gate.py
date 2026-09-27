@@ -21,12 +21,15 @@ class ExportGateTest(unittest.TestCase):
         raw_dir = self.root / "data/raw/silver/unit"
         raw_dir.mkdir(parents=True)
         self.raw_path = raw_dir / "one.json"
-        self.text = "Alice works at Acme."
+        self.text = "Alice works at Acme. " + " ".join(
+            f"Section {i} records a separate office contact procedure."
+            for i in range(5))
         self.raw = {"source": "unit", "id": "one", "country": "US", "text": self.text,
                     "url": "https://example.org/one"}
         self.raw_path.write_text(json.dumps(self.raw))
         self.capture_path = self.root / "capture.html"
-        self.capture_path.write_text('<div class="s-richtext js-richtext"><p>Alice works at Acme.</p></div>')
+        self.capture_path.write_text(
+            f'<div class="s-richtext js-richtext"><p>{self.text}</p></div>')
         self.profile_id = "unit_press_v1"
         profile = SourceProfile(
             self.profile_id, "unit", "one", "US", self.raw["url"],
@@ -225,6 +228,110 @@ class ExportGateTest(unittest.TestCase):
         self.dev_gold_path.write_bytes(self.dev_gold_path.read_bytes() + b" ")
         _, report = self.check()
         self.assertTrue(any("development host gold SHA mismatch" in e for e in report["errors"]))
+
+    def test_normalized_development_copy_fails_without_gold_entities(self):
+        self.dev_gold["input"] = "  " + self.text.upper().replace(" ", "  \n") + "  "
+        self.dev_gold["expected"] = []
+        self.write()
+        _, report = self.check()
+        self.assertTrue(any("near-copy overlaps development gold dev-1 (normalized whole text)" in e
+                            for e in report["errors"]))
+        self.dev_gold_path.write_bytes(self.dev_gold_path.read_bytes() + b" ")
+        _, report = self.check()
+        self.assertTrue(any("development host gold SHA mismatch" in e for e in report["errors"]))
+        self.assertEqual(gate.normalized_near_text(" CAFE\u0301 \n"),
+                         gate.normalized_near_text("café"))
+
+    def test_character_near_copy_catches_edits_and_excerpts(self):
+        gold = "Alice works at Acme. " + " ".join(
+            f"Section {i} records a distinct contact procedure for office {i}."
+            for i in range(18))
+        normalized = gate.normalized_near_text(gold)
+        pages = [("dev-long", normalized, gate.character_shingles(normalized))]
+        edited = gold.replace("Alice", "Alicx", 1)
+        self.assertIsNotNone(gate.development_near_copy(edited, pages))
+        self.assertIsNotNone(gate.development_near_copy(gold[100:700], pages))
+        self.assertIsNone(gate.development_near_copy(gold[100:220], pages))
+
+    def test_cross_country_edited_copy_fails(self):
+        self.dev_gold["country"] = "JP"
+        self.dev_gold["source_host"] = "JP|other.example"
+        self.dev_gold["input"] = self.text.replace("Alice", "Alicx", 1)
+        self.write()
+        _, report = self.check()
+        self.assertTrue(any("near-copy overlaps development gold dev-1" in e
+                            for e in report["errors"]))
+
+    def test_short_approved_row_needs_code_pinned_split_exception(self):
+        self.assertGreaterEqual(len(gate.normalized_near_text(self.text)),
+                                gate.NEAR_COPY_MIN_CHARS)
+        short = "Alice works at Acme."
+        self.assertLess(len(gate.normalized_near_text(short)), gate.NEAR_COPY_MIN_CHARS)
+        self.assertIsNone(gate.development_near_copy(short, []))
+        self.text = short
+        self.raw["text"] = short
+        self.raw_path.write_text(json.dumps(self.raw))
+        self.capture_path.write_text(
+            f'<div class="s-richtext js-richtext"><p>{short}</p></div>')
+        self.candidate["text"] = short
+        text_sha = gate.digest(short.encode())
+        raw_sha = gate.digest(self.raw_path.read_bytes())
+        capture_sha = gate.digest(self.capture_path.read_bytes())
+        self.lineage.update(candidate_text_sha256=text_sha, raw_text_sha256=text_sha,
+                            raw_file_sha256=raw_sha, raw_excerpt_end_byte=len(short.encode()))
+        self.qualification.update(candidate_text_sha256=text_sha, raw_file_sha256=raw_sha)
+        self.source_proof.update(candidate_text_sha256=text_sha, raw_file_sha256=raw_sha,
+                                 capture_sha256=capture_sha)
+        self.qualification["source_proof_sha256"] = gate.digest(gate.canonical(self.source_proof))
+        self.labels["candidate_text_sha256"] = text_sha
+        PROFILES[self.profile_id] = replace(PROFILES[self.profile_id], raw_sha256=raw_sha,
+                                            capture_sha256=capture_sha, text_sha256=text_sha)
+        self.write()
+        _, report = self.check()
+        self.assertTrue(any("requires a code-pinned development split exception" in e
+                            for e in report["errors"]))
+        self.assertFalse(any("source proof" in e for e in report["errors"]))
+
+    def test_approved_long_row_rejects_development_near_copy(self):
+        self.text = "Alice works at Acme. " + " ".join(
+            f"Section {i} records a distinct office contact procedure."
+            for i in range(18))
+        self.raw["text"] = self.text
+        self.raw_path.write_text(json.dumps(self.raw))
+        self.capture_path.write_text(
+            f'<div class="s-richtext js-richtext"><p>{self.text}</p></div>')
+        self.candidate["text"] = self.text
+        text_sha = gate.digest(self.text.encode())
+        raw_sha = gate.digest(self.raw_path.read_bytes())
+        capture_sha = gate.digest(self.capture_path.read_bytes())
+        self.lineage.update(candidate_text_sha256=text_sha, raw_text_sha256=text_sha,
+                            raw_file_sha256=raw_sha,
+                            raw_excerpt_end_byte=len(self.text.encode()))
+        self.qualification.update(candidate_text_sha256=text_sha, raw_file_sha256=raw_sha)
+        self.source_proof.update(candidate_text_sha256=text_sha, raw_file_sha256=raw_sha,
+                                 capture_sha256=capture_sha)
+        self.qualification["source_proof_sha256"] = gate.digest(gate.canonical(self.source_proof))
+        self.labels["candidate_text_sha256"] = text_sha
+        PROFILES[self.profile_id] = replace(PROFILES[self.profile_id], raw_sha256=raw_sha,
+                                            capture_sha256=capture_sha, text_sha256=text_sha)
+        self.dev_gold["input"] = self.text.replace("Alice", "Alicx", 1)
+        self.write()
+        _, report = self.check()
+        self.assertTrue(any("near-copy overlaps development gold dev-1" in e
+                            for e in report["errors"]))
+        self.assertFalse(any("source proof" in e for e in report["errors"]))
+
+    def test_shared_legal_boilerplate_does_not_trigger_near_copy(self):
+        legal = " ".join(
+            f"Term {i} explains standard use of official online information."
+            for i in range(18))
+        gold = "Technische Universität München, Arcisstraße 21. " + legal
+        candidate = "Bavarian Ministry, Rosenheimer Straße 4. " + legal + " " + " ".join(
+            f"Additional office contact provision {i} applies to this ministry."
+            for i in range(14))
+        normalized = gate.normalized_near_text(gold)
+        pages = [("dev-imprint", normalized, gate.character_shingles(normalized))]
+        self.assertIsNone(gate.development_near_copy(candidate, pages))
 
     def test_self_hashed_alternate_evaluation_publisher_index_fails(self):
         self.index["publisher_group"] = "unit:forged-agency"
