@@ -52,6 +52,10 @@ class SourceProfile:
     publisher_group: str = ""
     required_publisher_groups: tuple[str, ...] = ()
     source_map_parent_group: str = ""
+    terms_path: str = ""
+    terms_sha256: str = ""
+    terms_header_path: str = ""
+    terms_header_sha256: str = ""
 
 
 PROFILES = {
@@ -159,6 +163,57 @@ PROFILES = {
         fragment_sha256="ab1dede9f7343dd9ab37a7514ed15713728a6ecdc15fb51f55945500e45a6c22",
         publisher_group="gb:public_health_scotland",
         required_publisher_groups=("gb:public_health_scotland",)),
+    "ge_rustavi_schools_v1": SourceProfile(
+        profile_id="ge_rustavi_schools_v1", source="ge-rustavi-schools",
+        row_id="GE-RUSTAVI-SCHOOLS-001", country="GE",
+        url="https://rustavi.gov.ge/sajaro-skolebi/",
+        raw_sha256="4579818dfaf7f1603c3b247977af4b8852cd0f30029a30932ecbab637731fab5",
+        capture_path="data/raw/ge-municipal-school-pilot-20260927-v1/rustavi.html",
+        capture_sha256="31868bcbf0391f367789e7d98382e4a49ce4bf13cdda24ef5dfa06fd7dd0a5ef",
+        text_sha256="bd45adeba1c5733b76f32bacf7bbb3c10de4dc78951a3e5d1eed7f69c582cd32",
+        projection="ge_rustavi_schools_v1",
+        header_path="data/raw/ge-municipal-school-pilot-20260927-v1/rustavi.headers",
+        header_sha256="972a8a35f5f3599e9eac5e6c7440b1f77b820a29cfbfa09a5a167f67ed648142",
+        source_map_path="data/interim/silver/qa-ge-rustavi-schools-20260927-v1/source-map-v1.jsonl",
+        source_map_sha256="1123d420a95d15a6bd2bad1931a9fe589687c9c3e6f5f366e0b3633598411074",
+        publisher_group="ge:rustavi-municipality",
+        required_publisher_groups=("ge:rustavi-municipality",)),
+    "jp_jbaudit_contact_v1": SourceProfile(
+        profile_id="jp_jbaudit_contact_v1", source="jp-jbaudit",
+        row_id="jpx-jbaudit-contact-v1", country="JP",
+        url="https://www.jbaudit.go.jp/info/",
+        raw_sha256="bbdece4b07414354da96e361f73f40543d04e9f8787c0761b623c8ee41c14a61",
+        capture_path="data/raw/jp-jbaudit-contact-20260927-v1/contact.html",
+        capture_sha256="b9de758de8ae510f949a82359546629535e0b38cb09fa3ed2142adecfdb960f8",
+        text_sha256="1a548322d88682e60e3fd40189924f393a6551cbb0354e23884fbeda859b1313",
+        projection="jp_jbaudit_contact_v1",
+        header_path="data/raw/jp-jbaudit-contact-20260927-v1/contact.headers.txt",
+        header_sha256="a7c4b7d0f19c29aa08851eb8ae904f8a52d2885ad2d287a1cc96a185a96d194f",
+        source_map_path="data/interim/silver/qa-jp-jbaudit-contact-20260927-v1/source-map-v1.jsonl",
+        source_map_sha256="e78b7c91da93d6759c954e533d15667c7caebbac02b8d19317001fa47e31ca9b",
+        publisher_group="jp:jbaudit", required_publisher_groups=("jp:jbaudit",),
+        terms_path="data/raw/jp-jbaudit-contact-20260927-v1/terms.html",
+        terms_sha256="8380982dac715eb83de45db1f1b08dd4325fd1675cde8cb2ede5956c2a82aa90",
+        terms_header_path="data/raw/jp-jbaudit-contact-20260927-v1/terms.headers.txt",
+        terms_header_sha256="dc8faf7b8a00031fd7bf96756d6cacf561ef8918dfac741ce4f857d977df4cd3"),
+    "jp_jbaudit_staff_v1": SourceProfile(
+        profile_id="jp_jbaudit_staff_v1", source="jp-jbaudit",
+        row_id="jpx-jbaudit-staff-v1", country="JP",
+        url="https://www.jbaudit.go.jp/recruit/msg.html",
+        raw_sha256="399cc97550678137dd8cae9dee767b205a7d2962ebcab22a56e9fb48ecf3802b",
+        capture_path="data/raw/jp-jbaudit-contact-20260927-v1/staff-messages.html",
+        capture_sha256="22e65f245eceae64a87cf3561dbe42fcc182dcc03f8d8081457dde1855658fbd",
+        text_sha256="f68032573668aada00e29d334464eb62d6c65d8e6d416a3614c55bc39d17fd4a",
+        projection="jp_jbaudit_staff_headings_v1",
+        header_path="data/raw/jp-jbaudit-contact-20260927-v1/staff-messages.headers",
+        header_sha256="ae9f75570ab133b23ad34bb47276e6a42eb586b7bb2826dd3b6346771d759be1",
+        source_map_path="data/interim/silver/qa-jp-jbaudit-staff-20260927-v1/source-map-v1.jsonl",
+        source_map_sha256="b498388f9bce636999a9f172c64f55bfdc447db8ffcce4e59cceb14496a2af06",
+        publisher_group="jp:jbaudit", required_publisher_groups=("jp:jbaudit",),
+        terms_path="data/raw/jp-jbaudit-contact-20260927-v1/terms.html",
+        terms_sha256="8380982dac715eb83de45db1f1b08dd4325fd1675cde8cb2ede5956c2a82aa90",
+        terms_header_path="data/raw/jp-jbaudit-contact-20260927-v1/terms.headers.txt",
+        terms_header_sha256="dc8faf7b8a00031fd7bf96756d6cacf561ef8918dfac741ce4f857d977df4cd3"),
 }
 
 
@@ -386,6 +441,18 @@ def project(raw, projection):
     elif projection == "jp_gsi_contact_v1":
         matches = [n for n in tree.root.walk() if n.tag == "div" and has_class(n, "base_txt")
                    and all(person in plain_text(n) for person in ("阿部", "丹下", "野口", "田村"))]
+    elif projection == "ge_rustavi_schools_v1":
+        matches = [n for n in tree.root.walk()
+                   if n.tag == "div" and n.attrs.get("id") == "main-content"]
+    elif projection == "jp_jbaudit_contact_v1":
+        matches = [n for n in tree.root.walk() if n.tag == "div" and has_class(n, "contact")]
+    elif projection == "jp_jbaudit_staff_headings_v1":
+        sections = [n for n in tree.root.walk() if n.tag == "div" and has_class(n, "honbun")]
+        section = one(sections, "Board of Audit staff section")
+        headings = [n for n in section.walk() if n.tag == "p" and has_class(n, "medium_bule")]
+        if len(headings) != 8:
+            raise ValueError("expected eight Board of Audit staff headings")
+        return "\n\n".join(checked_projection(n) for n in headings)
     else:
         raise ValueError("unsupported source projection")
     scope = one(matches, "selected HTML scope")
@@ -412,6 +479,15 @@ def verify_source_profile(root: Path, profile_id: str, doc: dict, info: dict) ->
         if (digest(headers) != profile.header_sha256
                 or not html_200_headers(headers)):
             raise ValueError("source proof HTTP headers mismatch")
+    if profile.terms_path:
+        terms = (root / profile.terms_path).read_bytes()
+        if digest(terms) != profile.terms_sha256:
+            raise ValueError("source proof terms SHA mismatch")
+        if profile.terms_header_path:
+            terms_headers = (root / profile.terms_header_path).read_bytes()
+            if (digest(terms_headers) != profile.terms_header_sha256
+                    or not html_200_headers(terms_headers)):
+                raise ValueError("source proof terms HTTP headers mismatch")
     if profile.source_map_path:
         if ((info.get("derived_source_map_path"), info.get("derived_source_map_sha256"),
              info.get("original_capture_sha256"))
@@ -425,18 +501,24 @@ def verify_source_profile(root: Path, profile_id: str, doc: dict, info: dict) ->
         mapping = one([row for row in mappings if row.get("id") == profile.row_id],
                       "source map row")
         if (mapping.get("url", mapping.get("source_url")) != profile.url
-                or mapping.get("capture_path", mapping.get("raw_body_path")) != profile.capture_path
+                or mapping.get("capture_path", mapping.get("raw_body_path", mapping.get("raw_body"))) != profile.capture_path
                 or mapping.get("capture_sha256", mapping.get("raw_body_sha256")) != profile.capture_sha256
-                or mapping.get("headers_path", mapping.get("raw_headers_path", "")) != profile.header_path
+                or mapping.get("headers_path", mapping.get("raw_headers_path", mapping.get("raw_headers", ""))) != profile.header_path
                 or mapping.get("headers_sha256", mapping.get("raw_headers_sha256", "")) != profile.header_sha256
                 or mapping.get("text_sha256", mapping.get("derived_text_sha256")) != profile.text_sha256):
             raise ValueError("source proof map fields differ from pinned profile")
-        mapped_publisher = mapping.get("publisher_group", mapping.get("publisher_group_proposed"))
+        mapped_publisher = mapping.get("publisher_group", mapping.get("publisher_group_proposed", mapping.get("issuer_group")))
         if profile.publisher_group and mapped_publisher != profile.publisher_group:
             raise ValueError("source proof map publisher differs from pinned profile")
         if (profile.source_map_parent_group
                 and mapping.get("publisher_parent") != profile.source_map_parent_group):
             raise ValueError("source proof map parent differs from pinned profile")
+        if profile.terms_path and (
+                mapping.get("terms_path", mapping.get("terms_body")) != profile.terms_path
+                or mapping.get("terms_sha256", mapping.get("terms_body_sha256")) != profile.terms_sha256
+                or mapping.get("terms_headers_path", mapping.get("terms_headers")) != profile.terms_header_path
+                or mapping.get("terms_headers_sha256") != profile.terms_header_sha256):
+            raise ValueError("source proof terms map differs from pinned profile")
     if profile.original_raw_path:
         if (mapping.get("raw_path") != profile.original_raw_path
                 or mapping.get("raw_sha256") != profile.original_raw_sha256

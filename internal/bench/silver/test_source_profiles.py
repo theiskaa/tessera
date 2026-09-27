@@ -21,6 +21,12 @@ DERIVED_PROFILES = {
     "jp-gsi-3d-contact-v1": "jp_gsi_3d_contact_v1",
     "GBR001": "gb_phs_foi_contact_v1",
 }
+NEW_DERIVED = ROOT / "data/interim/silver/clean-new-ge-jp-pilot-20260927-v1"
+NEW_DERIVED_PROFILES = {
+    "GE-RUSTAVI-SCHOOLS-001": "ge_rustavi_schools_v1",
+    "jpx-jbaudit-contact-v1": "jp_jbaudit_contact_v1",
+    "jpx-jbaudit-staff-v1": "jp_jbaudit_staff_v1",
+}
 
 
 class OfficialCaptureReplayTest(unittest.TestCase):
@@ -111,6 +117,63 @@ class OfficialCaptureReplayTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "omits substantive text"):
             project(eqe.replace(b"<p>Alice</p>", b"<script>Alice</script>"),
                     "ge_eqe_card_v1")
+
+    def test_new_ge_jp_scopes_replay_frozen_review_text(self):
+        packets = (
+            ("data/raw/ge-municipal-school-pilot-20260927-v1/rustavi.html",
+             "ge_rustavi_schools_v1",
+             "data/interim/silver/qa-ge-rustavi-schools-20260927-v1/blind-text-v1.jsonl"),
+            ("data/raw/jp-jbaudit-contact-20260927-v1/contact.html",
+             "jp_jbaudit_contact_v1",
+             "data/interim/silver/qa-jp-jbaudit-contact-20260927-v1/blind-text-v1.jsonl"),
+            ("data/raw/jp-jbaudit-contact-20260927-v1/staff-messages.html",
+             "jp_jbaudit_staff_headings_v1",
+             "data/interim/silver/qa-jp-jbaudit-staff-20260927-v1/blind-text-v1.jsonl"),
+        )
+        for capture, projection, packet in packets:
+            with self.subTest(projection=projection):
+                if not (ROOT / capture).exists() or not (ROOT / packet).exists():
+                    self.skipTest("private capture or blind packet unavailable")
+                text = json.loads((ROOT / packet).read_text())["text"]
+                self.assertEqual(project((ROOT / capture).read_bytes(), projection), text)
+
+    def test_new_held_profiles_bind_capture_map_and_terms(self):
+        candidates = {row["id"]: row for row in map(
+            json.loads, (NEW_DERIVED / "candidate-v1.jsonl").read_text().splitlines())}
+        lineage = {row["id"]: row for row in map(
+            json.loads, (NEW_DERIVED / "source-lineage-v1.jsonl").read_text().splitlines())}
+        self.assertEqual(set(candidates), set(NEW_DERIVED_PROFILES))
+        self.assertEqual(set(lineage), set(NEW_DERIVED_PROFILES))
+        for row_id, profile_id in NEW_DERIVED_PROFILES.items():
+            with self.subTest(profile=profile_id):
+                self.assertEqual(verify_source_profile(
+                    ROOT, profile_id, candidates[row_id], lineage[row_id]), PROFILES[profile_id])
+
+    def test_board_terms_capture_and_source_map_fail_closed(self):
+        candidates = {row["id"]: row for row in map(
+            json.loads, (NEW_DERIVED / "candidate-v1.jsonl").read_text().splitlines())}
+        lineage = {row["id"]: row for row in map(
+            json.loads, (NEW_DERIVED / "source-lineage-v1.jsonl").read_text().splitlines())}
+        row_id, profile_id = "jpx-jbaudit-contact-v1", "jp_jbaudit_contact_v1"
+        profile = PROFILES[profile_id]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for path in (profile.capture_path, profile.header_path, profile.source_map_path,
+                         profile.terms_path, profile.terms_header_path):
+                target = root / path
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(ROOT / path, target)
+            self.assertEqual(verify_source_profile(
+                root, profile_id, candidates[row_id], lineage[row_id]), profile)
+            terms = root / profile.terms_path
+            terms.write_bytes(terms.read_bytes() + b"changed")
+            with self.assertRaisesRegex(ValueError, "terms SHA mismatch"):
+                verify_source_profile(root, profile_id, candidates[row_id], lineage[row_id])
+            shutil.copyfile(ROOT / profile.terms_path, terms)
+            source_map = root / profile.source_map_path
+            source_map.write_bytes(source_map.read_bytes() + b"changed")
+            with self.assertRaisesRegex(ValueError, "map SHA mismatch"):
+                verify_source_profile(root, profile_id, candidates[row_id], lineage[row_id])
 
     def test_all_pinned_profiles_replay_exact_candidate_text(self):
         if not CANDIDATE.exists() or not LINEAGE.exists():
