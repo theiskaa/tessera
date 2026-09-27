@@ -1451,21 +1451,19 @@ fn supported_template(template: &Template, country: &str) -> bool {
         return false;
     };
     let unit = slots.iter().any(|item| item.slot == Slot::OrgUnit);
+    let local_office = slots.iter().any(|item| item.slot == Slot::OrgLocalOffice);
     let chain = slots.iter().any(|item| item.slot == Slot::OrgChain);
     let registry = slots.iter().any(|item| item.slot == Slot::OrgRegistry);
-    if matches!(country, "GE" | "JP") && (unit || chain) {
+    if unit || local_office || matches!(country, "GE" | "JP") && chain {
         return false;
     }
     if country == "JP" && registry {
         return false;
     }
-    let other_than_unit = slots
-        .iter()
-        .any(|item| item.slot != Slot::OrgUnit && item.slot.kind() == Some(Kind::Org));
     let other_than_registry = slots
         .iter()
         .any(|item| item.slot != Slot::OrgRegistry && item.slot.kind() == Some(Kind::Org));
-    !(unit && other_than_unit || registry && other_than_registry)
+    !(registry && other_than_registry)
 }
 
 /// Generates the detector corpus described by the config's `[generate]` section, or with
@@ -2175,18 +2173,12 @@ mod tests {
                 let slots = template.slots().unwrap();
                 let unit = slots.iter().any(|item| item.slot == Slot::OrgUnit);
                 let chain = slots.iter().any(|item| item.slot == Slot::OrgChain);
+                let local_office = slots.iter().any(|item| item.slot == Slot::OrgLocalOffice);
                 let registry = slots.iter().any(|item| item.slot == Slot::OrgRegistry);
                 if country == "JP" {
                     assert!(!registry, "{}", template.id);
                 }
-                assert!(
-                    !(unit
-                        && slots.iter().any(|item| {
-                            item.slot != Slot::OrgUnit && item.slot.kind() == Some(Kind::Org)
-                        })),
-                    "{}",
-                    template.id
-                );
+                assert!(!unit && !local_office, "{} in {country}", template.id);
                 assert!(
                     !(registry
                         && slots.iter().any(|item| {
@@ -2196,7 +2188,7 @@ mod tests {
                     template.id
                 );
                 if matches!(country, "GE" | "JP") {
-                    assert!(!unit && !chain, "{} in {country}", template.id);
+                    assert!(!chain, "{} in {country}", template.id);
                 }
             }
         }
@@ -2234,7 +2226,7 @@ mod tests {
             },
             "JP"
         ));
-        for id in [323, 371, 379] {
+        for id in [323, 371, 379, 386, 387, 621] {
             let template = all.iter().find(|template| template.id == id).unwrap();
             for country in ["US", "GB", "DE", "GE", "JP"] {
                 assert!(
