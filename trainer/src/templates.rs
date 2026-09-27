@@ -98,7 +98,7 @@ const TEMPLATES: &[(Family, u32, Category, &str)] = &[
         Prose,
         5,
         NoPers,
-        "Parcels for {org_school} go to {address_person_street}. {neg_partial_location} {sentence}",
+        "Parcels for {org_school} go to {address}. {neg_partial_location} {sentence}",
     ),
     (
         Prose,
@@ -236,7 +236,7 @@ const TEMPLATES: &[(Family, u32, Category, &str)] = &[
         Signature,
         208,
         Both,
-        "{closing},\n{person#1}\n{org_eponymous#1}\n{address_person_street#1}\n{phone#1}",
+        "{closing},\n{person#1}\n{org_eponymous#1}\n{address#1}\n{phone#1}",
     ),
     (
         Signature,
@@ -296,7 +296,7 @@ const TEMPLATES: &[(Family, u32, Category, &str)] = &[
         Letterhead,
         308,
         Both,
-        "{org_eponymous#1}\n{address_person_street#1}\n{phone#1}\n\n{date}\n\n{person#2}\n{address_ml#2}\n\n{sentence}\n\n{closing},\n{person#3}",
+        "{org_eponymous#1}\n{address#1}\n{phone#1}\n\n{date}\n\n{person#2}\n{address_ml#2}\n\n{sentence}\n\n{closing},\n{person#3}",
     ),
     (
         Letterhead,
@@ -482,7 +482,7 @@ const TEMPLATES: &[(Family, u32, Category, &str)] = &[
         Table,
         609,
         Both,
-        "{person#1}\t{org_eponymous#1}\t{address_person_street#1}\t{phone#1}\n{person#2}\t{org_school#2}\t{address#2}\t{phone#2}",
+        "{person#1}\t{org_eponymous#1}\t{address#1}\t{phone#1}\n{person#2}\t{org_school#2}\t{address#2}\t{phone#2}",
     ),
     (
         Support,
@@ -1221,52 +1221,6 @@ pub const PERSON_NAMED_INSTITUTIONS: &[&str] = &[
     "Wellcome Trust",
     "Rockefeller Foundation",
     "Carnegie Hall",
-];
-
-/// Streets named after people, per country, and the city used when a sampled address has
-/// none.
-pub const PERSON_NAMED_STREETS: &[(&str, &str, &[&str])] = &[
-    (
-        "US",
-        "Washington",
-        &[
-            "Washington Street",
-            "Jefferson Road",
-            "Martin Luther King Jr. Boulevard",
-            "Lincoln Avenue",
-        ],
-    ),
-    (
-        "GB",
-        "London",
-        &[
-            "Churchill Way",
-            "Queen Elizabeth Street",
-            "Nelson Road",
-            "Wellington Place",
-        ],
-    ),
-    (
-        "DE",
-        "Berlin",
-        &[
-            "Karl-Marx-Allee",
-            "Friedrich-Ebert-Straße",
-            "Goethestraße",
-            "Schillerstraße",
-        ],
-    ),
-    (
-        "GE",
-        "Tbilisi",
-        &[
-            "Rustaveli Avenue",
-            "Chavchavadze Avenue",
-            "რუსთაველის გამზირი",
-            "ჭავჭავაძის გამზირი",
-        ],
-    ),
-    ("JP", "Tokyo", &["Meiji-dori", "明治通り"]),
 ];
 
 pub const NEG_HANDLES: &[&str] = &[

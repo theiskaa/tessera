@@ -16,8 +16,8 @@ use rand::seq::{IndexedRandom, SliceRandom};
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 use serde::Serialize;
+use tessera::Kind;
 use tessera::internal::{fnv1a, is_content, tokenize};
-use tessera::{AddressLabel, Kind};
 use unicode_normalization::UnicodeNormalization;
 
 use crate::bodies::Bodies;
@@ -143,7 +143,6 @@ pub enum Slot {
     OrgList,
     Address,
     AddressMultiline,
-    AddressPersonStreet,
     Email,
     Phone,
     PhoneLocal,
@@ -200,7 +199,7 @@ impl Slot {
             | OrgRegistry | OrgChain | OrgUniv | OrgCouncil | OrgParty | OrgMedia | OrgList => {
                 Some(Kind::Org)
             }
-            Address | AddressMultiline | AddressPersonStreet => Some(Kind::Address),
+            Address | AddressMultiline => Some(Kind::Address),
             Email => Some(Kind::Email),
             Phone | PhoneLocal => Some(Kind::Phone),
             _ => None,
@@ -233,7 +232,6 @@ impl Slot {
             "org_list" => OrgList,
             "address" => Address,
             "address_ml" => AddressMultiline,
-            "address_person_street" => AddressPersonStreet,
             "email" => Email,
             "phone" => Phone,
             "phone_local" => PhoneLocal,
@@ -369,11 +367,10 @@ pub struct PoolOrg {
     pub legal_form: String,
 }
 
-/// An address from the parser shards: one-line and multi-line renderings and its city.
+/// An address from the parser shards, with one-line and multi-line renderings.
 #[derive(Debug, Clone)]
 pub struct PoolAddress {
     pub text: String,
-    pub city: Option<String>,
     /// The one-line layout Georgian public bodies print, when the row has a city, a street,
     /// and a number: `ქ. ქუთაისი, წერეთლის ქ. №15, III კორპუსი, ოთახი №206`.
     pub official: Option<String>,
@@ -381,11 +378,6 @@ pub struct PoolAddress {
 
 impl PoolAddress {
     fn from_example(e: &LabelledExample) -> PoolAddress {
-        let city = e
-            .spans
-            .iter()
-            .find(|s| s.label == AddressLabel::City)
-            .map(|s| e.text[s.start as usize..s.end as usize].to_string());
         let mut text = pool_filter::with_local_country(e, &pool_filter::without_venue_lines(e));
         // Japanese documents write the postal mark before the postcode and outside the address,
         // and no country name in front.
@@ -414,11 +406,7 @@ impl PoolAddress {
         } else {
             None
         };
-        PoolAddress {
-            text,
-            city,
-            official,
-        }
+        PoolAddress { text, official }
     }
 
     fn multiline(&self) -> bool {
@@ -621,19 +609,6 @@ impl<'a> Ctx<'a> {
             Slot::AddressMultiline => {
                 let a = self.address(true, rng)?.text.clone();
                 Filled::plain(self.shaped(a, "\n", rng))
-            }
-            Slot::AddressPersonStreet => {
-                let (_, capital, streets) = templates::PERSON_NAMED_STREETS
-                    .iter()
-                    .find(|(c, _, _)| *c == self.country)
-                    .with_context(|| format!("no person-named streets for {}", self.country))?;
-                let city = self
-                    .address(false, rng)?
-                    .city
-                    .clone()
-                    .unwrap_or_else(|| capital.to_string());
-                let number = rng.random_range(1..=250);
-                Filled::plain(format!("{number} {}, {city}", pick(streets, rng)))
             }
             Slot::Email => Filled::plain(self.email(group, rng)),
             Slot::Phone => {
@@ -2199,12 +2174,10 @@ mod tests {
             addresses: vec![
                 PoolAddress {
                     text: "12 Rustaveli Avenue\n0108 Tbilisi\nGeorgia".into(),
-                    city: Some("Tbilisi".into()),
                     official: None,
                 },
                 PoolAddress {
                     text: "4 Misty Wood Circle".into(),
-                    city: None,
                     official: None,
                 },
             ],
@@ -2278,10 +2251,41 @@ mod tests {
     fn single_line_addresses_join_lines_with_commas() {
         let a = PoolAddress {
             text: "12 Rustaveli Avenue\n0108 Tbilisi\nGeorgia".into(),
-            city: None,
             official: None,
         };
         assert_eq!(a.one_line(), "12 Rustaveli Avenue, 0108 Tbilisi, Georgia");
+    }
+
+    #[test]
+    fn former_person_street_templates_use_complete_pool_addresses() {
+        let all = templates::all().unwrap();
+        let pools = stub_pools(&[("Nino Beridze", "latin")]);
+        let allowed: Vec<String> = pools
+            .addresses
+            .iter()
+            .flat_map(|address| [address.text.clone(), address.one_line()])
+            .collect();
+        for id in [5, 208, 308, 609] {
+            let template = all.iter().find(|template| template.id == id).unwrap();
+            assert!(template.fits("GE"));
+            let mut ctx = Ctx::new("GE", &pools);
+            ctx.plain = true;
+            let mut rng = ChaCha8Rng::seed_from_u64(id as u64);
+            let doc = render(template, &mut ctx, &mut rng).unwrap();
+            let addresses: Vec<&str> = doc
+                .entities
+                .iter()
+                .filter(|entity| entity.kind == "address")
+                .map(|entity| &doc.text[entity.start..entity.end])
+                .collect();
+            assert!(!addresses.is_empty(), "template {id} lost its address");
+            assert!(
+                addresses
+                    .iter()
+                    .all(|address| allowed.iter().any(|item| item == address)),
+                "template {id} assembled a street and city from separate sources: {addresses:?}"
+            );
+        }
     }
 
     #[test]
