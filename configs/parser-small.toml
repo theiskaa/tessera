@@ -4,18 +4,12 @@ seed = 42
 
 [data]
 source = "libpostal-osm-addresses"
-countries = ["GB", "GE", "DE", "US", "JP"]
+countries = ["US"]
 train_per_country = 30000
 valid_per_country = 3000
 test_per_country = 3000
 manifests = "data/manifests"
 processed = "data/processed/parser"
-
-[data.coverage_exceptions.JP]
-train = 27136
-valid = 2693
-test = 2624
-reason = "reviewed source shortage in the current Japanese sample; all minima remain nonzero"
 
 [features]
 ngram_sizes = [2, 3, 4]

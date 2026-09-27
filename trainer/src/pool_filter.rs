@@ -1,7 +1,4 @@
-//! What the generator's pools may hold, from the pool audit (`internal/reports/m7-pool-audit.md`):
-//! real documents name companies and public bodies, not private trusts or pension schemes, and
-//! write an address as its street and place, not as the shop or hydrant a map row was about.
-//! Each rule here is a load-time predicate or rewrite; the sources are never changed.
+//! Filters unhelpful names and address rows before they enter US synthetic documents.
 
 use tessera::AddressLabel;
 use tessera::internal::fnv1a;
@@ -87,18 +84,7 @@ const INSTITUTIONAL_TRUST: [&str; 12] = [
 /// A private trust, settlement, estate, or pension scheme.
 pub fn private_arrangement(name: &str) -> bool {
     let w = words(name);
-    let lower = name.to_lowercase();
     any_phrase(&w, &PRIVATE)
-        || [
-            "pensionskasse",
-            "pensionsfonds",
-            "versorgungswerk",
-            "年金",
-            "信託契約",
-            "受託者",
-        ]
-        .iter()
-        .any(|p| lower.contains(p))
         || ((has_phrase(&w, "trust") || has_phrase(&w, "trusts"))
             && !any_phrase(&w, &INSTITUTIONAL_TRUST))
 }
@@ -195,114 +181,15 @@ pub fn keep_some(name: &str, per_mille: u64) -> bool {
     fnv1a(name.as_bytes(), 0x9e37) % 1000 < per_mille
 }
 
-/// Places in the occupied territories of Georgia, in Georgian, Russian, and Latin script.
-const OCCUPIED: [&str; 24] = [
-    "ცხინვალ",
-    "სოხუმ",
-    "გაგრ",
-    "გუდაუთ",
-    "ბიჭვინთ",
-    "ოჩამჩირ",
-    "ტყვარჩელ",
-    "ახალგორ",
-    "აფხაზ",
-    "სამაჩაბლო",
-    "цхинвал",
-    "сухум",
-    "гагр",
-    "гудаут",
-    "пицунд",
-    "очамчир",
-    "ахалгори",
-    "абхаз",
-    "tskhinval",
-    "sukhum",
-    "gagra",
-    "gudauta",
-    "akhalgori",
-    "abkhaz",
-];
-
-/// A Georgian address row the pools leave out: in the occupied territories, written in Russian,
-/// or garbled.
-pub fn unusable_ge_address(e: &LabelledExample) -> bool {
-    let places: String = e
-        .spans
-        .iter()
-        .filter(|s| {
-            matches!(
-                s.label,
-                AddressLabel::City
-                    | AddressLabel::Region
-                    | AddressLabel::District
-                    | AddressLabel::Suburb
-            )
-        })
-        .map(|s| e.text[s.start as usize..s.end as usize].to_lowercase())
-        .collect::<Vec<_>>()
-        .join(" | ");
-    let cyrillic_part = e.spans.iter().any(|s| {
-        s.label != AddressLabel::Country
-            && e.text[s.start as usize..s.end as usize]
-                .chars()
-                .any(|c| ('\u{0400}'..='\u{04ff}').contains(&c))
-    });
-    OCCUPIED.iter().any(|p| places.contains(p)) || cyrillic_part || e.text.contains("??")
-}
-
-/// A Japanese address row the pools leave out: one carrying a phone number (`0745-73-1138`)
-/// or a romanized word inside a labelled Japanese component (`Nara Prefecture 三郷町…`), which
-/// the source sometimes merges into one field. Venue lines and the country, which the pools
-/// drop anyway, are not looked at.
-pub fn unusable_jp_address(e: &LabelledExample) -> bool {
-    let text = e
-        .spans
-        .iter()
-        .filter(|s| s.label != AddressLabel::Country)
-        .map(|s| &e.text[s.start as usize..s.end as usize])
-        .collect::<Vec<_>>()
-        .join(" ");
-    let japanese = text.chars().any(|c| ('\u{3040}'..='\u{9fff}').contains(&c));
-    let latin_word = text
-        .split(|c: char| !c.is_ascii_alphabetic())
-        .any(|w| w.len() >= 4);
-    let phone = text
-        .split(|c: char| !(c.is_ascii_digit() || c == '-'))
-        .any(|run| {
-            let groups: Vec<&str> = run.split('-').collect();
-            groups.len() == 3
-                && groups.iter().all(|g| !g.is_empty())
-                && groups[0].starts_with('0')
-                && groups.iter().map(|g| g.len()).sum::<usize>() >= 9
-        });
-    phone || (japanese && latin_word)
-}
-
 /// Map rows about a fire hydrant or water tank rather than a place anyone writes to.
 pub fn hydrant(text: &str) -> bool {
     let lower = text.to_lowercase();
-    ["消火栓", "防火水槽", "shōkasen", "shokasen", "hydrant"]
-        .iter()
-        .any(|w| lower.contains(w))
+    ["hydrant", "water tank"].iter().any(|w| lower.contains(w))
 }
-
-/// Line words that make a Japanese line part of the address: a building's name.
-const BUILDING: [&str; 10] = [
-    "ビル",
-    "マンション",
-    "ハイツ",
-    "荘",
-    "館",
-    "レジデンス",
-    "コーポ",
-    "タワー",
-    "号館",
-    "住宅",
-];
 
 /// The row's text without leading and trailing lines that no labelled component touches: the
 /// shop, bank, or landmark a map row was about, which the parser data leaves unlabelled and the
-/// generator would otherwise label as address text. Japanese building-name lines stay.
+/// generator would otherwise label as address text.
 pub fn without_venue_lines(e: &LabelledExample) -> String {
     let mut lines: Vec<(usize, &str)> = Vec::new();
     let mut at = 0;
@@ -315,7 +202,6 @@ pub fn without_venue_lines(e: &LabelledExample) -> String {
         e.spans
             .iter()
             .any(|s| (s.start as usize) < end && start < s.end as usize)
-            || BUILDING.iter().any(|b| line.contains(b))
     };
     let first = lines.iter().position(touched);
     let last = lines.iter().rposition(touched);
@@ -330,55 +216,35 @@ pub fn without_venue_lines(e: &LabelledExample) -> String {
     }
 }
 
-/// What each country is called in its own addresses: the local and the English name.
-const COUNTRY_NAMES: [(&str, &[&str]); 5] = [
-    (
-        "US",
-        &[
-            "United States",
-            "USA",
-            "US",
-            "United States of America",
-            "U.S.A.",
-        ],
-    ),
-    (
-        "GB",
-        &[
-            "United Kingdom",
-            "UK",
-            "England",
-            "Scotland",
-            "Wales",
-            "Northern Ireland",
-            "Great Britain",
-        ],
-    ),
-    ("DE", &["Deutschland", "Germany"]),
-    ("GE", &["საქართველო", "Georgia"]),
-    ("JP", &["日本", "Japan", "日本国", "Nippon"]),
-];
-
-/// `text` with a country line in another language, such as `Birleşik Krallık` in a British
-/// row, written as the country's own name: map data carries the labels of every language.
+/// Normalize a US country line to its English name when the source uses another label.
 pub fn with_local_country(e: &LabelledExample, text: &str) -> String {
-    let Some((_, names)) = COUNTRY_NAMES.iter().find(|(c, _)| *c == e.country) else {
-        return text.to_string();
-    };
     let Some(country) = e
         .spans
         .iter()
         .rev()
-        .find(|s| s.label == AddressLabel::Country)
-        .map(|s| e.text[s.start as usize..s.end as usize].trim())
+        .find(|span| span.label == AddressLabel::Country)
+        .map(|span| e.text[span.start as usize..span.end as usize].trim())
     else {
         return text.to_string();
     };
-    if names.iter().any(|n| n.eq_ignore_ascii_case(country)) {
+    if [
+        "United States",
+        "USA",
+        "US",
+        "United States of America",
+        "U.S.A.",
+    ]
+    .iter()
+    .any(|name| name.eq_ignore_ascii_case(country))
+    {
         return text.to_string();
     }
     match text.rfind(country) {
-        Some(at) => format!("{}{}{}", &text[..at], names[0], &text[at + country.len()..]),
+        Some(at) => format!(
+            "{}United States{}",
+            &text[..at],
+            &text[at + country.len()..]
+        ),
         None => text.to_string(),
     }
 }
@@ -412,67 +278,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn japanese_rows_with_phones_or_romanized_words_are_left_out() {
-        use crate::data::{Span, Split};
-        let row = |text: &str, parts: &[(AddressLabel, &str)]| LabelledExample {
-            id: 0,
-            group_id: 0,
-            country: "JP".into(),
-            language: "ja".into(),
-            text: text.into(),
-            spans: parts
-                .iter()
-                .map(|(label, part)| {
-                    let start = text.find(part).unwrap_or(0);
-                    Span {
-                        label: *label,
-                        start: start as u32,
-                        end: (start + part.len()) as u32,
-                    }
-                })
-                .collect(),
-            split: Split::Train,
-            augmented: false,
-        };
-        use AddressLabel::{City, Country, HouseNumber, Postcode};
-        assert!(unusable_jp_address(&row(
-            "636-0822 Nara Prefecture 三郷町 1-29-1",
-            &[(Postcode, "636-0822"), (City, "Nara Prefecture 三郷町")]
-        )));
-        assert!(unusable_jp_address(&row(
-            "三郷町 0745-73-1138",
-            &[(City, "三郷町"), (HouseNumber, "0745-73-1138")]
-        )));
-        assert!(!unusable_jp_address(&row(
-            "100-8926 東京都千代田区\nSeven-Eleven\nJapan",
-            &[
-                (Postcode, "100-8926"),
-                (City, "東京都千代田区"),
-                (Country, "Japan")
-            ]
-        )));
-        assert!(!unusable_jp_address(&row(
-            "1-1 Marunouchi, Tokyo",
-            &[(HouseNumber, "1-1"), (City, "Tokyo")]
-        )));
-    }
-
-    #[test]
     fn private_arrangements_and_their_institutional_look_alikes() {
         for name in [
             "THE ANGELA MAUNDRELL SETTLEMENT 2020",
             "Smith Family Trust",
             "ACME Pension Scheme",
             "Estate of John Doe",
-            "Versorgungswerk der Ärzte",
         ] {
             assert!(private_arrangement(name), "{name}");
         }
-        for name in [
-            "Northern Trust Company",
-            "Leeds NHS Foundation Trust",
-            "Acme Widgets Ltd",
-        ] {
+        for name in ["Northern Trust Company", "Acme Widgets Ltd"] {
             assert!(!private_arrangement(name), "{name}");
         }
         assert!(names_a_person("MRS JANE DOE DISCRETIONARY TRUST"));

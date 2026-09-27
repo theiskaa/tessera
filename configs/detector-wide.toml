@@ -3,7 +3,7 @@ task = "detector"
 seed = 42
 
 [data]
-countries = ["US", "GB", "DE", "GE", "JP"]
+countries = ["US"]
 train_per_country = 30000
 valid_per_country = 3000
 test_per_country = 3000
@@ -52,7 +52,7 @@ silver = [
 silver_repeat = 10
 
 [names]
-countries = ["US", "GB", "DE", "GE", "JP"]
+countries = ["US"]
 people_per_country = 20000
 orgs_per_country = 20000
 raw = "data/raw"

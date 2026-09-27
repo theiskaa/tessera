@@ -36,318 +36,55 @@ const EN_NUMERIC: &[&str] = &[
     "If the line is busy, try again after lunch.",
 ];
 
-/// Sentences in the document's language, with no names, places, or organizations.
-const SENTENCES: &[(&str, &[&str])] = &[
-    (
-        "DE",
-        &[
-            "Vielen Dank für Ihre schnelle Rückmeldung.",
-            "Anbei erhalten Sie die gewünschten Unterlagen.",
-            "Bitte prüfen Sie die Angaben vor der Unterschrift.",
-            "Die Lieferung verlässt unser Lager morgen früh.",
-            "Für Rückfragen stehen wir Ihnen gerne zur Verfügung.",
-            "Die Rechnung ist innerhalb von 14 Tagen zahlbar.",
-            "Wir haben Ihre Bestellung erhalten und bearbeiten sie umgehend.",
-            "Leider hat sich die Auslieferung um zwei Tage verzögert.",
-            "Das Angebot gilt bis zum 31.10.2026.",
-            "Die Ware wird auf 24 Paletten geliefert.",
-            "Unser Büro ist zwischen den Feiertagen geschlossen.",
-            "Der Termin wurde auf Donnerstag, 9:30 Uhr, verschoben.",
-            "Bitte bestätigen Sie den Eingang dieser Nachricht.",
-            "Die Zahlung ist bei uns eingegangen.",
-            "Wir melden uns, sobald uns die Zahlen vorliegen.",
-            "Die Unterlagen liegen im gemeinsamen Ordner.",
-            "Der Vertrag verlängert sich automatisch um ein Jahr.",
-            "Wir berechnen 1.215,50 € zzgl. MwSt.",
-            "Die Anlieferung ist werktags von 7:00 bis 15:30 Uhr möglich.",
-            "Vielen Dank für Ihre Anfrage vom 3. März.",
-            "Das Ersatzteil ist bereits unterwegs.",
-            "Bei der letzten Rechnung ist uns ein kleiner Fehler aufgefallen.",
-            "Die Sendung wurde in zwei Pakete aufgeteilt.",
-            "Wir freuen uns auf die weitere Zusammenarbeit.",
-            "Ein unterschriebenes Exemplar liegt uns noch nicht vor.",
-            "Bitte bewahren Sie diese E-Mail für Ihre Unterlagen auf.",
-            "Die Preise verstehen sich ab Werk.",
-            "Der Zugangscode für das Tor lautet 8053.",
-        ],
-    ),
-    (
-        "GE",
-        &[
-            "გმადლობთ სწრაფი პასუხისთვის.",
-            "დოკუმენტები თან ერთვის.",
-            "გთხოვთ, დაადასტუროთ მიღება.",
-            "შეკვეთა გაიგზავნა დღეს დილით.",
-            "გადახდა მიღებულია.",
-            "შეხვედრა გადავიტანეთ ხუთშაბათზე.",
-            "ინვოისი თან ერთვის წერილს.",
-            "თუ რამე გაუგებარია, შეგვატყობინეთ.",
-            "მიწოდება მოხდება ორ სამუშაო დღეში.",
-            "ოფისი დაკეტილი იქნება დღესასწაულებზე.",
-            "ხელშეკრულება ავტომატურად განახლდება ყოველ წელს.",
-            "ჯერ არ მიგვიღია ხელმოწერილი ასლი.",
-            "გთხოვთ, გადაამოწმოთ თანხები ხელმოწერამდე.",
-            "ტვირთი საწყობიდან 16:30-ზე გავიდა.",
-            "გადასახდელი თანხაა 1 240,00 ლარი.",
-            "პასუხს ველოდებით ორშაბათამდე.",
-            "ყველაფერი რიგზეა ჩვენი მხრიდან.",
-            "დაგიკავშირდებით, როგორც კი პასუხს მივიღებთ.",
-            "ახალი განრიგი შემდეგი თვიდან იწყება.",
-            "შეკვეთა ორ ამანათად დაიყო.",
-            "ბოდიშს გიხდით დაგვიანებისთვის.",
-            "სიამოვნებით გიპასუხებთ ნებისმიერ კითხვაზე.",
-            "შენიშვნები გაზიარებულ საქაღალდეშია.",
-            "ნაწილი უკვე გზაშია.",
-            "მიწოდების დრო 10:00-დან 14:00-მდე.",
-            "მადლობა, მალე შევხვდებით.",
-        ],
-    ),
-    (
-        "JP",
-        &[
-            "平素より大変お世話になっております。",
-            "ご確認のほど、よろしくお願いいたします。",
-            "資料を添付いたしますので、ご査収ください。",
-            "何かございましたら、ご連絡ください。",
-            "本日午前中に商品を発送いたしました。",
-            "お支払いを確認いたしました。",
-            "納期が二日ほど遅れる見込みです。",
-            "見積書の有効期限は2026年2月28日です。",
-            "打ち合わせは木曜日の14時に変更となりました。",
-            "合計金額は54,340円（税込）です。",
-            "ご返信をお待ちしております。",
-            "年末年始は休業とさせていただきます。",
-            "契約は毎年自動更新となります。",
-            "署名済みの書類をまだ受け取っておりません。",
-            "ご迷惑をおかけして申し訳ございません。",
-            "引き続きよろしくお願い申し上げます。",
-            "商品は二つの荷物に分けて発送いたしました。",
-            "前回の請求書に誤りがございました。",
-            "新しいスケジュールは来月から開始します。",
-            "受付時間は平日9時から17時までです。",
-            "ご依頼の件について、資料をお送りいたします。",
-            "取り急ぎご連絡まで。",
-            "詳細は下記の通りです。",
-            "変更がございましたら、改めてご連絡いたします。",
-            "交換部品はすでに発送済みです。",
-        ],
-    ),
-];
-
 /// Lines that head or number a document: subjects, references, table headers, bank and tax
 /// numbers, all fictitious.
-const LINES: &[(&str, &[&str])] = &[
-    (
-        "en",
-        &[
-            "Invoice No. 2025-07742",
-            "Customer ID 61930",
-            "Order #77106-C",
-            "Ticket 2025-0611-2093",
-            "PO 81-4407-D",
-            "Due: February 9, 2026",
-            "Subject: Re: delivery for order 5162",
-            "Description          Qty   Price     Amount",
-            "Page 2 of 3",
-            "VAT reg. no. 999 9999 73",
-            "Our ref: KB/2026/118",
-            "Sent: Monday 15 September 2026 09:12",
-            "Confidential: for the addressee only.",
-            "Subtotal 1,540.00 · Shipping 86.40 · Total 1,626.40",
-            "Account no. 31926819 · Sort code 60-16-13",
-        ],
-    ),
-    (
-        "DE",
-        &[
-            "Angebot Nr. 2025-0733",
-            "Kundennummer 71 204",
-            "USt-IdNr. DE 123 456 789",
-            "Rechnung Nr. 2025-1893",
-            "Rechnungsdatum 21.01.2026",
-            "Pos.  Menge  Einzelpreis  Gesamt",
-            "Betreff: Ihre Anfrage vom 3. März",
-            "Unser Zeichen: KV/2026",
-            "Seite 1 von 2",
-            "Lieferschein 55120",
-            "Bankverbindung: IBAN DE44 5001 0517 5407 3249 31",
-            "Steuernummer 27/123/45678",
-            "Zahlbar innerhalb von 14 Tagen netto.",
-        ],
-    ),
-    (
-        "GE",
-        &[
-            "ინვოისი INV-2025-1177",
-            "შეკვეთა №3309",
-            "თემა: მიწოდების განრიგი",
-            "გადახდის ვადა 15.11.2025",
-            "საიდენტიფიკაციო კოდი 404 123 456",
-            "თანხა 1 870,00 ₾",
-            "ანგარიში GE60NB0000000123456789",
-            "გვერდი 1 / 2",
-        ],
-    ),
-    (
-        "JP",
-        &[
-            "件名：ご請求書（No. B-2025-0311）の件",
-            "請求書番号 INV-2025-1177",
-            "発行日 2026年9月15日",
-            "お支払期限 2026年2月28日",
-            "品名　数量　単価　金額",
-            "合計金額 54,340円（税込）",
-            "注文番号 3309",
-            "ページ 1/2",
-            "登録番号 T1234567890123",
-        ],
-    ),
-];
+const LINES: &[(&str, &[&str])] = &[(
+    "en",
+    &[
+        "Invoice No. 2025-07742",
+        "Customer ID 61930",
+        "Order #77106-C",
+        "Ticket 2025-0611-2093",
+        "PO 81-4407-D",
+        "Due: February 9, 2026",
+        "Subject: Re: delivery for order 5162",
+        "Description          Qty   Price     Amount",
+        "Page 2 of 3",
+        "VAT reg. no. 999 9999 73",
+        "Our ref: KB/2026/118",
+        "Sent: Monday 15 September 2026 09:12",
+        "Confidential: for the addressee only.",
+        "Subtotal 1,540.00 · Shipping 86.40 · Total 1,626.40",
+        "Account no. 31926819 · Sort code 60-16-13",
+    ],
+)];
 
 /// Headers above a quoted reply that name its author where `{}` stands.
-const NAMED_HEADERS: &[(&str, &[&str])] = &[
-    (
-        "en",
-        &[
-            "On 15 Sep 2026, at 09:12, {} wrote:",
-            "-----Original Message-----\nFrom: {}\nSent: Monday 15 September 2026 09:12",
-        ],
-    ),
-    ("DE", &["Am 12.10.2026 um 09:12 schrieb {}:"]),
-    ("GE", &["15.09.2026 09:12-ზე {} წერს:"]),
-    ("JP", &["2026年9月15日(月) 9:12 {} のメッセージ:"]),
-];
+const NAMED_HEADERS: &[(&str, &[&str])] = &[(
+    "en",
+    &[
+        "On 15 Sep 2026, at 09:12, {} wrote:",
+        "-----Original Message-----\nFrom: {}\nSent: Monday 15 September 2026 09:12",
+    ],
+)];
 
 /// Headers above a quoted reply that name no one.
-const UNNAMED_HEADERS: &[(&str, &[&str])] = &[
-    (
-        "en",
-        &[
-            "-----Original Message-----",
-            "On 15 Sep 2026, at 09:12, you wrote:",
-        ],
-    ),
-    ("DE", &["Am 12.10.2026 um 09:12 schrieben Sie:"]),
-    ("GE", &["15.09.2026 09:12-ზე თქვენ დაწერეთ:"]),
-    ("JP", &["2026年9月15日(月) 9:12 のメッセージ:"]),
-];
+const UNNAMED_HEADERS: &[(&str, &[&str])] = &[(
+    "en",
+    &[
+        "-----Original Message-----",
+        "On 15 Sep 2026, at 09:12, you wrote:",
+    ],
+)];
 
-/// Press, notice, and imprint prose in the document's language, with no names, places, or
-/// organizations: long German sentences full of capitalized nouns, and Japanese and Georgian
-/// sentences as ministries and city halls write them.
-const PROSE: &[(&str, &[&str])] = &[
-    (
-        "DE",
-        &[
-            "Die Veranstaltung richtet sich an Eltern, Fachkräfte und alle Interessierten.",
-            "Eine Anmeldung ist bis zum Freitag der Vorwoche erforderlich.",
-            "Die Teilnahme ist kostenfrei, die Zahl der Plätze ist begrenzt.",
-            "Die Ergebnisse der Befragung werden im Frühjahr veröffentlicht.",
-            "Für die Dauer der Bauarbeiten wird eine Umleitung eingerichtet.",
-            "Die Sprechstunde findet an jedem ersten Mittwoch im Monat statt.",
-            "Die Inhalte unserer Seiten wurden mit größter Sorgfalt erstellt.",
-            "Für die Richtigkeit, Vollständigkeit und Aktualität der Inhalte können wir jedoch keine Gewähr übernehmen.",
-            "Die durch die Seitenbetreiber erstellten Inhalte und Werke unterliegen dem Urheberrecht.",
-            "Beiträge Dritter sind als solche gekennzeichnet.",
-            "Die Nutzung unserer Webseite ist in der Regel ohne Angabe personenbezogener Daten möglich.",
-            "Wir sind nicht bereit oder verpflichtet, an Streitbeilegungsverfahren vor einer Verbraucherschlichtungsstelle teilzunehmen.",
-            "Die Ausstellung ist dienstags bis sonntags von zehn bis achtzehn Uhr geöffnet.",
-            "Der Eintritt ist frei, Spenden sind willkommen.",
-            "Die Förderung erfolgt im Rahmen des Programms zur Stärkung der Nachbarschaften.",
-            "Anträge können ab sofort online gestellt werden.",
-            "Die Bürgerinnen und Bürger werden gebeten, den Bereich weiträumig zu umfahren.",
-            "Das Angebot wird aus Mitteln der Senatsverwaltung gefördert.",
-            "Weitere Informationen folgen in einer gesonderten Mitteilung.",
-            "Die Pressemitteilung ist zur Veröffentlichung freigegeben.",
-            "Im Anschluss an die Vorträge besteht Gelegenheit zum Austausch.",
-            "Die Wahl der Mitglieder erfolgt für die Dauer der Wahlperiode.",
-            "Bei Fragen zur Barrierefreiheit wenden Sie sich bitte an die Pressestelle.",
-            "Die Unterlagen stehen zum Herunterladen bereit.",
-            "Hinweise nimmt jede Polizeidienststelle entgegen.",
-            "Die Ermittlungen dauern an.",
-            "Der Ausschuss tagt öffentlich.",
-            "Die Kosten für die Sanierung belaufen sich auf rund zwei Millionen Euro.",
-            "Das Projekt läuft bis zum Ende des kommenden Jahres.",
-            "Die Kinder erwartet ein buntes Programm mit Spiel, Sport und Musik.",
-        ],
-    ),
-    (
-        "JP",
-        &[
-            "本件について、下記のとおりお知らせします。",
-            "詳細は別添資料を御参照ください。",
-            "今後とも関係機関と連携し、取組を進めてまいります。",
-            "会議は公開で行います。",
-            "傍聴を希望される方は、事前に登録をお願いします。",
-            "当日の模様は後日ウェブサイトで公開する予定です。",
-            "募集期間は本日から来月末までです。",
-            "意見の提出方法は別紙のとおりです。",
-            "取りまとめ結果については、改めて公表します。",
-            "申込みは先着順で受け付けます。",
-            "定員に達し次第、受付を終了します。",
-            "取材を希望される場合は、事前に御連絡ください。",
-            "報道関係者の皆様におかれましては、御協力をお願いいたします。",
-            "本調査は統計法に基づく基幹統計調査です。",
-            "調査結果の概要は次のとおりです。",
-            "対象期間は昨年四月から本年三月までです。",
-            "引き続き、情報収集に努めてまいります。",
-            "安全確保に万全を期してまいります。",
-            "御理解と御協力をお願いいたします。",
-            "詳しくは、担当までお問い合わせください。",
-        ],
-    ),
-    (
-        "GE",
-        &[
-            "შეხვედრაზე ორმხრივი თანამშრომლობის პერსპექტივები განიხილეს.",
-            "მხარეებმა თანამშრომლობის გაღრმავების მნიშვნელობა აღნიშნეს.",
-            "ღონისძიებას სტუდენტები და ახალგაზრდა მკვლევრები დაესწრნენ.",
-            "პროექტის განხორციელება მომავალ წელს დასრულდება.",
-            "სამუშაოები რამდენიმე ეტაპად წარიმართება.",
-            "განაცხადების მიღება მიმდინარე თვის ბოლომდე გაგრძელდება.",
-            "დეტალური ინფორმაცია ოფიციალურ ვებგვერდზეა განთავსებული.",
-            "შეხვედრა საქმიან ვითარებაში წარიმართა.",
-            "მონაწილეებმა მიმდინარე და დაგეგმილი პროექტები მიმოიხილეს.",
-            "ღონისძიება ყოველწლიურად იმართება.",
-            "კონკურსში მონაწილეობა ყველა მსურველს შეუძლია.",
-            "სამუშაოების დასრულება წლის ბოლოსთვისაა დაგეგმილი.",
-            "საქმიანობა საერთაშორისო სტანდარტების შესაბამისად წარიმართება.",
-            "პროგრამა ახალგაზრდების დასაქმების ხელშეწყობას ისახავს მიზნად.",
-            "საგზაო მოძრაობა დროებით შეიზღუდება.",
-            "მოსახლეობას მოთმინებისთვის მადლობას ვუხდით.",
-            "დამატებითი ინფორმაციისთვის შეგიძლიათ დაგვიკავშირდეთ.",
-            "ვიზიტის ფარგლებში რამდენიმე სამუშაო შეხვედრა გაიმართება.",
-            "სემინარი ორი დღის განმავლობაში გაგრძელდება.",
-            "მიღწეული შედეგები მომავალი წლის გეგმის საფუძველი გახდება.",
-        ],
-    ),
-];
-
-/// A sentence in the document's own language, falling back to English.
-pub fn sentence_local(country: &str, rng: &mut ChaCha8Rng) -> &'static str {
-    let prose = PROSE.iter().find(|(c, _)| *c == country).map(|(_, l)| *l);
-    match (prose, own_sentences(country)) {
-        (Some(p), _) if rng.random_bool(0.6) => pick(p, rng),
-        (_, Some(own)) => pick(own, rng),
-        (Some(p), None) => pick(p, rng),
-        (None, None) => english(rng),
-    }
+/// An English sentence for a US document.
+pub fn sentence_local(_country: &str, rng: &mut ChaCha8Rng) -> &'static str {
+    english(rng)
 }
 
-/// A neutral sentence: the document's language half the time when there is a list for it,
-/// otherwise English, with or without numbers.
-pub fn sentence(country: &str, rng: &mut ChaCha8Rng) -> &'static str {
-    match own_sentences(country) {
-        Some(list) if rng.random_bool(0.5) => pick(list, rng),
-        _ => english(rng),
-    }
-}
-
-fn own_sentences(country: &str) -> Option<&'static [&'static str]> {
-    SENTENCES
-        .iter()
-        .find(|(c, _)| *c == country)
-        .map(|(_, list)| *list)
+/// A neutral sentence for a US document.
+pub fn sentence(_country: &str, rng: &mut ChaCha8Rng) -> &'static str {
+    english(rng)
 }
 
 fn english(rng: &mut ChaCha8Rng) -> &'static str {
@@ -386,16 +123,7 @@ fn block(country: &str, rng: &mut ChaCha8Rng) -> String {
             .collect::<Vec<_>>()
             .join("\n");
     }
-    match own_sentences(country) {
-        Some(list) if rng.random_bool(0.6) => {
-            let sep = if country == "JP" { "" } else { " " };
-            (0..n)
-                .map(|_| pick(list, rng))
-                .collect::<Vec<_>>()
-                .join(sep)
-        }
-        _ => (0..n).map(|_| english(rng)).collect::<Vec<_>>().join(" "),
-    }
+    (0..n).map(|_| english(rng)).collect::<Vec<_>>().join(" ")
 }
 
 /// Filler to wrap one document in.
@@ -632,11 +360,10 @@ mod tests {
     /// Every text the generator draws and that is specific enough to recognize, as opposed to
     /// greetings, closings, titles, and the hard-negative names the fixtures are asked to test.
     fn specific_pool_texts() -> Vec<&'static str> {
-        let lists: [&[&str]; 10] = [
+        let lists: [&[&str]; 9] = [
             EN_NUMERIC,
             templates::FILLER_SENTENCES,
             templates::NEG_DIGITS,
-            templates::NEG_IBANS,
             templates::NEG_PRICES,
             templates::NEG_ORDERS,
             templates::NEG_ROAD_SENTENCES,
@@ -644,9 +371,8 @@ mod tests {
             templates::PRODUCTS,
             templates::DATES,
         ];
-        let localized = SENTENCES
+        let localized = LINES
             .iter()
-            .chain(LINES)
             .chain(NAMED_HEADERS)
             .chain(UNNAMED_HEADERS)
             .chain(templates::NEG_HEADERS)
@@ -688,7 +414,7 @@ mod tests {
     #[test]
     fn drawn_filler_has_no_braces_and_every_language_list_is_used() {
         let mut rng = ChaCha8Rng::seed_from_u64(1);
-        for country in ["US", "GB", "DE", "GE", "JP"] {
+        for country in ["US"] {
             for _ in 0..200 {
                 let w = Wrap::draw(country, "Anna Schmidt", &mut rng);
                 for b in w.before.iter().chain(&w.after) {
@@ -696,7 +422,7 @@ mod tests {
                 }
             }
         }
-        for (country, list) in SENTENCES.iter().chain(LINES).chain(UNNAMED_HEADERS) {
+        for (country, list) in LINES.iter().chain(UNNAMED_HEADERS) {
             assert!(!list.is_empty(), "{country}");
         }
         for (country, list) in NAMED_HEADERS {

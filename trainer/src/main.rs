@@ -24,7 +24,6 @@ mod negatives;
 mod net;
 mod pool_filter;
 mod quantize;
-mod report;
 mod templates;
 mod train;
 
@@ -93,7 +92,7 @@ enum Command {
         config: PathBuf,
     },
     /// Score a run, the deterministic baselines, or external predictions.
-    Eval(EvalArgs),
+    Eval(Box<EvalArgs>),
     /// Time each pipeline stage natively on the profiling fixtures and append to the report.
     Bench {
         #[arg(long, default_value = "models/tessera-v1.safetensors")]
@@ -109,22 +108,6 @@ enum Command {
         run: PathBuf,
         #[arg(long, value_enum, default_value = "ndarray")]
         backend: train::BackendKind,
-    },
-    /// Render the milestone report tables from run and eval JSON files.
-    Report {
-        /// Learning-curve run directories, in order.
-        #[arg(long, num_args = 1..)]
-        curve: Vec<PathBuf>,
-        /// The main run; its `eval/test.json`, `eval/test-shipped.json`, `quantize.json`, and
-        /// `config.toml` are read.
-        #[arg(long)]
-        run: PathBuf,
-        #[arg(long, default_value = "data/manifests/parser-sample.json")]
-        manifest: PathBuf,
-        #[arg(long, default_value = "models/tessera-v1.safetensors")]
-        bundle: PathBuf,
-        #[arg(long, default_value = "internal/reports/m2-parser.md")]
-        out: PathBuf,
     },
     /// Write the two-network safetensors bundle and the golden vectors of both networks.
     Export {
@@ -225,7 +208,7 @@ fn main() -> anyhow::Result<()> {
             backend,
         }),
         Command::CheckSilver { config } => train::check_silver(&config),
-        Command::Eval(args) => eval::run(args),
+        Command::Eval(args) => eval::run(*args),
         Command::Bench {
             model,
             iterations,
@@ -245,18 +228,5 @@ fn main() -> anyhow::Result<()> {
             out,
             date,
         } => export::run(&parser_run, &detector_run, &out, &date),
-        Command::Report {
-            curve,
-            run,
-            manifest,
-            bundle,
-            out,
-        } => report::run(report::ReportArgs {
-            curve: &curve,
-            run: &run,
-            manifest: &manifest,
-            bundle: &bundle,
-            out: &out,
-        }),
     }
 }

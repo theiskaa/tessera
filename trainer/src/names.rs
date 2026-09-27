@@ -1,11 +1,7 @@
 //! Person and organization name sampling from Wikidata (CC0) and GLEIF (CC0).
 //!
-//! People are fetched per (country, language, birth year) so every SPARQL query stays small
-//! enough for the public endpoint; a year that reaches the query limit is fetched again month
-//! by month. Organizations come from the GLEIF Level 1 golden copy, filtered by jurisdiction
-//! and streamed straight out of its zip. Where GLEIF holds fewer usable names than the quota
-//! (GE has about 160 active entities, JP about 4,000), Wikidata organizations of a fixed set
-//! of classes fill the rest.
+//! People are fetched by birth year from Wikidata. Organizations come from the GLEIF
+//! Level 1 golden copy, filtered to US jurisdictions, with a Wikidata top-up if needed.
 //!
 //! Every name is split by its normalized, lowercased form, so a name never appears in two
 //! splits.
@@ -36,55 +32,17 @@ struct Country {
     code: &'static str,
     qid: &'static str,
     label_langs: &'static [&'static str],
-    /// GLEIF `Entity.LegalJurisdiction` prefixes (US and CA use subnational codes such as `US-DE`).
+    /// GLEIF `Entity.LegalJurisdiction` prefixes, including US state codes such as `US-DE`.
     jurisdiction_prefixes: &'static [&'static str],
 }
 
-/// Every country `[names] countries` may name.
-const COUNTRIES: &[Country] = &[
-    Country {
-        code: "US",
-        qid: "Q30",
-        label_langs: &["en"],
-        jurisdiction_prefixes: &["US"],
-    },
-    Country {
-        code: "CA",
-        qid: "Q16",
-        label_langs: &["en", "fr"],
-        jurisdiction_prefixes: &["CA"],
-    },
-    Country {
-        code: "GB",
-        qid: "Q145",
-        label_langs: &["en"],
-        jurisdiction_prefixes: &["GB"],
-    },
-    Country {
-        code: "DE",
-        qid: "Q183",
-        label_langs: &["de"],
-        jurisdiction_prefixes: &["DE"],
-    },
-    Country {
-        code: "NL",
-        qid: "Q55",
-        label_langs: &["nl"],
-        jurisdiction_prefixes: &["NL"],
-    },
-    Country {
-        code: "GE",
-        qid: "Q230",
-        label_langs: &["ka", "en"],
-        jurisdiction_prefixes: &["GE"],
-    },
-    Country {
-        code: "JP",
-        qid: "Q17",
-        label_langs: &["ja", "en"],
-        jurisdiction_prefixes: &["JP"],
-    },
-];
+/// The only country `[names] countries` may name.
+const COUNTRIES: &[Country] = &[Country {
+    code: "US",
+    qid: "Q30",
+    label_langs: &["en"],
+    jurisdiction_prefixes: &["US"],
+}];
 
 const ENDPOINT: &str = "https://query.wikidata.org/sparql";
 const USER_AGENT: &str = "tessera-trainer/0.1 (https://github.com/theiskaa/tessera)";
@@ -1118,8 +1076,7 @@ fn write_orgs(
     )
 }
 
-/// The acceptance checks the plan puts on the people sample, as warnings: fewer than
-/// `MIN_PEOPLE` in a country, or a native script under 40% of GE or JP rows.
+/// Warn when the US person sample is too small or lacks its expected script coverage.
 fn check_people(countries: &[&Country], people: &[Person]) -> Vec<String> {
     let mut warnings = Vec::new();
     for c in countries {

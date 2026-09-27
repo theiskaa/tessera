@@ -17,7 +17,9 @@ use burn::prelude::*;
 use burn::tensor::activation::softmax;
 use safetensors::SafeTensors;
 use sha2::{Digest, Sha256};
-use tessera::internal::{argmax, detector_label_strings, parser_label_strings};
+use tessera::internal::{
+    DECODER_CONTRACT, TOKENIZER_CONTRACT, argmax, detector_label_strings, parser_label_strings,
+};
 
 use crate::config::{Config, Task};
 use crate::data::{Split, read_shard};
@@ -32,36 +34,30 @@ use crate::quantize::{self, F32Tensor, QTensor};
 
 /// Bundle layout version; the library checks it before anything else.
 pub const FORMAT: &str = "1";
-/// Version recorded in the bundle; the library accepts bundles of its own `0.minor` series.
-pub const MODEL_VERSION: &str = "0.2.0";
+/// Version recorded in the bundle; patch versions after V17 require explicit input contracts.
+pub const MODEL_VERSION: &str = "0.2.1";
 /// Logit difference the golden gate allows between the trainer and the library.
 pub const GOLDEN_TOLERANCE: f64 = 1e-3;
 const GOLDEN_PER_COUNTRY: usize = 4;
 const GOLDEN_LONG_TOKENS: usize = 200;
 
-/// Detector golden inputs, each one window: a GB signature, a DE letterhead, a Georgian
-/// signature, a Japanese signature, a tab table, prose with hard negatives, a document with
-/// only an email and a phone, and a one-word document. Contact details are reserved.
-const DETECTOR_GOLDEN_TEXTS: [(&str, &str); 8] = [
+/// Detector golden inputs for US documents, including contact and negative layouts.
+const DETECTOR_GOLDEN_TEXTS: [(&str, &str); 7] = [
     (
-        "signature-gb",
-        "Thanks again for the quick turnaround.\n\nKind regards,\n\nOliver Bennett\nHead of Operations\nHarbour Line Logistics Ltd\n14 Wharf Road, Leeds LS1 4AP\n+44 113 496 0123\noliver.bennett@harbourline.example",
+        "signature-us",
+        "Thanks for the update.\n\nGrace Liu\nMeridian Health Partners\n1200 Market Street, Philadelphia, PA 19107\n(215) 555-0142\ngrace@meridian.example",
     ),
     (
-        "letterhead-de",
-        "Brandt & Söhne GmbH\nFriedrichstraße 88\n10117 Berlin\nTel. 030 23125 456\n\n12. Oktober 2026\n\nSehr geehrte Frau Keller,\n\nanbei erhalten Sie die Unterlagen.\n\nMit freundlichen Grüßen\nJonas Weber",
+        "letterhead-us",
+        "Blue Ridge Supply Co\n88 Commerce Drive\nAsheville, NC 28801\nPhone: (828) 555-0142\n\nSeptember 18, 2026\n\nDear Ms. Liu,\n\nYour order has shipped.\n\nDaniel Price",
     ),
     (
-        "signature-ge",
-        "მადლობა, შეხვედრამდე ორშაბათს.\n\nნინო ბერიძე\nშპს კავკასიის ტვირთი\nრუსთაველის გამზირი 14, თბილისი 0108\nnino@kavkaz-freight.example",
-    ),
-    (
-        "signature-jp",
-        "よろしくお願いいたします。\n\n山田太郎\n株式会社サクラ物流\n〒150-0002 東京都渋谷区渋谷2丁目21-1\ntaro.yamada@sakura-logistics.example",
+        "address-us",
+        "Send returns to Suite 400, 1200 Market Street, Philadelphia, PA 19107. Questions go to billing@meridian.example.",
     ),
     (
         "table-tab",
-        "Name\tCompany\tEmail\nAnna Schmidt\tNordlicht Verlag GmbH\tanna@nordlicht.example\nJames Carter\tBlue Ridge Supply Co\tjcarter@blueridge.test",
+        "Name\tCompany\tEmail\nGrace Liu\tMeridian Health Partners\tgrace@meridian.example\nDaniel Price\tBlue Ridge Supply Co\tdaniel@blueridge.example",
     ),
     (
         "prose-negatives",
@@ -97,8 +93,19 @@ pub fn metadata(cfg: &Config, snapshot: &str, date: &str) -> BTreeMap<String, St
     });
     let experimental: Vec<&str> = cfg.data.countries.iter().map(String::as_str).collect();
     BTreeMap::from([
+        ("model_name".to_string(), "Tessera".to_string()),
+        (
+            "description".to_string(),
+            "Experimental contact extraction for United States documents".to_string(),
+        ),
+        ("model_scope".to_string(), "US".to_string()),
         ("format".to_string(), FORMAT.to_string()),
         ("model_version".to_string(), MODEL_VERSION.to_string()),
+        (
+            "tokenizer_contract".to_string(),
+            TOKENIZER_CONTRACT.to_string(),
+        ),
+        ("decoder_contract".to_string(), DECODER_CONTRACT.to_string()),
         ("nets".to_string(), "parser,detector".to_string()),
         (
             "detector_labels".to_string(),
@@ -485,12 +492,12 @@ fn golden_cases(
             ));
         }
     }
-    out.push(("edge-single-token".into(), "London".into()));
+    out.push(("edge-single-token".into(), "Austin".into()));
     out.push(("edge-one-char".into(), "1".into()));
     // 41 letters, past the 21 at which a token's n-grams exceed MAX_NGRAMS_PER_TOKEN.
     out.push((
         "edge-long-word".into(),
-        "Donaudampfschifffahrtsgesellschaftsstraße 12, 10115 Berlin".into(),
+        "Pneumonoultramicroscopicsilicovolcanoconiosis, Austin, TX 78701".into(),
     ));
     let mut long = String::new();
     for e in &test {
@@ -648,6 +655,64 @@ mod tests {
         dir
     }
 
+    fn rewrite_snapshot_and_rebind_gate(run_dir: &Path, edit: impl FnOnce(&mut serde_json::Value)) {
+        let snapshot_path = run_dir.join("input_snapshot.json");
+        let mut snapshot: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&snapshot_path).unwrap()).unwrap();
+        edit(&mut snapshot);
+        let snapshot_bytes = serde_json::to_vec(&snapshot).unwrap();
+        std::fs::write(&snapshot_path, &snapshot_bytes).unwrap();
+        let gate_path = run_dir.join("quantize.json");
+        let mut gate: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&gate_path).unwrap()).unwrap();
+        gate["input_snapshot_sha256"] = sha256_hex(&snapshot_bytes).into();
+        std::fs::write(gate_path, serde_json::to_vec(&gate).unwrap()).unwrap();
+    }
+
+    #[test]
+    fn export_rejects_old_or_mistagged_training_snapshots() {
+        for task in [Task::Parser, Task::Detector] {
+            let old = gated_run(task);
+            rewrite_snapshot_and_rebind_gate(old.path(), |snapshot| {
+                snapshot["version"] = 1.into();
+                snapshot
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("tokenizer_contract");
+                snapshot.as_object_mut().unwrap().remove("decoder_contract");
+            });
+            let error = load_run(old.path(), task).err().unwrap();
+            assert!(
+                error
+                    .to_string()
+                    .contains("unsupported or empty input snapshot"),
+                "{error:#}"
+            );
+
+            for key in ["tokenizer_contract", "decoder_contract"] {
+                let wrong = gated_run(task);
+                rewrite_snapshot_and_rebind_gate(wrong.path(), |snapshot| {
+                    snapshot[key] = "future-contract".into();
+                });
+                let error = load_run(wrong.path(), task).err().unwrap();
+                assert!(
+                    error.to_string().contains("contract differs"),
+                    "{key}: {error:#}"
+                );
+
+                let missing = gated_run(task);
+                rewrite_snapshot_and_rebind_gate(missing.path(), |snapshot| {
+                    snapshot.as_object_mut().unwrap().remove(key);
+                });
+                let error = load_run(missing.path(), task).err().unwrap();
+                assert!(
+                    error.to_string().contains("contract differs"),
+                    "{key}: {error:#}"
+                );
+            }
+        }
+    }
+
     #[test]
     fn both_networks_require_current_artifact_hashes() {
         for task in [Task::Parser, Task::Detector] {
@@ -747,8 +812,13 @@ mod tests {
         .unwrap();
         let m = metadata(&cfg, "parser-sample:abc", "2026-09-22");
         for key in [
+            "model_name",
+            "description",
+            "model_scope",
             "format",
             "model_version",
+            "tokenizer_contract",
+            "decoder_contract",
             "nets",
             "detector_labels",
             "parser_labels",
@@ -762,6 +832,28 @@ mod tests {
         ] {
             assert!(m.contains_key(key), "{key}");
         }
+        assert_eq!(m["model_version"], "0.2.1");
+        assert_eq!(m["model_scope"], "US");
+        assert_eq!(m["tokenizer_contract"], "tessera-tokenize-legacy-v1");
+        assert_eq!(m["decoder_contract"], "tessera-bio-legacy-v1");
+    }
+
+    #[test]
+    fn saved_safetensors_exposes_export_metadata() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = crate::config::load(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../configs/parser-small.toml"),
+        )
+        .unwrap();
+        let expected = metadata(&cfg, "parser-inputs:abc,detector-inputs:def", "2026-09-28");
+        let path = dir.path().join("model.safetensors");
+        quantize::write_safetensors(&path, &[], &[], Some(expected.clone())).unwrap();
+        let bytes = std::fs::read(path).unwrap();
+        let (_, header) = SafeTensors::read_metadata(&bytes).unwrap();
+        assert_eq!(
+            header.metadata().as_ref(),
+            Some(&expected.into_iter().collect())
+        );
     }
 
     #[test]

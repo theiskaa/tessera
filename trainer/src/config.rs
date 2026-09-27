@@ -234,6 +234,16 @@ impl Config {
             );
             ensure!(countries.insert(country), "duplicate country {country}");
         }
+        ensure!(
+            self.data.countries == ["US"],
+            "this project currently supports only US training data"
+        );
+        if let Some(names) = &self.names {
+            ensure!(
+                names.countries == ["US"],
+                "name sampling currently supports only US data"
+            );
+        }
         let sizes = &self.features.ngram_sizes;
         ensure!(
             !sizes.is_empty()
@@ -354,9 +364,11 @@ mod tests {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
         let p = load(&root.join("configs/parser-small.toml")).unwrap();
         assert_eq!(p.task, Task::Parser);
+        assert_eq!(p.data.countries, ["US"]);
         assert_eq!(p.net.dilations, vec![1, 2, 4, 8]);
         let d = load(&root.join("configs/detector-small.toml")).unwrap();
         assert_eq!(d.task, Task::Detector);
+        assert_eq!(d.data.countries, ["US"]);
         assert_eq!(d.net.dilations, vec![1, 2, 4, 8, 16, 1]);
         assert_eq!(d.names.unwrap().birth_years, (1930, 2005));
         assert_eq!(d.generate.unwrap().max_tokens, 900);
@@ -408,5 +420,16 @@ mod tests {
                 .to_string()
                 .contains("duplicate country")
         );
+    }
+
+    #[test]
+    fn non_us_training_inputs_fail_before_training() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let mut c = load(&root.join("configs/detector-small.toml")).unwrap();
+        c.data.countries.push("GB".into());
+        assert!(c.validate().unwrap_err().to_string().contains("only US"));
+        c.data.countries.pop();
+        c.names.as_mut().unwrap().countries.push("GB".into());
+        assert!(c.validate().unwrap_err().to_string().contains("only US"));
     }
 }

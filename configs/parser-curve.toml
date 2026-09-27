@@ -4,7 +4,7 @@ seed = 42
 
 [data]
 source = "libpostal-osm-addresses"
-countries = ["GB", "GE", "DE", "US", "JP"]
+countries = ["US"]
 train_per_country = 100000
 valid_per_country = 3000
 test_per_country = 3000

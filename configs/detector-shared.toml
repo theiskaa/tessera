@@ -3,7 +3,7 @@ task = "detector"
 seed = 42
 
 [data]
-countries = ["US", "GB", "DE", "GE", "JP"]
+countries = ["US"]
 train_per_country = 30000
 valid_per_country = 3000
 test_per_country = 3000
@@ -36,7 +36,7 @@ patience = 2
 class_weights = [1.0, 3.0, 2.0, 3.0, 2.0, 2.0, 1.5]
 
 [names]
-countries = ["US", "GB", "DE", "GE", "JP"]
+countries = ["US"]
 people_per_country = 20000
 orgs_per_country = 20000
 raw = "data/raw"

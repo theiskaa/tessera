@@ -21,8 +21,8 @@ pub fn run(model: &Path, iterations: u32, out: &Path) -> anyhow::Result<()> {
         },
     )
     .map_err(|e| anyhow::anyhow!("loading {}: {e}", model.display()))?;
-    let address = fs::read_to_string("fixtures/profile/address-gb.txt")
-        .context("reading fixtures/profile/address-gb.txt")?;
+    let address = fs::read_to_string("fixtures/profile/address-us.txt")
+        .context("reading fixtures/profile/address-us.txt")?;
     let address = address.trim_end();
     let document = fs::read_to_string("fixtures/profile/document-10k.txt")
         .context("reading fixtures/profile/document-10k.txt")?;
@@ -110,7 +110,7 @@ fn render(
         "| input | tokenize | featurize | rules | detect | parse | group | total | p95 total |\n",
     );
     s.push_str("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
-    s.push_str(&row("address-gb", &address.0, address.1));
+    s.push_str(&row("address-us", &address.0, address.1));
     s.push_str(&row("document-10k", &document.0, document.1));
     s
 }

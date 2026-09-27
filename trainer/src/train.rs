@@ -24,6 +24,7 @@ use rand::SeedableRng;
 use rand::seq::SliceRandom;
 use rand_chacha::ChaCha8Rng;
 use serde::{Deserialize, Serialize};
+use tessera::internal::{DECODER_CONTRACT, TOKENIZER_CONTRACT};
 
 use crate::config::Config;
 use crate::data::{LabelledExample, Split, read_shard};
@@ -116,6 +117,7 @@ fn train<B: AutodiffBackend>(args: &TrainArgs<'_>, device: &B::Device) -> anyhow
     if let Some(e) = args.epochs {
         cfg.train.epochs = e;
     }
+    validate_ngram_source(&cfg)?;
     let run_dir = PathBuf::from("runs").join(&cfg.name);
     initialize_run(&run_dir, &cfg)?;
     capture_input_snapshot(&cfg, &run_dir)?;
@@ -128,7 +130,7 @@ fn train<B: AutodiffBackend>(args: &TrainArgs<'_>, device: &B::Device) -> anyhow
     verify_input_snapshot(&run_dir)
 }
 
-const INPUT_SNAPSHOT_VERSION: u64 = 1;
+const INPUT_SNAPSHOT_VERSION: u64 = 2;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct InputFile {
@@ -140,12 +142,39 @@ pub(crate) struct InputFile {
 pub(crate) struct InputSnapshot {
     pub version: u64,
     pub config_sha256: String,
+    #[serde(default)]
+    pub tokenizer_contract: String,
+    #[serde(default)]
+    pub decoder_contract: String,
     pub inputs: std::collections::BTreeMap<String, InputFile>,
 }
 
 fn hash_file(path: &Path) -> anyhow::Result<String> {
     let bytes = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
     Ok(crate::export::sha256_hex(&bytes))
+}
+
+fn validate_ngram_source(cfg: &Config) -> anyhow::Result<()> {
+    if !matches!(cfg.task, crate::config::Task::Detector) {
+        return Ok(());
+    }
+    let Some(from) = &cfg.net.ngram_from else {
+        return Ok(());
+    };
+    let run = Path::new(from);
+    let source = crate::config::load(&run.join("config.toml"))?;
+    anyhow::ensure!(
+        matches!(source.task, crate::config::Task::Parser),
+        "{} is not a parser n-gram source",
+        run.display()
+    );
+    anyhow::ensure!(
+        source.features == cfg.features,
+        "{} has other feature settings than this config",
+        run.display()
+    );
+    verify_input_snapshot(run)
+        .with_context(|| format!("checking parser n-gram source {}", run.display()))
 }
 
 pub(crate) fn input_paths(cfg: &Config) -> Vec<(String, PathBuf)> {
@@ -178,6 +207,10 @@ pub(crate) fn input_paths(cfg: &Config) -> Vec<(String, PathBuf)> {
                     "ngram_source_best".to_string(),
                     Path::new(from).join("best.mpk"),
                 ));
+                paths.push((
+                    "ngram_source_input_snapshot".to_string(),
+                    Path::new(from).join("input_snapshot.json"),
+                ));
             }
         }
     }
@@ -200,6 +233,8 @@ pub(crate) fn capture_input_snapshot(cfg: &Config, run_dir: &Path) -> anyhow::Re
     let snapshot = InputSnapshot {
         version: INPUT_SNAPSHOT_VERSION,
         config_sha256: hash_file(&run_dir.join("config.toml"))?,
+        tokenizer_contract: TOKENIZER_CONTRACT.to_string(),
+        decoder_contract: DECODER_CONTRACT.to_string(),
         inputs,
     };
     std::fs::write(
@@ -225,6 +260,12 @@ pub(crate) fn load_input_snapshot(run_dir: &Path) -> anyhow::Result<InputSnapsho
         run_dir.display()
     );
     anyhow::ensure!(
+        snapshot.tokenizer_contract == TOKENIZER_CONTRACT
+            && snapshot.decoder_contract == DECODER_CONTRACT,
+        "{} tokenizer or decoder contract differs from the training snapshot; retrain before export",
+        run_dir.display()
+    );
+    anyhow::ensure!(
         snapshot.config_sha256 == hash_file(&run_dir.join("config.toml"))?,
         "{} config changed after input snapshot; retrain before export",
         run_dir.display()
@@ -244,6 +285,7 @@ pub(crate) fn load_input_snapshot(run_dir: &Path) -> anyhow::Result<InputSnapsho
         "{} input snapshot omits or changes a configured training source; retrain before export",
         run_dir.display()
     );
+    validate_ngram_source(&cfg)?;
     Ok(snapshot)
 }
 
@@ -732,6 +774,10 @@ mod tests {
         )
         .unwrap();
         capture_input_snapshot(&cfg, dir.path()).unwrap();
+        let snapshot = load_input_snapshot(dir.path()).unwrap();
+        assert_eq!(snapshot.version, INPUT_SNAPSHOT_VERSION);
+        assert_eq!(snapshot.tokenizer_contract, TOKENIZER_CONTRACT);
+        assert_eq!(snapshot.decoder_contract, DECODER_CONTRACT);
         verify_input_snapshot(dir.path()).unwrap();
         std::fs::write(
             Path::new(&cfg.data.processed).join("train.parquet"),
@@ -740,6 +786,86 @@ mod tests {
         .unwrap();
         let error = verify_input_snapshot(dir.path()).unwrap_err();
         assert!(error.to_string().contains("train_shard"), "{error:#}");
+    }
+
+    #[test]
+    fn detector_requires_current_parser_source_snapshot_before_run_setup() {
+        let dir = tempfile::tempdir().unwrap();
+        let parser_run = dir.path().join("parser");
+        std::fs::create_dir(&parser_run).unwrap();
+        let mut parser = crate::config::load(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../configs/parser-small.toml"),
+        )
+        .unwrap();
+        parser.data.processed = dir.path().join("parser_processed").display().to_string();
+        parser.data.sample_manifest = dir.path().join("parser_sample.json").display().to_string();
+        std::fs::write(
+            parser_run.join("config.toml"),
+            toml::to_string(&parser).unwrap(),
+        )
+        .unwrap();
+        for (_, path) in input_paths(&parser) {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, b"parser input").unwrap();
+        }
+        capture_input_snapshot(&parser, &parser_run).unwrap();
+        std::fs::write(parser_run.join("best.mpk"), b"parser checkpoint").unwrap();
+
+        let mut detector = crate::config::load(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../configs/detector-silver.toml"),
+        )
+        .unwrap();
+        detector.net.ngram_from = Some(parser_run.display().to_string());
+        detector.data.processed = dir.path().join("detector_processed").display().to_string();
+        detector.detector.as_mut().unwrap().silver =
+            vec![dir.path().join("silver.jsonl").display().to_string()];
+        assert_eq!(detector.features, parser.features);
+        assert!(input_paths(&detector).iter().any(|(role, path)| {
+            role == "ngram_source_input_snapshot" && path == &parser_run.join("input_snapshot.json")
+        }));
+        validate_ngram_source(&detector).unwrap();
+
+        let source_snapshot = parser_run.join("input_snapshot.json");
+        let original = std::fs::read(&source_snapshot).unwrap();
+        std::fs::remove_file(&source_snapshot).unwrap();
+        let error = validate_ngram_source(&detector).unwrap_err();
+        assert!(format!("{error:#}").contains("no run-bound input snapshot"));
+        std::fs::write(&source_snapshot, &original).unwrap();
+
+        let mut old: serde_json::Value = serde_json::from_slice(&original).unwrap();
+        old["version"] = 1.into();
+        old.as_object_mut().unwrap().remove("tokenizer_contract");
+        old.as_object_mut().unwrap().remove("decoder_contract");
+        std::fs::write(&source_snapshot, serde_json::to_vec(&old).unwrap()).unwrap();
+        let error = validate_ngram_source(&detector).unwrap_err();
+        assert!(format!("{error:#}").contains("unsupported or empty input snapshot"));
+
+        let mut wrong: serde_json::Value = serde_json::from_slice(&original).unwrap();
+        wrong["tokenizer_contract"] = "future-tokenizer".into();
+        std::fs::write(&source_snapshot, serde_json::to_vec(&wrong).unwrap()).unwrap();
+        let error = validate_ngram_source(&detector).unwrap_err();
+        assert!(format!("{error:#}").contains("contract differs"));
+
+        std::fs::write(&source_snapshot, &original).unwrap();
+        let detector_run = dir.path().join("detector");
+        std::fs::create_dir(&detector_run).unwrap();
+        std::fs::write(
+            detector_run.join("config.toml"),
+            toml::to_string(&detector).unwrap(),
+        )
+        .unwrap();
+        for (role, path) in input_paths(&detector) {
+            if role.starts_with("ngram_source_") {
+                continue;
+            }
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, b"detector input").unwrap();
+        }
+        capture_input_snapshot(&detector, &detector_run).unwrap();
+        verify_input_snapshot(&detector_run).unwrap();
+        std::fs::write(&source_snapshot, serde_json::to_vec(&wrong).unwrap()).unwrap();
+        let error = verify_input_snapshot(&detector_run).unwrap_err();
+        assert!(format!("{error:#}").contains("contract differs"));
     }
 
     #[test]
@@ -753,6 +879,8 @@ mod tests {
         let snapshot = InputSnapshot {
             version: INPUT_SNAPSHOT_VERSION,
             config_sha256: hash_file(&dir.path().join("config.toml")).unwrap(),
+            tokenizer_contract: TOKENIZER_CONTRACT.to_string(),
+            decoder_contract: DECODER_CONTRACT.to_string(),
             inputs: std::collections::BTreeMap::from([(
                 "train_shard".to_string(),
                 InputFile {

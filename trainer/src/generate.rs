@@ -153,7 +153,6 @@ pub enum Slot {
     NegDate,
     NegPrice,
     NegOrder,
-    NegIban,
     NegIp,
     NegDigits,
     NegRoadSentence,
@@ -242,7 +241,6 @@ impl Slot {
             "neg_date" => NegDate,
             "neg_price" => NegPrice,
             "neg_order" => NegOrder,
-            "neg_iban" => NegIban,
             "neg_ip" => NegIp,
             "neg_digits" => NegDigits,
             "neg_road_sentence" => NegRoadSentence,
@@ -375,28 +373,9 @@ pub struct PoolAddress {
 
 impl PoolAddress {
     fn from_example(e: &LabelledExample) -> PoolAddress {
-        let text = pool_filter::with_local_country(e, &pool_filter::without_venue_lines(e));
-        // Japanese documents write the postal mark before the postcode and outside the address,
-        // and no country name in front.
-        let text = if e.country == "JP" {
-            let mut text = text.replace('〒', "").trim().to_string();
-            for country in ["日本国", "日本", "Japan"] {
-                // Only the country itself: `日本橋` and `日本平` are places.
-                if let Some(rest) = text.strip_prefix(country)
-                    && rest.starts_with(|c: char| {
-                        c.is_ascii_digit() || [' ', '\u{3000}', ',', '、'].contains(&c)
-                    })
-                {
-                    text = rest
-                        .trim_start_matches([' ', '\u{3000}', ',', '、'])
-                        .to_string();
-                }
-            }
-            text
-        } else {
-            text
-        };
-        PoolAddress { text }
+        PoolAddress {
+            text: pool_filter::with_local_country(e, &pool_filter::without_venue_lines(e)),
+        }
     }
 
     fn multiline(&self) -> bool {
@@ -472,7 +451,7 @@ impl<'a> Ctx<'a> {
                 }
                 let value = if self.plain || !p.latin() {
                     p.name
-                } else if matches!(self.country, "DE" | "GB" | "US") && rng.random_bool(0.06) {
+                } else if self.country == "US" && rng.random_bool(0.06) {
                     self.hyphenated(&p.name, rng)
                 } else {
                     capitalized(&p.name, rng)
@@ -502,12 +481,7 @@ impl<'a> Ctx<'a> {
                 let p = match self.bound_person.get(&group) {
                     Some(p) => p.clone(),
                     None => {
-                        // Japanese documents write a bare family name in kanji.
-                        let p = if self.country == "JP" {
-                            self.native_person(1.0, rng)?
-                        } else {
-                            self.person(rng)?
-                        };
+                        let p = self.person(rng)?;
                         if group > 0 {
                             self.bound_person.insert(group, p.clone());
                             self.bound.insert((Kind::Person, group), p.name.clone());
@@ -613,19 +587,18 @@ impl<'a> Ctx<'a> {
             Slot::NegWordName => Filled::plain(*pick(templates::NEG_WORD_NAMES, rng)),
             Slot::NegHandle => Filled::plain(*pick(templates::NEG_HANDLES, rng)),
             Slot::NegUrl => Filled::plain(*pick(templates::NEG_URLS, rng)),
-            Slot::NegDate if matches!(self.country, "US" | "GB") || rng.random_bool(0.1) => {
+            Slot::NegDate if self.country == "US" || rng.random_bool(0.1) => {
                 Filled::plain(*pick(templates::NEG_DATES, rng))
             }
             Slot::NegDate => Filled::plain(negatives::date(self.country, rng)),
-            Slot::NegPrice if matches!(self.country, "US" | "GB") && rng.random_bool(0.2) => {
+            Slot::NegPrice if self.country == "US" && rng.random_bool(0.2) => {
                 Filled::plain(*pick(templates::NEG_PRICES, rng))
             }
             Slot::NegPrice => Filled::plain(negatives::money(self.country, false, rng)),
-            Slot::NegOrder if matches!(self.country, "US" | "GB") && rng.random_bool(0.2) => {
+            Slot::NegOrder if self.country == "US" && rng.random_bool(0.2) => {
                 Filled::plain(*pick(templates::NEG_ORDERS, rng))
             }
             Slot::NegOrder => Filled::plain(negatives::order(self.country, rng)),
-            Slot::NegIban => Filled::plain(*pick(templates::NEG_IBANS, rng)),
             Slot::NegIp => Filled::plain(format!(
                 "{}.{}.{}.{}",
                 rng.random_range(10..=223),
@@ -762,23 +735,14 @@ impl<'a> Ctx<'a> {
             .with_context(|| format!("no people for {}", self.country))
     }
 
-    /// An honorific before a person's name and a post-nominal or name suffix after it, each
-    /// drawn in the script and country the name fits: `Dr`, `Herr`, `ქალბატონი`, `OBE`, `様`.
+    /// An English honorific before a Latin-script name and a US post-nominal after it.
     fn honorifics(
         &self,
         p: &PoolPerson,
         rng: &mut ChaCha8Rng,
     ) -> (Option<&'static str>, Option<&'static str>) {
-        if p.cjk() {
-            let suffix = rng
-                .random_bool(0.3)
-                .then(|| *pick(templates::NAME_SUFFIXES_JP, rng));
-            return (None, suffix);
-        }
         if !p.latin() {
-            let prefix = (p.script == "georgian" && rng.random_bool(0.2))
-                .then(|| *pick(templates::HONORIFICS_GE, rng));
-            return (prefix, None);
+            return (None, None);
         }
         let prefix = rng
             .random_bool(0.3)
@@ -804,32 +768,8 @@ impl<'a> Ctx<'a> {
         Ok(acronym)
     }
 
-    /// Keep each parser address tied to its source location. Only change presentation:
-    /// a final country line, a common street abbreviation, or Japanese postcode layout.
-    fn shaped(&self, address: String, sep: &str, rng: &mut ChaCha8Rng) -> String {
-        if self.plain {
-            return address;
-        }
-        let mut address = address;
-        match self.country {
-            "DE" => {
-                if rng.random_bool(0.8) {
-                    address = without_last_line(&address, &["Deutschland", "Germany"], sep);
-                }
-                if rng.random_bool(0.2) {
-                    address = address.replace("straße", "str.").replace("Straße", "Str.");
-                }
-            }
-            // Office pages print the postcode on a line of its own above the rest.
-            "JP" if sep == "\n" && rng.random_bool(0.3) => {
-                if let Some((code, rest)) = address.split_once(' ')
-                    && code.chars().filter(char::is_ascii_digit).count() == 7
-                {
-                    address = format!("{code}\n{rest}");
-                }
-            }
-            _ => {}
-        }
+    /// Keep each parser address tied to its source location.
+    fn shaped(&self, address: String, _sep: &str, _rng: &mut ChaCha8Rng) -> String {
         address
     }
 
@@ -846,17 +786,8 @@ impl<'a> Ctx<'a> {
             return Ok(name);
         }
         // English documents name charities far more often than registered companies.
-        if matches!(self.country, "GB" | "US") && rng.random_bool(0.15) {
+        if self.country == "US" && rng.random_bool(0.15) {
             return Ok(self.pools.bodies.charity(rng));
-        }
-        if rng.random_bool(0.25) {
-            let body = self.pools.bodies.body(false, rng)?;
-            // Documents name most bodies by their acronym once they have introduced them, and
-            // many never write the full name at all (`Contact HMRC`).
-            return Ok(match body.acronym {
-                Some(acronym) if rng.random_bool(0.3) => acronym,
-                _ => body.name,
-            });
         }
         // Registers store names in capitals; documents mostly do not, but some still print them.
         if rng.random_bool(0.65) && name.chars().any(char::is_alphabetic) && !has_lowercase(&name) {
@@ -981,14 +912,6 @@ const GLUED_ROLES: &[&str] = &[
     "-Adviser",
 ];
 
-/// `address` without a last line (or last comma-separated part) that is one of `names`.
-fn without_last_line(address: &str, names: &[&str], sep: &str) -> String {
-    match address.rsplit_once(sep) {
-        Some((head, last)) if names.contains(&last.trim()) => head.to_string(),
-        _ => address.to_string(),
-    }
-}
-
 /// The family name alone: the last word of a Latin or Georgian name, the first word of a
 /// spaced Japanese one, and the part after `・` of a katakana one. An unspaced kanji name,
 /// whose family name may be two or three characters long, stays whole.
@@ -1084,130 +1007,59 @@ fn strip_legal_form(name: &str, legal_form: &str) -> Option<String> {
         .then(|| rest.trim_end_matches([',', ' ']).to_string())
 }
 
-/// A phone number for `country` in international or national form, and whether its range is
-/// reserved for fiction. See the plan's reserved-contact table.
+fn imported_org_collides_with_listed(
+    name: &str,
+    legal_form: &str,
+    reserved: &HashSet<&str>,
+) -> bool {
+    if reserved.contains(name) {
+        return true;
+    }
+    let titled =
+        (!has_lowercase(name) && name.chars().any(char::is_alphabetic)).then(|| title_case(name));
+    if titled
+        .as_ref()
+        .is_some_and(|value| reserved.contains(value.as_str()))
+    {
+        return true;
+    }
+    strip_legal_form(name, legal_form).is_some_and(|value| reserved.contains(value.as_str()))
+        || titled
+            .and_then(|value| strip_legal_form(&value, legal_form))
+            .is_some_and(|value| reserved.contains(value.as_str()))
+}
+
+/// A US phone number in the reserved 555-01xx fictional range.
 fn phone(
     country: &str,
     international: bool,
     rng: &mut ChaCha8Rng,
 ) -> anyhow::Result<(String, bool)> {
-    let digits = |rng: &mut ChaCha8Rng, n: usize| -> String {
-        (0..n)
-            .map(|_| char::from(b'0' + rng.random_range(0..10u8)))
-            .collect()
+    anyhow::ensure!(country == "US", "no phone generator for {country}");
+    const AREA: &[&str] = &["212", "415", "312", "617", "206", "305", "718"];
+    let area = *pick(AREA, rng);
+    let line = format!("01{:02}", rng.random_range(0..100u8));
+    let value = if international {
+        if rng.random_bool(0.5) {
+            format!("+1 {area} 555 {line}")
+        } else {
+            format!("1-{area}-555-{line}")
+        }
+    } else {
+        match rng.random_range(0..3) {
+            0 => format!("({area}) 555-{line}"),
+            1 => format!("{area}-555-{line}"),
+            _ => format!("{area}.555.{line}"),
+        }
     };
-    Ok(match country {
-        "GB" => {
-            // Ofcom drama ranges as (international, national) prefixes; three digits follow.
-            const RANGES: &[(&str, &str)] = &[
-                ("20 7946 0", "020 7946 0"),
-                ("113 496 0", "0113 496 0"),
-                ("161 496 0", "0161 496 0"),
-                ("7700 900", "07700 900"),
-                ("808 157 0", "0808 157 0"),
-            ];
-            let (intl, national) = pick(RANGES, rng);
-            let tail = digits(rng, 3);
-            let value = if international {
-                if rng.random_bool(0.3) && !intl.starts_with('7') {
-                    format!("+44 (0){intl}{tail}")
-                } else {
-                    format!("+44 {intl}{tail}")
-                }
-            } else if rng.random_bool(0.2) {
-                format!("{national}{tail}").replace(' ', "-")
-            } else {
-                format!("{national}{tail}")
-            };
-            (value, true)
-        }
-        "US" | "CA" => {
-            // NANP area codes of the right country; 416, 604, and 514 are Canadian, so the
-            // rules layer correctly assigns them region CA.
-            const US_AREA: &[&str] = &["212", "415", "312", "617", "206", "305", "718"];
-            const CA_AREA: &[&str] = &["416", "604", "514"];
-            let area = pick(if country == "CA" { CA_AREA } else { US_AREA }, rng);
-            let line = format!("01{}", digits(rng, 2));
-            let value = if international {
-                if rng.random_bool(0.5) {
-                    format!("+1 {area} 555 {line}")
-                } else {
-                    format!("1-{area}-555-{line}")
-                }
-            } else {
-                match rng.random_range(0..3) {
-                    0 => format!("({area}) 555-{line}"),
-                    1 => format!("{area}-555-{line}"),
-                    _ => format!("{area}.555.{line}"),
-                }
-            };
-            (value, true)
-        }
-        "DE" => {
-            if rng.random_bool(0.2) {
-                let rest = digits(rng, 7);
-                let value = if international {
-                    format!("+49 151 {rest}")
-                } else {
-                    format!("0151 {rest}")
-                };
-                (value, false)
-            } else {
-                let ext = digits(rng, 3);
-                let value = if international {
-                    format!("+49 30 23125 {ext}")
-                } else {
-                    match rng.random_range(0..3) {
-                        0 => format!("030 23125 {ext}"),
-                        1 => format!("(030) 23125-{ext}"),
-                        _ => format!("030/23125{ext}"),
-                    }
-                };
-                (value, true)
-            }
-        }
-        "GE" => {
-            let value = if rng.random_bool(0.6) {
-                let (a, b, c, d) = (
-                    digits(rng, 2),
-                    digits(rng, 2),
-                    digits(rng, 2),
-                    digits(rng, 2),
-                );
-                if international {
-                    format!("+995 5{a} {b} {c} {d}")
-                } else {
-                    format!("5{a} {b} {c} {d}")
-                }
-            } else {
-                let (a, b, c) = (digits(rng, 2), digits(rng, 2), digits(rng, 2));
-                if international {
-                    format!("+995 32 2{a} {b}{c}")
-                } else {
-                    format!("032 2 {a} {b} {c}")
-                }
-            };
-            (value, false)
-        }
-        "JP" => {
-            let (a, b) = (digits(rng, 4), digits(rng, 4));
-            let value = match (rng.random_bool(0.5), international) {
-                (true, true) => format!("+81 3 {a} {b}"),
-                (true, false) => format!("03-{a}-{b}"),
-                (false, true) => format!("+81 90 {a} {b}"),
-                (false, false) => format!("090-{a}-{b}"),
-            };
-            (value, false)
-        }
-        other => bail!("no phone generator for {other}"),
-    })
+    Ok((value, true))
 }
 
 /// `the` before a public body, unit, council, or university named in running English text
 /// (`told the Planning Inspectorate`, `said. The Environment Agency`), outside its span, as real
 /// documents write about one in five of their organizations. Only after a lower-case word or
 /// the end of a sentence, so never in headlines, lists, or tag rows, and never before a name
-/// written without one (`HM Revenue & Customs`, `Companies House`, `Leeds City Council`).
+/// written without one (`County Court`, `City Council`).
 fn article(
     text: &str,
     value: &str,
@@ -1219,21 +1071,12 @@ fn article(
         slot,
         Slot::OrgGov | Slot::OrgUnit | Slot::OrgCouncil | Slot::OrgUniv
     );
-    if !body || !matches!(country, "US" | "GB") || !rng.random_bool(0.4) {
+    if !body || country != "US" || !rng.random_bool(0.4) {
         return None;
     }
-    let bare = [
-        "HM ",
-        "UK ",
-        "NHS ",
-        "British Embassy",
-        "British High Commission",
-    ]
-    .iter()
-    .any(|p| value.starts_with(p))
-        || ["Council", "Court", "House", "College London"]
-            .iter()
-            .any(|s| value.ends_with(s))
+    let bare = ["Council", "Court", "House"]
+        .iter()
+        .any(|suffix| value.ends_with(suffix))
         || value.contains("'s ")
         || value.contains("\u{2019}s ");
     let line = text.rsplit('\n').next().unwrap_or("");
@@ -1454,10 +1297,10 @@ fn supported_template(template: &Template, country: &str) -> bool {
     let local_office = slots.iter().any(|item| item.slot == Slot::OrgLocalOffice);
     let chain = slots.iter().any(|item| item.slot == Slot::OrgChain);
     let registry = slots.iter().any(|item| item.slot == Slot::OrgRegistry);
-    if unit || local_office || matches!(country, "GE" | "JP") && chain {
-        return false;
-    }
-    if country == "JP" && registry {
+    let public_body = slots
+        .iter()
+        .any(|item| matches!(item.slot, Slot::OrgGov | Slot::OrgAcronym));
+    if country != "US" || unit || local_office || chain || public_body {
         return false;
     }
     let other_than_registry = slots
@@ -1534,7 +1377,7 @@ pub fn run(config_path: &Path, sample: Option<usize>, family: Option<&str>) -> a
 }
 
 fn static_countries(codes: &[String]) -> anyhow::Result<Vec<&'static str>> {
-    const KNOWN: &[&str] = &["US", "CA", "GB", "DE", "GE", "JP"];
+    const KNOWN: &[&str] = &["US"];
     codes
         .iter()
         .map(|c| {
@@ -1663,6 +1506,7 @@ fn load_pools(
     addresses: &Path,
     countries: &[&'static str],
 ) -> anyhow::Result<HashMap<(Split, &'static str), Pools>> {
+    let reserved_listed = crate::bodies::reserved_listed_surfaces();
     let mut pools: HashMap<(Split, &'static str), Pools> = HashMap::new();
     for &c in countries {
         for split in Split::ALL {
@@ -1710,6 +1554,9 @@ fn load_pools(
             row[0].clone()
         };
         let name = pool_filter::without_article(&name).to_string();
+        if imported_org_collides_with_listed(&name, &row[2], &reserved_listed) {
+            continue;
+        }
         // Private trusts, pension schemes, and street-named property companies fill the
         // registers but rarely documents: a few stay, never one that embeds a person's name.
         let keep = if pool_filter::names_a_person(&name) {
@@ -1734,11 +1581,7 @@ fn load_pools(
     for split in Split::ALL {
         let path = addresses.join(format!("{}.parquet", split.name()));
         for e in read_shard(&path, split)? {
-            if e.augmented
-                || pool_filter::hydrant(&e.text)
-                || (e.country == "GE" && pool_filter::unusable_ge_address(&e))
-                || (e.country == "JP" && pool_filter::unusable_jp_address(&e))
-            {
+            if e.augmented || pool_filter::hydrant(&e.text) {
                 continue;
             }
             if !pool_filter::postal(&e) {
@@ -1935,18 +1778,18 @@ mod tests {
                 })
                 .collect(),
             orgs: vec![PoolOrg {
-                name: "Kavkaz Freight LLC".into(),
+                name: "Pacific Cargo LLC".into(),
                 legal_form: "LLC".into(),
             }],
             addresses: vec![
                 PoolAddress {
-                    text: "12 Rustaveli Avenue\n0108 Tbilisi\nGeorgia".into(),
+                    text: "1200 Market Street\nPhiladelphia, PA 19107".into(),
                 },
                 PoolAddress {
-                    text: "4 Misty Wood Circle".into(),
+                    text: "4 Misty Wood Circle, Austin, TX 78701".into(),
                 },
             ],
-            bodies: Bodies::new("GE", Split::Train),
+            bodies: Bodies::new("US", Split::Train),
         }
     }
 
@@ -1964,9 +1807,9 @@ mod tests {
     fn render_records_exact_offsets() {
         let pools = Pools {
             orgs: Vec::new(),
-            ..stub_pools(&[("Nino Beridze", "latin")])
+            ..stub_pools(&[("Maya Johnson", "latin")])
         };
-        let mut ctx = Ctx::new("GE", &pools);
+        let mut ctx = Ctx::new("US", &pools);
         ctx.plain = true;
         let mut rng = ChaCha8Rng::seed_from_u64(0);
         let doc = render(
@@ -1975,7 +1818,7 @@ mod tests {
             &mut rng,
         )
         .unwrap();
-        assert!(doc.text.starts_with("Hi Nino Beridze, mail nino.beridze@"));
+        assert!(doc.text.starts_with("Hi Maya Johnson, mail maya.johnson@"));
         assert!(doc.text.ends_with(".example."));
         assert_eq!(
             doc.entities[0],
@@ -1988,14 +1831,14 @@ mod tests {
         assert_eq!(doc.entities[1].kind, "email");
         assert_eq!(doc.entities[1].start, 22);
         assert_eq!(doc.entities[1].end, doc.text.len() - 1);
-        assert_eq!(&doc.text[3..15], "Nino Beridze");
+        assert_eq!(&doc.text[3..15], "Maya Johnson");
         assert_eq!(check(&doc, 900), Ok(()));
     }
 
     #[test]
     fn multiline_addresses_keep_their_lines_inside_the_span() {
-        let pools = stub_pools(&[("Nino Beridze", "latin")]);
-        let mut ctx = Ctx::new("GE", &pools);
+        let pools = stub_pools(&[("Maya Johnson", "latin")]);
+        let mut ctx = Ctx::new("US", &pools);
         let mut rng = ChaCha8Rng::seed_from_u64(1);
         let doc = render(
             &template("Ship to:\n{address_ml}\nThanks"),
@@ -2006,7 +1849,7 @@ mod tests {
         let e = &doc.entities[0];
         assert_eq!(
             &doc.text[e.start..e.end],
-            "12 Rustaveli Avenue\n0108 Tbilisi\nGeorgia"
+            "1200 Market Street\nPhiladelphia, PA 19107"
         );
         assert_eq!(check(&doc, 900), Ok(()));
     }
@@ -2014,58 +1857,15 @@ mod tests {
     #[test]
     fn single_line_addresses_join_lines_with_commas() {
         let a = PoolAddress {
-            text: "12 Rustaveli Avenue\n0108 Tbilisi\nGeorgia".into(),
+            text: "1200 Market Street\nPhiladelphia, PA 19107".into(),
         };
-        assert_eq!(a.one_line(), "12 Rustaveli Avenue, 0108 Tbilisi, Georgia");
-    }
-
-    #[test]
-    fn ge_address_slot_keeps_the_source_road_and_house_number() {
-        use tessera::AddressLabel;
-
-        let source = "ქუთაისი, წერეთლის ქ. 15";
-        let component = |label: AddressLabel, value: &str| {
-            let start = source.find(value).unwrap();
-            crate::data::Span {
-                label,
-                start: start as u32,
-                end: (start + value.len()) as u32,
-            }
-        };
-        let example = LabelledExample {
-            id: 7,
-            group_id: 7,
-            country: "GE".into(),
-            language: "ka".into(),
-            text: source.into(),
-            spans: vec![
-                component(AddressLabel::City, "ქუთაისი"),
-                component(AddressLabel::Road, "წერეთლის ქ."),
-                component(AddressLabel::HouseNumber, "15"),
-            ],
-            split: Split::Train,
-            augmented: false,
-        };
-        let mut pools = stub_pools(&[("Nino Beridze", "latin")]);
-        pools.addresses = vec![PoolAddress::from_example(&example)];
-        assert_eq!(pools.addresses[0].text, source);
-        for seed in 0..500 {
-            let mut ctx = Ctx::new("GE", &pools);
-            let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            let doc = render(&template("{address}"), &mut ctx, &mut rng).unwrap();
-            let entity = &doc.entities[0];
-            assert_eq!(
-                &doc.text[entity.start..entity.end],
-                source,
-                "seed {seed} changed the sourced Georgian address"
-            );
-        }
+        assert_eq!(a.one_line(), "1200 Market Street, Philadelphia, PA 19107");
     }
 
     #[test]
     fn former_person_street_templates_use_complete_pool_addresses() {
         let all = templates::all().unwrap();
-        let pools = stub_pools(&[("Nino Beridze", "latin")]);
+        let pools = stub_pools(&[("Maya Johnson", "latin")]);
         let allowed: Vec<String> = pools
             .addresses
             .iter()
@@ -2073,8 +1873,8 @@ mod tests {
             .collect();
         for id in [5, 208, 308, 609] {
             let template = all.iter().find(|template| template.id == id).unwrap();
-            assert!(template.fits("GE"));
-            let mut ctx = Ctx::new("GE", &pools);
+            assert!(template.fits("US"));
+            let mut ctx = Ctx::new("US", &pools);
             ctx.plain = true;
             let mut rng = ChaCha8Rng::seed_from_u64(id as u64);
             let doc = render(template, &mut ctx, &mut rng).unwrap();
@@ -2095,154 +1895,69 @@ mod tests {
     }
 
     #[test]
-    fn ge_local_office_templates_keep_org_and_incomplete_street_separate() {
-        let all = templates::all().unwrap();
-        let pools = stub_pools(&[("Nino Beridze", "latin")]);
-        for id in [386, 387, 388] {
-            let t = all.iter().find(|t| t.id == id).unwrap();
-            assert!(t.fits("GE") && !t.fits("GB") && !t.test_only());
-            let mut ctx = Ctx::new("GE", &pools);
-            ctx.plain = true;
-            let mut rng = ChaCha8Rng::seed_from_u64(id as u64);
-            let doc = render(t, &mut ctx, &mut rng).unwrap();
-            let spans: Vec<(&str, &str)> = doc
-                .entities
-                .iter()
-                .map(|e| (e.kind, &doc.text[e.start..e.end]))
-                .collect();
-            if id == 388 {
-                assert!(doc.text.contains("ქუჩა"));
-                assert!(spans.is_empty(), "negative-only template was labelled");
-            } else {
-                assert_eq!(t.category, Category::Nothing);
-                assert_eq!(
-                    spans.iter().map(|(kind, _)| *kind).collect::<Vec<_>>(),
-                    vec!["org", "phone", "email"]
-                );
-                assert!(spans[0].1.ends_with(" სამმართველო"));
-                assert!(!doc.text.contains("მისამართი:") && !doc.text.contains("ორიენტირი:"));
-            }
-        }
-    }
-
-    #[test]
-    fn ge_local_office_wrapping_never_adds_reply_header_person() {
-        let pools = stub_pools(&[("Nino Beridze", "latin")]);
-        let all = templates::all().unwrap();
-        for id in [386, 387, 388] {
-            let template = all.iter().find(|t| t.id == id).unwrap();
-            for seed in 0..300 {
-                let mut rng = ChaCha8Rng::seed_from_u64(seed);
-                let mut ctx = Ctx::new("GE", &pools);
-                let doc = render(template, &mut ctx, &mut rng).unwrap();
-                let padded = wrapped(doc, &ctx, 900, &mut rng).unwrap();
-                assert!(
-                    padded.entities.iter().all(|e| e.kind != "person"),
-                    "template {id} seed {seed} acquired a person"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn honorifics_stay_outside_the_person_span() {
-        let pools = stub_pools(&[("Nino Beridze", "latin")]);
-        let t = template("Dear {person}.");
-        let mut seen = false;
-        for seed in 0..50 {
-            let mut ctx = Ctx::new("GE", &pools);
-            let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            let doc = render(&t, &mut ctx, &mut rng).unwrap();
-            let e = &doc.entities[0];
-            assert_eq!(doc.text[e.start..e.end].to_lowercase(), "nino beridze");
-            seen |= e.start > "Dear ".len();
-        }
-        assert!(seen, "no honorific in 50 renders");
-    }
-
-    #[test]
     fn unsupported_unit_relationship_templates_are_not_selected() {
         let all = templates::all().unwrap();
-        for country in ["US", "GB", "DE", "GE", "JP"] {
-            let supported: Vec<_> = all
-                .iter()
-                .filter(|t| supported_template(t, country))
-                .collect();
-            assert!(!supported.is_empty(), "{country}");
-            for template in supported {
-                let slots = template.slots().unwrap();
-                let unit = slots.iter().any(|item| item.slot == Slot::OrgUnit);
-                let chain = slots.iter().any(|item| item.slot == Slot::OrgChain);
-                let local_office = slots.iter().any(|item| item.slot == Slot::OrgLocalOffice);
-                let registry = slots.iter().any(|item| item.slot == Slot::OrgRegistry);
-                if country == "JP" {
-                    assert!(!registry, "{}", template.id);
-                }
-                assert!(!unit && !local_office, "{} in {country}", template.id);
-                assert!(
-                    !(registry
-                        && slots.iter().any(|item| {
-                            item.slot != Slot::OrgRegistry && item.slot.kind() == Some(Kind::Org)
-                        })),
-                    "{}",
-                    template.id
-                );
-                if matches!(country, "GE" | "JP") {
-                    assert!(!chain, "{} in {country}", template.id);
-                }
-            }
-        }
-        for id in [44, 45, 46, 49, 60, 63, 65, 66, 69, 240] {
-            let template = all.iter().find(|template| template.id == id).unwrap();
-            let country = if matches!(id, 44 | 45 | 46 | 49 | 240) {
-                "GE"
-            } else {
-                "JP"
-            };
-            assert!(!supported_template(template, country), "template {id}");
-        }
-        let sample = all[0];
-        for text in [
-            "{org_unit} at {org_univ}",
-            "{org_unit} at {org_council}",
-            "{org_unit} at {org_school}",
-            "{org_unit} at {org_local_office}",
-            "{org_unit} at {org_list}",
-            "{org_registry} at {org_univ}",
-            "{org_registry} at {org_council}",
-            "{org_registry} at {org_school}",
-            "{org_registry} at {org_list}",
-            "{org_unit} at {unknown_slot}",
-        ] {
+        let supported: Vec<_> = all.iter().filter(|t| supported_template(t, "US")).collect();
+        assert!(!supported.is_empty());
+        for template in supported {
+            let slots = template.slots().unwrap();
             assert!(
-                !supported_template(&Template { text, ..sample }, "GB"),
-                "{text}"
+                !slots.iter().any(|item| matches!(
+                    item.slot,
+                    Slot::OrgUnit | Slot::OrgLocalOffice | Slot::OrgChain
+                )),
+                "{}",
+                template.id
             );
         }
-        assert!(!supported_template(
-            &Template {
-                text: "{org_registry}",
-                ..sample
-            },
-            "JP"
-        ));
-        for id in [323, 371, 379, 386, 387, 621] {
-            let template = all.iter().find(|template| template.id == id).unwrap();
-            for country in ["US", "GB", "DE", "GE", "JP"] {
-                assert!(
-                    !supported_template(template, country),
-                    "template {id} in {country}"
-                );
+    }
+
+    #[test]
+    fn held_public_body_countries_draw_generic_orgs_without_bodies() {
+        for country in ["US"] {
+            for split in Split::ALL {
+                let mut pools = stub_pools(&[("Maya Johnson", "latin")]);
+                pools.bodies = Bodies::new(country, split);
+                let ctx = Ctx::new(country, &pools);
+                for seed in 0..200 {
+                    let mut rng = ChaCha8Rng::seed_from_u64(seed);
+                    assert!(ctx.org(&mut rng).is_ok(), "{country} {split:?} seed {seed}");
+                }
             }
+        }
+    }
+
+    #[test]
+    fn public_body_hold_preserves_template_category_coverage() {
+        let all = templates::all().unwrap();
+        for country in ["US"] {
+            for subset in [Subset::SeenTemplates, Subset::HeldoutFamilies] {
+                for category in Category::ALL {
+                    assert!(
+                        eligible(&all, subset)
+                            .iter()
+                            .any(|t| t.category == category && supported_template(t, country)),
+                        "{country} {} {}",
+                        subset.name(),
+                        category.name()
+                    );
+                }
+            }
+            assert!(
+                eligible(&all, Subset::HeldoutTemplates)
+                    .iter()
+                    .any(|t| supported_template(t, country)),
+                "{country} heldout templates"
+            );
         }
     }
 
     #[test]
     fn every_template_renders_for_every_country() {
         let all = templates::all().unwrap();
-        for country in ["US", "GB", "DE", "GE", "JP"] {
+        for country in ["US"] {
             for split in [Split::Train, Split::Valid, Split::Test] {
-                let mut pools = stub_pools(&[("Nino Beridze", "latin"), ("山田太郎", "han")]);
+                let mut pools = stub_pools(&[("Maya Johnson", "latin"), ("山田太郎", "han")]);
                 pools.bodies = Bodies::new(country, split);
                 for (i, t) in all
                     .iter()
@@ -2267,8 +1982,8 @@ mod tests {
 
     #[test]
     fn linked_slots_reuse_their_values() {
-        let pools = stub_pools(&[("Nino Beridze", "latin"), ("Anna Schmidt", "latin")]);
-        let mut ctx = Ctx::new("GE", &pools);
+        let pools = stub_pools(&[("Maya Johnson", "latin"), ("Anna Schmidt", "latin")]);
+        let mut ctx = Ctx::new("US", &pools);
         ctx.plain = true;
         let mut rng = ChaCha8Rng::seed_from_u64(3);
         let doc = render(
@@ -2283,25 +1998,10 @@ mod tests {
     }
 
     #[test]
-    fn phone_generators_mark_only_reserved_ranges_safe() {
-        let mut rng = ChaCha8Rng::seed_from_u64(7);
-        for _ in 0..200 {
-            for c in ["GB", "US"] {
-                assert!(phone(c, rng.random_bool(0.5), &mut rng).unwrap().1);
-            }
-            for c in ["GE", "JP"] {
-                assert!(!phone(c, rng.random_bool(0.5), &mut rng).unwrap().1);
-            }
-            let (value, safe) = phone("DE", rng.random_bool(0.5), &mut rng).unwrap();
-            assert_eq!(safe, value.contains("23125"), "{value}");
-        }
-    }
-
-    #[test]
     fn safe_phones_are_found_by_the_rules_with_their_region() {
         let mut rng = ChaCha8Rng::seed_from_u64(11);
         let mut missed = Vec::new();
-        for c in ["GB", "US", "CA", "DE"] {
+        for c in ["US"] {
             for _ in 0..300 {
                 let (value, safe) = phone(c, rng.random_bool(0.5), &mut rng).unwrap();
                 if !safe {
@@ -2333,8 +2033,8 @@ mod tests {
             (Split::Test, "Test Person"),
         ] {
             let mut pool = stub_pools(&[(name, "latin")]);
-            pool.bodies = Bodies::new("GB", split);
-            pools.insert((split, "GB"), pool);
+            pool.bodies = Bodies::new("US", split);
+            pools.insert((split, "US"), pool);
         }
         let cfg = GenerateConfig {
             train: 200,
@@ -2347,7 +2047,7 @@ mod tests {
         };
         let all = templates::all().unwrap();
         let mut rng = ChaCha8Rng::seed_from_u64(5);
-        let (rows, _) = generate(&cfg, &["GB"], &pools, &all, &mut rng).unwrap();
+        let (rows, _) = generate(&cfg, &["US"], &pools, &all, &mut rng).unwrap();
         assert_eq!(rows.len(), 300);
         assert_eq!(
             rows.iter()
@@ -2373,8 +2073,8 @@ mod tests {
     #[test]
     fn legal_forms_strip_only_as_the_last_word() {
         assert_eq!(
-            strip_legal_form("Kavkaz Freight LLC", "LLC").as_deref(),
-            Some("Kavkaz Freight")
+            strip_legal_form("Pacific Cargo LLC", "LLC").as_deref(),
+            Some("Pacific Cargo")
         );
         assert_eq!(
             strip_legal_form("Acme Ltd.", "Ltd").as_deref(),
@@ -2399,34 +2099,12 @@ mod tests {
 
     #[test]
     fn address_shapes_keep_source_locations() {
-        let pools = stub_pools(&[("Nino Beridze", "latin")]);
-        for country in ["US", "GB", "GE", "JP"] {
-            let ctx = Ctx::new(country, &pools);
-            for seed in 0..500 {
-                let mut rng = ChaCha8Rng::seed_from_u64(seed);
-                assert_eq!(
-                    ctx.shaped("1 Main St, Albany, NY 12207".into(), ", ", &mut rng),
-                    "1 Main St, Albany, NY 12207",
-                    "{country} seed {seed} changed a sourced address"
-                );
-            }
-        }
-        let ctx = Ctx::new("DE", &pools);
-        for seed in 0..500 {
-            let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            let shaped = ctx.shaped("Heidestraße 26, 10557 Berlin".into(), ", ", &mut rng);
-            assert!(
-                shaped == "Heidestraße 26, 10557 Berlin" || shaped == "Heidestr. 26, 10557 Berlin",
-                "seed {seed} fabricated a new German address: {shaped}"
-            );
-        }
+        let pools = stub_pools(&[("Maya Johnson", "latin")]);
+        let ctx = Ctx::new("US", &pools);
+        let mut rng = ChaCha8Rng::seed_from_u64(1);
         assert_eq!(
-            without_last_line(
-                "Hauptstraße 5\n10115 Berlin\nDeutschland",
-                &["Deutschland"],
-                "\n"
-            ),
-            "Hauptstraße 5\n10115 Berlin"
+            ctx.shaped("1 Main St, Albany, NY 12207".into(), ", ", &mut rng),
+            "1 Main St, Albany, NY 12207"
         );
     }
 
@@ -2436,6 +2114,6 @@ mod tests {
             ascii_words("José García-Pérez"),
             vec!["jose", "garcia", "perez"]
         );
-        assert_eq!(slug("Kavkaz Freight LLC"), "kavkaz-freight-llc");
+        assert_eq!(slug("Pacific Cargo LLC"), "pacific-cargo-llc");
     }
 }

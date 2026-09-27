@@ -7,12 +7,13 @@
 //! Rendering rebuilds text a person would write, so the model never learns padded commas.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::io::BufRead;
+use std::io::{BufRead, Read};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, bail};
 use rand::{Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use tessera::AddressLabel;
 use tessera::internal::{TokenClass, fnv1a, tokenize};
 
@@ -1505,6 +1506,12 @@ struct SourceManifest {
     license: String,
     attribution: String,
     downloaded: String,
+    filters: SourceFilters,
+}
+
+#[derive(Deserialize)]
+struct SourceFilters {
+    countries: Vec<String>,
 }
 
 impl SourceManifest {
@@ -1518,6 +1525,38 @@ impl SourceManifest {
     fn local_path(&self) -> PathBuf {
         let name = self.url.rsplit('/').next().unwrap_or("source.tsv.gz");
         PathBuf::from("data/raw/libpostal").join(name)
+    }
+
+    fn verify_for(&self, cfg: &Config, path: &Path) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.filters.countries == cfg.data.countries,
+            "source manifest selects {:?}, but config selects {:?}",
+            self.filters.countries,
+            cfg.data.countries
+        );
+        anyhow::ensure!(
+            self.sha256.len() == 64 && self.sha256.bytes().all(|b| b.is_ascii_hexdigit()),
+            "source manifest has no valid SHA-256"
+        );
+        let mut file = std::fs::File::open(path)
+            .with_context(|| format!("opening source {}", path.display()))?;
+        let mut hash = Sha256::new();
+        let mut buffer = [0u8; 1 << 20];
+        loop {
+            let read = file.read(&mut buffer)?;
+            if read == 0 {
+                break;
+            }
+            hash.update(&buffer[..read]);
+        }
+        let actual = format!("{:x}", hash.finalize());
+        anyhow::ensure!(
+            actual.eq_ignore_ascii_case(&self.sha256),
+            "source {} SHA-256 mismatch: expected {}, got {actual}",
+            path.display(),
+            self.sha256
+        );
+        Ok(())
     }
 }
 
@@ -1578,6 +1617,7 @@ pub fn prepare(config_path: &Path, date: &str) -> anyhow::Result<()> {
             source.url
         );
     }
+    source.verify_for(&cfg, &path)?;
     let quota = |split: Split| match split {
         Split::Train => cfg.data.train_per_country,
         Split::Valid => cfg.data.valid_per_country,
@@ -3660,7 +3700,7 @@ mod tests {
     }
 
     #[test]
-    fn parser_coverage_requires_each_country_and_the_jp_minima() {
+    fn parser_coverage_requires_every_us_split() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
         let mut cfg = crate::config::load(&root.join("configs/parser-small.toml")).unwrap();
         let mut counts = BTreeMap::new();
@@ -3673,26 +3713,23 @@ mod tests {
                 counts.insert((country.clone(), split), quota);
             }
         }
-        counts.insert(("JP".into(), Split::Train), 27136);
-        counts.insert(("JP".into(), Split::Valid), 2693);
-        counts.insert(("JP".into(), Split::Test), 2624);
         check_parser_coverage(&cfg, &counts).unwrap();
-        counts.insert(("JP".into(), Split::Test), 2623);
+        counts.insert(("US".into(), Split::Test), cfg.data.test_per_country - 1);
         assert!(
             check_parser_coverage(&cfg, &counts)
                 .unwrap_err()
                 .to_string()
-                .contains("JP test")
+                .contains("US test")
         );
-        counts.insert(("JP".into(), Split::Test), 2624);
-        counts.insert(("GB".into(), Split::Valid), 2999);
+        counts.insert(("US".into(), Split::Test), cfg.data.test_per_country);
+        counts.insert(("US".into(), Split::Valid), cfg.data.valid_per_country - 1);
         assert!(
             check_parser_coverage(&cfg, &counts)
                 .unwrap_err()
                 .to_string()
-                .contains("GB valid")
+                .contains("US valid")
         );
-        counts.insert(("GB".into(), Split::Valid), 3000);
+        counts.insert(("US".into(), Split::Valid), cfg.data.valid_per_country);
         cfg.data.countries.push("FR".into());
         assert!(
             check_parser_coverage(&cfg, &counts)
@@ -3700,13 +3737,42 @@ mod tests {
                 .to_string()
                 .contains("FR train")
         );
-        cfg.data.countries.pop();
-        cfg.data.coverage_exceptions.get_mut("JP").unwrap().valid = 0;
+    }
+
+    #[test]
+    fn parser_source_must_match_us_scope_and_its_recorded_bytes() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let cfg = crate::config::load(&root.join("configs/parser-small.toml")).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("source.tsv.gz");
+        std::fs::write(&path, b"US source").unwrap();
+        let mut source = SourceManifest {
+            source: "fixture".into(),
+            url: "source.tsv.gz".into(),
+            sha256: format!("{:x}", Sha256::digest(b"US source")),
+            license: "test".into(),
+            attribution: "test".into(),
+            downloaded: "test".into(),
+            filters: SourceFilters {
+                countries: vec!["US".into()],
+            },
+        };
+        source.verify_for(&cfg, &path).unwrap();
+        std::fs::write(&path, b"changed source").unwrap();
         assert!(
-            check_parser_coverage(&cfg, &counts)
+            source
+                .verify_for(&cfg, &path)
                 .unwrap_err()
                 .to_string()
-                .contains("JP valid")
+                .contains("SHA-256 mismatch")
+        );
+        source.filters.countries = vec!["GB".into()];
+        assert!(
+            source
+                .verify_for(&cfg, &path)
+                .unwrap_err()
+                .to_string()
+                .contains("source manifest selects")
         );
     }
 
@@ -3714,10 +3780,10 @@ mod tests {
     fn old_parser_manifest_cannot_reuse_a_passing_flag() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
         let cfg = crate::config::load(&root.join("configs/parser-small.toml")).unwrap();
-        let mut manifest: serde_json::Value = serde_json::from_str(
-            &std::fs::read_to_string(root.join("data/manifests/parser-sample.json")).unwrap(),
-        )
-        .unwrap();
+        let mut manifest = serde_json::json!({
+            "checks": {"version": 1, "passed": true},
+            "counts": {"US": {"train": 30000, "valid": 3000, "test": 3000}}
+        });
         assert!(
             check_parser_manifest(&cfg, &manifest)
                 .unwrap_err()
