@@ -425,28 +425,6 @@ const US_STATES: &[&str] = &[
     "Wisconsin",
 ];
 
-const GB_PLACES: &[&str] = &[
-    "Leeds",
-    "Bristol",
-    "Nottingham",
-    "Sheffield",
-    "Cardiff",
-    "Aberdeen",
-    "Plymouth",
-    "Norwich",
-    "Swansea",
-    "Southampton",
-    "Kent",
-    "Devon",
-    "Lancashire",
-    "Norfolk",
-    "Cornwall",
-];
-
-const CAPITALS: &[&str] = &[
-    "Paris", "Madrid", "Tokyo", "Tbilisi", "Berlin", "Ottawa", "Nairobi", "Lima", "Hanoi", "Oslo",
-];
-
 const DE_CITIES: &[&str] = &[
     "München",
     "Hamburg",
@@ -482,37 +460,25 @@ const DE_TOPICS: &[&str] = &[
     "Wirtschaft",
 ];
 
-const JP_CITIES: &[&str] = &[
-    "横浜",
-    "大阪",
-    "名古屋",
-    "札幌",
-    "神戸",
-    "京都",
-    "福岡",
-    "川崎",
-    "仙台",
-    "広島",
-    "千葉",
-    "静岡",
-    "熊本",
-    "岡山",
-    "新潟",
-    "浜松",
-    "金沢",
-];
-
-const JP_PREFECTURES: &[&str] = &[
-    "神奈川",
-    "埼玉",
-    "千葉",
-    "愛知",
-    "兵庫",
-    "福岡",
-    "静岡",
-    "広島",
-    "宮城",
-    "新潟",
+/// Whole office names from Nagoya City's designated-city office table (2025-04-01):
+/// https://www.city.nagoya.jp/_res/projects/default_project/_page_/001/041/472/chapter06.pdf
+const JP_CITY_HALLS: &[&str] = &[
+    "横浜市役所",
+    "大阪市役所",
+    "名古屋市役所",
+    "札幌市役所",
+    "神戸市役所",
+    "京都市役所",
+    "福岡市役所",
+    "川崎市役所",
+    "仙台市役所",
+    "広島市役所",
+    "千葉市役所",
+    "静岡市役所",
+    "熊本市役所",
+    "岡山市役所",
+    "新潟市役所",
+    "浜松市役所",
 ];
 
 /// Japanese topics of named sections (`課`) and bureaus (`局`).
@@ -539,26 +505,6 @@ const JP_TOPICS: &[&str] = &[
     "水産資源",
     "輸出促進",
     "技術政策",
-];
-
-/// Georgian units of public bodies.
-const GE_UNITS: &[&str] = &[
-    "საბაჟო დეპარტამენტი",
-    "საგადასახადო დავების დეპარტამენტი",
-    "სტატისტიკის დეპარტამენტი",
-    "საერთაშორისო ურთიერთობების დეპარტამენტი",
-    "ტრანსპორტის საქალაქო სამსახური",
-    "გარემოს დაცვის საქალაქო სამსახური",
-    "ინფრასტრუქტურის განვითარების საქალაქო სამსახური",
-    "ეკონომიკური განვითარების საქალაქო სამსახური",
-    "სოციალური მომსახურების საქალაქო სამსახური",
-    "აუდიტის დეპარტამენტი",
-    "სამართლებრივი უზრუნველყოფის დეპარტამენტი",
-    "საგარეო ვაჭრობის პოლიტიკის დეპარტამენტი",
-    "ტურიზმის განვითარების სამმართველო",
-    "საინვესტიციო პროექტების სამმართველო",
-    "ზედამხედველობის სამსახური",
-    "მუნიციპალური ინსპექცია",
 ];
 
 // Synthetic-only local office names. The full heading is split by hash; none of these
@@ -904,12 +850,17 @@ fn in_split(name: &str, split: Split) -> bool {
     }
 }
 
-fn split_pick<'t>(items: &'t [&'t str], split: Split, rng: &mut ChaCha8Rng) -> &'t str {
+fn split_pick<'t>(
+    source: &str,
+    items: &'t [&'t str],
+    split: Split,
+    rng: &mut ChaCha8Rng,
+) -> &'t str {
     let own: Vec<&&str> = items.iter().filter(|s| in_split(s, split)).collect();
-    own.choose(rng)
-        .map(|s| **s)
-        .or_else(|| items.choose(rng).copied())
-        .unwrap_or("")
+    match own.choose(rng) {
+        Some(item) => item,
+        None => panic!("no split-owned body in {source} for {split:?}"),
+    }
 }
 
 /// The listed bodies of `country`, in every split: they are the few dozen national bodies
@@ -980,11 +931,11 @@ impl Bodies {
     /// one composed from a pattern. With `acronym`, only a body that has one. Without, a
     /// Georgian or Japanese body is written in its own script more often than not, as the
     /// country's own documents write it.
-    pub fn body(&self, acronym: bool, rng: &mut ChaCha8Rng) -> Body {
+    pub fn body(&self, acronym: bool, rng: &mut ChaCha8Rng) -> anyhow::Result<Body> {
         if !acronym && rng.random_bool(0.6) {
             let native: Vec<&Body> = self.own.iter().filter(|b| native_script(&b.name)).collect();
             if let Some(b) = native.choose(rng) {
-                return (*b).clone();
+                return Ok((*b).clone());
             }
         }
         for _ in 0..64 {
@@ -1002,20 +953,15 @@ impl Bodies {
                 self.composed(rng)
             };
             if !acronym || b.acronym.is_some() {
-                return b;
+                return Ok(b);
             }
         }
-        // A split whose lists hold no acronym at all still gets one, composed.
-        let name = format!("Office of {}", split_pick(TOPICS, self.split(), rng));
-        Body {
-            acronym: initials(&name),
-            name,
-        }
+        anyhow::bail!("no supported acronym-bearing body for {}", self.country)
     }
 
     fn composed(&self, rng: &mut ChaCha8Rng) -> Body {
         let split = self.split();
-        let topic = split_pick(TOPICS, split, rng);
+        let topic = split_pick("TOPICS", TOPICS, split, rng);
         let plain = |name: String| Body {
             name,
             acronym: None,
@@ -1025,66 +971,27 @@ impl Bodies {
             Body { name, acronym }
         };
         match self.country {
-            "US" => match rng.random_range(0..6) {
+            "US" => match rng.random_range(0..5) {
                 0 => abbreviated(format!("Office of {topic}")),
                 1 => abbreviated(format!("Bureau of {topic}")),
-                2 => plain(format!("City of {}", split_pick(US_CITIES, split, rng))),
-                3 => plain(format!(
-                    "{} Department of {topic}",
-                    split_pick(US_STATES, split, rng)
+                2 => plain(format!(
+                    "City of {}",
+                    split_pick("US_CITIES", US_CITIES, split, rng)
                 )),
-                4 => abbreviated(format!("National {topic} Center")),
+                3 => abbreviated(format!("National {topic} Center")),
                 _ => abbreviated(format!("Center for {topic}")),
             },
-            "GB" => match rng.random_range(0..6) {
-                0 => plain(format!(
-                    "{} City Council",
-                    split_pick(GB_PLACES, split, rng)
-                )),
-                1 => plain(format!(
-                    "{} County Council",
-                    split_pick(GB_PLACES, split, rng)
-                )),
-                2 => plain(format!(
-                    "British Embassy {}",
-                    split_pick(CAPITALS, split, rng)
-                )),
-                3 => plain(format!("{} Crown Court", split_pick(GB_PLACES, split, rng))),
-                4 => abbreviated(format!("Office for {topic}")),
-                _ => plain(format!(
-                    "{} Marine Office",
-                    split_pick(GB_PLACES, split, rng)
-                )),
-            },
+            "GB" => abbreviated(format!("Office for {topic}")),
             "DE" => {
-                let city = split_pick(DE_CITIES, split, rng);
-                match rng.random_range(0..7) {
+                let city = split_pick("DE_CITIES", DE_CITIES, split, rng);
+                match rng.random_range(0..4) {
                     0 => plain(format!("Amtsgericht {city}")),
                     1 => plain(format!("Landgericht {city}")),
                     2 => plain(format!("Finanzamt {city}")),
-                    3 => plain(format!("Stadt {city}")),
-                    4 => plain(format!("Landratsamt {city}")),
-                    5 => Body {
-                        name: format!("Industrie- und Handelskammer {city}"),
-                        acronym: Some(format!("IHK {city}")),
-                    },
-                    _ => plain(format!(
-                        "Senatsverwaltung für {}",
-                        split_pick(DE_TOPICS, split, rng)
-                    )),
+                    _ => plain(format!("Stadt {city}")),
                 }
             }
-            "JP" => {
-                let city = split_pick(JP_CITIES, split, rng);
-                plain(match rng.random_range(0..6) {
-                    0 => format!("{city}市役所"),
-                    1 => format!("{city}市"),
-                    2 => format!("{}県庁", split_pick(JP_PREFECTURES, split, rng)),
-                    3 => format!("{city}地方裁判所"),
-                    4 => format!("{city}税務署"),
-                    _ => format!("{city}市{}局", split_pick(JP_TOPICS, split, rng)),
-                })
-            }
+            "JP" => plain(split_pick("JP_CITY_HALLS", JP_CITY_HALLS, split, rng).to_string()),
             _ => match self.own.choose(rng) {
                 Some(b) => b.clone(),
                 None => abbreviated(format!("Office of {topic}")),
@@ -1094,36 +1001,36 @@ impl Bodies {
 
     /// The body a company is registered with, as imprints and footers name it: a register
     /// court, Companies House, a state's corporations division, a legal affairs bureau.
-    pub fn registry(&self, rng: &mut ChaCha8Rng) -> String {
+    pub fn registry(&self, rng: &mut ChaCha8Rng) -> anyhow::Result<String> {
+        anyhow::ensure!(
+            self.country != "JP",
+            "no verified Japanese legal-affairs bureau roster"
+        );
         let split = self.split();
-        match self.country {
-            "DE" => format!("Amtsgericht {}", split_pick(DE_CITIES, split, rng)),
+        Ok(match self.country {
+            "DE" => format!(
+                "Amtsgericht {}",
+                split_pick("DE_CITIES", DE_CITIES, split, rng)
+            ),
             "GB" => "Companies House".to_string(),
             "US" => format!(
                 "{} Division of Corporations",
-                split_pick(US_STATES, split, rng)
+                split_pick("US_STATES", US_STATES, split, rng)
             ),
-            "JP" => format!("{}地方法務局", split_pick(JP_CITIES, split, rng)),
             "GE" if rng.random_bool(0.5) => "საჯარო რეესტრის ეროვნული სააგენტო".to_string(),
             _ => "National Agency of Public Registry".to_string(),
-        }
+        })
     }
 
-    /// A body name used in a Japanese or Georgian contact line. Japanese contact names use
-    /// a listed native body alone until source-backed unit chains are available. Georgian names
-    /// keep their inflected unit form. English and German contact lines use a single unit.
-    pub fn chain(&self, rng: &mut ChaCha8Rng) -> String {
-        let native: Vec<&Body> = self.own.iter().filter(|b| native_script(&b.name)).collect();
-        let body = native.choose(rng).map(|b| b.name.clone());
-        match (self.country, body) {
-            ("JP", Some(body)) => body,
-            ("GE", Some(body)) => {
-                let (genitive, _) =
-                    crate::inflect::apply(&body, crate::inflect::Form::Gen, false, rng);
-                format!("{genitive} {}", pick_str(GE_UNITS, rng))
-            }
-            _ => self.unit(rng),
-        }
+    /// A contact-line unit. Georgian and Japanese parent-unit chains require a verified
+    /// relationship roster before they can be emitted.
+    pub fn chain(&self, rng: &mut ChaCha8Rng) -> anyhow::Result<String> {
+        anyhow::ensure!(
+            !matches!(self.country, "GE" | "JP"),
+            "no verified {} parent-unit chain roster",
+            self.country
+        );
+        self.unit(rng)
     }
 
     /// A charity or non-profit named without a head word, as English documents name them:
@@ -1155,7 +1062,7 @@ impl Bodies {
         match self.country {
             "JP" => format!(
                 "{}{}",
-                split_pick(JP_TOPICS, split, rng),
+                split_pick("JP_TOPICS", JP_TOPICS, split, rng),
                 ["審議会", "委員会", "協議会", "部会", "推進本部"]
                     .choose(rng)
                     .copied()
@@ -1168,11 +1075,11 @@ impl Bodies {
                     .choose(rng)
                     .copied()
                     .unwrap_or("Ausschuss"),
-                split_pick(DE_TOPICS, split, rng)
+                split_pick("DE_TOPICS", DE_TOPICS, split, rng)
             ),
             _ => format!(
                 "{} {}",
-                split_pick(TOPICS, split, rng),
+                split_pick("TOPICS", TOPICS, split, rng),
                 ["Committee", "Advisory Board", "Task Force", "Commission"]
                     .choose(rng)
                     .copied()
@@ -1207,14 +1114,19 @@ impl Bodies {
     /// A named sub-unit: an office, division, directorate, section, or team with its own name.
     /// Generic business functions (`Customer Service`, `経理部`) are not units; they stay
     /// negatives in `templates::NEG_DEPARTMENTS`.
-    pub fn unit(&self, rng: &mut ChaCha8Rng) -> String {
+    pub fn unit(&self, rng: &mut ChaCha8Rng) -> anyhow::Result<String> {
+        anyhow::ensure!(
+            !matches!(self.country, "GE" | "JP"),
+            "no verified {} standalone unit roster",
+            self.country
+        );
         let split = self.split();
-        let topic = split_pick(TOPICS, split, rng);
-        match self.country {
+        let topic = split_pick("TOPICS", TOPICS, split, rng);
+        Ok(match self.country {
             // Public services answer through named centres: `Single Justice Service Centre`,
             // `Probate Contact Centre`.
             "GB" if rng.random_bool(0.3) => {
-                let service = pick_str(GB_SERVICES, rng);
+                let service = split_pick("GB_SERVICES", GB_SERVICES, split, rng);
                 match rng.random_range(0..3) {
                     0 => format!("{service} Service Centre"),
                     1 => format!("{service} Contact Centre"),
@@ -1222,26 +1134,13 @@ impl Bodies {
                 }
             }
             "DE" if rng.random_bool(0.6) => {
-                let topic = split_pick(DE_TOPICS, split, rng);
+                let topic = split_pick("DE_TOPICS", DE_TOPICS, split, rng);
                 match rng.random_range(0..3) {
                     0 => format!("Referat {topic}"),
                     1 => format!("Abteilung {topic}"),
                     _ => format!("Stabsstelle {topic}"),
                 }
             }
-            "JP" if rng.random_bool(0.7) => match rng.random_range(0..3) {
-                0 => format!(
-                    "第{}{}部",
-                    rng.random_range(1..=5),
-                    ["技術", "営業", "開発", "製造"]
-                        .choose(rng)
-                        .copied()
-                        .unwrap_or("技術")
-                ),
-                1 => format!("{}課", split_pick(JP_TOPICS, split, rng)),
-                _ => format!("{}室", split_pick(JP_TOPICS, split, rng)),
-            },
-            "GE" if rng.random_bool(0.6) => split_pick(GE_UNITS, split, rng).to_string(),
             _ => match rng.random_range(0..8) {
                 0 => format!("Office of {topic}"),
                 1 => format!("Division of {topic}"),
@@ -1249,9 +1148,12 @@ impl Bodies {
                 3 => format!("{topic} Branch"),
                 4 => format!("{topic} Directorate"),
                 5 => eu_unit(rng, topic),
-                _ => format!("{} Team", split_pick(TEAM_TOPICS, split, rng)),
+                _ => format!(
+                    "{} Team",
+                    split_pick("TEAM_TOPICS", TEAM_TOPICS, split, rng)
+                ),
             },
-        }
+        })
     }
 }
 
@@ -1277,35 +1179,159 @@ mod tests {
             for split in [Split::Train, Split::Valid, Split::Test] {
                 let b = Bodies::new(country, split);
                 for _ in 0..50 {
-                    assert!(b.body(true, &mut rng).acronym.is_some(), "{country}");
-                    assert!(!b.body(false, &mut rng).name.is_empty());
-                    assert!(!b.unit(&mut rng).is_empty());
+                    assert!(
+                        b.body(true, &mut rng).unwrap().acronym.is_some(),
+                        "{country}"
+                    );
+                    assert!(!b.body(false, &mut rng).unwrap().name.is_empty());
+                    if matches!(country, "GE" | "JP") {
+                        assert!(b.unit(&mut rng).is_err(), "{country}");
+                        assert!(b.chain(&mut rng).is_err(), "{country}");
+                    } else {
+                        assert!(!b.unit(&mut rng).unwrap().is_empty());
+                    }
                 }
             }
         }
     }
 
     #[test]
-    fn jp_contact_org_uses_a_listed_native_body() {
-        let mut rng = ChaCha8Rng::seed_from_u64(42);
+    fn acronym_draws_fail_when_no_supported_body_exists() {
+        let bodies = Bodies {
+            country: "JP",
+            split: Some(Split::Train),
+            own: Vec::new(),
+            eu: Vec::new(),
+        };
+        assert!(
+            bodies
+                .body(true, &mut ChaCha8Rng::seed_from_u64(0))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn composed_bodies_avoid_unverified_geography_and_policy_names() {
+        let mut rng = ChaCha8Rng::seed_from_u64(73);
         for split in [Split::Train, Split::Valid, Split::Test] {
-            let bodies = Bodies::new("JP", split);
-            let native: Vec<&str> = bodies
-                .own
+            for country in ["US", "GB", "DE", "JP"] {
+                let bodies = Bodies::new(country, split);
+                for _ in 0..2_000 {
+                    let name = bodies.composed(&mut rng).name;
+                    match country {
+                        "US" => assert!(
+                            !US_STATES
+                                .iter()
+                                .any(|state| name.starts_with(&format!("{state} Department of "))),
+                            "{name}"
+                        ),
+                        "GB" => assert!(
+                            !name.ends_with(" City Council")
+                                && !name.ends_with(" County Council")
+                                && !name.ends_with(" Crown Court")
+                                && !name.ends_with(" Marine Office"),
+                            "{name}"
+                        ),
+                        "DE" => assert!(
+                            !name.starts_with("Senatsverwaltung für ")
+                                && !name.starts_with("Landratsamt ")
+                                && !name.starts_with("Industrie- und Handelskammer "),
+                            "{name}"
+                        ),
+                        "JP" => {
+                            assert!(JP_CITY_HALLS.contains(&name.as_str()), "{name}");
+                            assert!(in_split(&name, split), "{name} {split:?}");
+                        }
+                        _ => unreachable!(),
+                    }
+                }
+            }
+        }
+        for bad in [
+            "Devon City Council",
+            "Cardiff County Council",
+            "川崎地方裁判所",
+            "浜松地方裁判所",
+        ] {
+            assert!(
+                !LISTED
+                    .iter()
+                    .any(|(_, names)| names.iter().any(|(name, _)| *name == bad))
+            );
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "no split-owned body in EMPTY for Valid")]
+    fn split_pick_fails_closed_without_split_owned_candidates() {
+        let mut rng = ChaCha8Rng::seed_from_u64(9);
+        split_pick("EMPTY", &[], Split::Valid, &mut rng);
+    }
+
+    #[test]
+    fn active_split_pick_lists_cover_every_split() {
+        for (label, items) in [
+            ("TOPICS", TOPICS),
+            ("US_CITIES", US_CITIES),
+            ("DE_CITIES", DE_CITIES),
+            ("JP_CITY_HALLS", JP_CITY_HALLS),
+            ("US_STATES", US_STATES),
+            ("JP_TOPICS", JP_TOPICS),
+            ("DE_TOPICS", DE_TOPICS),
+            ("TEAM_TOPICS", TEAM_TOPICS),
+            ("GB_SERVICES", GB_SERVICES),
+        ] {
+            for split in [Split::Train, Split::Valid, Split::Test] {
+                assert!(
+                    items.iter().any(|item| in_split(item, split)),
+                    "{label} {split:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn japanese_city_hall_roster_is_whole_named_and_split_safe() {
+        for split in [Split::Train, Split::Valid, Split::Test] {
+            assert!(
+                JP_CITY_HALLS.iter().any(|name| in_split(name, split)),
+                "{split:?}"
+            );
+        }
+        for name in JP_CITY_HALLS {
+            assert!(name.ends_with("市役所"));
+            assert_ne!(*name, "川崎地方裁判所");
+            assert_ne!(*name, "浜松地方裁判所");
+        }
+    }
+
+    #[test]
+    fn gb_service_centres_are_disjoint_by_split() {
+        use std::collections::HashSet;
+
+        let mut sets = Vec::new();
+        for split in [Split::Train, Split::Valid, Split::Test] {
+            let names: HashSet<String> = GB_SERVICES
                 .iter()
-                .filter(|body| native_script(&body.name))
-                .map(|body| body.name.as_str())
+                .filter(|service| in_split(service, split))
+                .flat_map(|service| {
+                    ["Service Centre", "Contact Centre", "Centre"]
+                        .map(|suffix| format!("{service} {suffix}"))
+                })
                 .collect();
-            assert!(!native.is_empty());
-            for _ in 0..200 {
-                assert!(native.contains(&bodies.chain(&mut rng).as_str()));
+            assert!(!names.is_empty(), "{split:?}");
+            sets.push(names);
+        }
+        for left in 0..sets.len() {
+            for right in left + 1..sets.len() {
+                assert!(sets[left].is_disjoint(&sets[right]));
             }
         }
     }
 
     #[test]
     fn composed_parts_fall_in_exactly_one_split() {
-        for name in TOPICS.iter().chain(DE_TOPICS).chain(GE_UNITS) {
+        for name in TOPICS.iter().chain(DE_TOPICS) {
             let n = [Split::Train, Split::Valid, Split::Test]
                 .into_iter()
                 .filter(|&s| in_split(name, s))

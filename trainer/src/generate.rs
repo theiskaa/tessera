@@ -564,22 +564,22 @@ impl<'a> Ctx<'a> {
                 let body = self
                     .pools
                     .bodies
-                    .body(self.acronym_groups.contains(&group), rng);
+                    .body(self.acronym_groups.contains(&group), rng)?;
                 if let Some(acronym) = body.acronym.filter(|_| group > 0) {
                     self.bound_acronym.insert(group, acronym);
                 }
                 Filled::plain(body.name)
             }
-            Slot::OrgAcronym => Filled::plain(self.acronym(group, rng)),
-            Slot::OrgUnit => Filled::plain(self.pools.bodies.unit(rng)),
+            Slot::OrgAcronym => Filled::plain(self.acronym(group, rng)?),
+            Slot::OrgUnit => Filled::plain(self.pools.bodies.unit(rng)?),
             Slot::OrgLocalOffice => Filled::plain(
                 self.pools
                     .bodies
                     .local_office(rng)
                     .context("no split-safe Georgian local office heading")?,
             ),
-            Slot::OrgRegistry => Filled::plain(self.pools.bodies.registry(rng)),
-            Slot::OrgChain => Filled::plain(self.pools.bodies.chain(rng)),
+            Slot::OrgRegistry => Filled::plain(self.pools.bodies.registry(rng)?),
+            Slot::OrgChain => Filled::plain(self.pools.bodies.chain(rng)?),
             Slot::OrgUniv => Filled::plain(self.pools.bodies.university(rng)),
             Slot::OrgCouncil => Filled::plain(self.pools.bodies.council(rng)),
             Slot::OrgMedia => Filled::plain(self.pools.bodies.media(rng)),
@@ -793,17 +793,17 @@ impl<'a> Ctx<'a> {
 
     /// The acronym bound to `group`, or a fresh body's, bound with its name so a later
     /// `{org_gov#n}` names the same body.
-    fn acronym(&mut self, group: u8, rng: &mut ChaCha8Rng) -> String {
+    fn acronym(&mut self, group: u8, rng: &mut ChaCha8Rng) -> anyhow::Result<String> {
         if let Some(a) = self.bound_acronym.get(&group) {
-            return a.clone();
+            return Ok(a.clone());
         }
-        let body = self.pools.bodies.body(true, rng);
+        let body = self.pools.bodies.body(true, rng)?;
         let acronym = body.acronym.unwrap_or_else(|| body.name.clone());
         if group > 0 {
             self.bound_acronym.insert(group, acronym.clone());
             self.bound.entry((Kind::Org, group)).or_insert(body.name);
         }
-        acronym
+        Ok(acronym)
     }
 
     /// Keep each parser address tied to its source location. Only change presentation:
@@ -852,7 +852,7 @@ impl<'a> Ctx<'a> {
             return Ok(self.pools.bodies.charity(rng));
         }
         if rng.random_bool(0.25) {
-            let body = self.pools.bodies.body(false, rng);
+            let body = self.pools.bodies.body(false, rng)?;
             // Documents name most bodies by their acronym once they have introduced them, and
             // many never write the full name at all (`Contact HMRC`).
             return Ok(match body.acronym {
@@ -1454,6 +1454,31 @@ struct Row {
     doc: Doc,
 }
 
+fn supported_template(template: &Template, country: &str) -> bool {
+    if !template.fits(country) {
+        return false;
+    }
+    let Ok(slots) = template.slots() else {
+        return false;
+    };
+    let unit = slots.iter().any(|item| item.slot == Slot::OrgUnit);
+    let chain = slots.iter().any(|item| item.slot == Slot::OrgChain);
+    let registry = slots.iter().any(|item| item.slot == Slot::OrgRegistry);
+    if matches!(country, "GE" | "JP") && (unit || chain) {
+        return false;
+    }
+    if country == "JP" && registry {
+        return false;
+    }
+    let other_than_unit = slots
+        .iter()
+        .any(|item| item.slot != Slot::OrgUnit && item.slot.kind() == Some(Kind::Org));
+    let other_than_registry = slots
+        .iter()
+        .any(|item| item.slot != Slot::OrgRegistry && item.slot.kind() == Some(Kind::Org));
+    !(unit && other_than_unit || registry && other_than_registry)
+}
+
 /// Generates the detector corpus described by the config's `[generate]` section, or with
 /// `sample`, prints that many bracketed documents without writing anything.
 pub fn run(config_path: &Path, sample: Option<usize>, family: Option<&str>) -> anyhow::Result<()> {
@@ -1489,7 +1514,10 @@ pub fn run(config_path: &Path, sample: Option<usize>, family: Option<&str>) -> a
         };
         for _ in 0..n {
             let country = *countries.choose(&mut rng).context("no countries")?;
-            let fitting: Vec<&&Template> = chosen.iter().filter(|t| t.fits(country)).collect();
+            let fitting: Vec<&&Template> = chosen
+                .iter()
+                .filter(|t| supported_template(t, country))
+                .collect();
             let Some(template) = fitting.choose(&mut rng) else {
                 continue;
             };
@@ -1618,8 +1646,11 @@ fn generate(
                     bail!("100 rendered documents in a row failed the checks; see `dropped`");
                 }
                 let country = *countries.choose(rng).context("no countries")?;
-                let fitting: Vec<&Template> =
-                    pool.iter().copied().filter(|t| t.fits(country)).collect();
+                let fitting: Vec<&Template> = pool
+                    .iter()
+                    .copied()
+                    .filter(|t| supported_template(t, country))
+                    .collect();
                 let template = choose_template(&fitting, subset, rng)?;
                 let mut ctx = Ctx::new(country, &pools[&(split, country)]);
                 let doc = wrapped(render(template, &mut ctx, rng)?, &ctx, cfg.max_tokens, rng)?;
@@ -2206,59 +2237,112 @@ mod tests {
     }
 
     #[test]
-    fn jp_contact_templates_do_not_label_random_units() {
+    fn unsupported_unit_relationship_templates_are_not_selected() {
         let all = templates::all().unwrap();
-        let mut pools = stub_pools(&[("山田太郎", "han")]);
-        pools.bodies = Bodies::new("JP", Split::Train);
-        for id in [60, 63, 69] {
-            let template = all.iter().find(|template| template.id == id).unwrap();
-            let marker = if id == 63 {
-                "連絡先"
-            } else {
-                "問合せ先"
-            };
-            for seed in 0..30 {
-                let mut ctx = Ctx::new("JP", &pools);
-                ctx.plain = true;
-                let mut rng = ChaCha8Rng::seed_from_u64(seed);
-                let doc = render(template, &mut ctx, &mut rng).unwrap();
-                let after_marker = doc.text.find(marker).unwrap() + marker.len();
-                let contact_org = doc
-                    .entities
-                    .iter()
-                    .filter(|entity| entity.kind == "org" && entity.start >= after_marker)
-                    .min_by_key(|entity| entity.start)
-                    .unwrap();
-                let surface = &doc.text[contact_org.start..contact_org.end];
-                assert!(!surface.is_empty(), "template {id}, seed {seed}");
+        for country in ["US", "GB", "DE", "GE", "JP"] {
+            let supported: Vec<_> = all
+                .iter()
+                .filter(|t| supported_template(t, country))
+                .collect();
+            assert!(!supported.is_empty(), "{country}");
+            for template in supported {
+                let slots = template.slots().unwrap();
+                let unit = slots.iter().any(|item| item.slot == Slot::OrgUnit);
+                let chain = slots.iter().any(|item| item.slot == Slot::OrgChain);
+                let registry = slots.iter().any(|item| item.slot == Slot::OrgRegistry);
+                if country == "JP" {
+                    assert!(!registry, "{}", template.id);
+                }
                 assert!(
-                    !["局", "部", "課", "室", "班", "係"]
-                        .iter()
-                        .any(|suffix| surface.ends_with(suffix)),
-                    "template {id}, seed {seed}: {surface}"
+                    !(unit
+                        && slots.iter().any(|item| {
+                            item.slot != Slot::OrgUnit && item.slot.kind() == Some(Kind::Org)
+                        })),
+                    "{}",
+                    template.id
                 );
-                assert_eq!(check(&doc, 900), Ok(()));
+                assert!(
+                    !(registry
+                        && slots.iter().any(|item| {
+                            item.slot != Slot::OrgRegistry && item.slot.kind() == Some(Kind::Org)
+                        })),
+                    "{}",
+                    template.id
+                );
+                if matches!(country, "GE" | "JP") {
+                    assert!(!unit && !chain, "{} in {country}", template.id);
+                }
+            }
+        }
+        for id in [44, 45, 46, 49, 60, 63, 65, 66, 69, 240] {
+            let template = all.iter().find(|template| template.id == id).unwrap();
+            let country = if matches!(id, 44 | 45 | 46 | 49 | 240) {
+                "GE"
+            } else {
+                "JP"
+            };
+            assert!(!supported_template(template, country), "template {id}");
+        }
+        let sample = all[0];
+        for text in [
+            "{org_unit} at {org_univ}",
+            "{org_unit} at {org_council}",
+            "{org_unit} at {org_school}",
+            "{org_unit} at {org_local_office}",
+            "{org_unit} at {org_list}",
+            "{org_registry} at {org_univ}",
+            "{org_registry} at {org_council}",
+            "{org_registry} at {org_school}",
+            "{org_registry} at {org_list}",
+            "{org_unit} at {unknown_slot}",
+        ] {
+            assert!(
+                !supported_template(&Template { text, ..sample }, "GB"),
+                "{text}"
+            );
+        }
+        assert!(!supported_template(
+            &Template {
+                text: "{org_registry}",
+                ..sample
+            },
+            "JP"
+        ));
+        for id in [323, 371, 379] {
+            let template = all.iter().find(|template| template.id == id).unwrap();
+            for country in ["US", "GB", "DE", "GE", "JP"] {
+                assert!(
+                    !supported_template(template, country),
+                    "template {id} in {country}"
+                );
             }
         }
     }
 
     #[test]
     fn every_template_renders_for_every_country() {
-        let pools = stub_pools(&[("Nino Beridze", "latin"), ("山田太郎", "han")]);
         let all = templates::all().unwrap();
         for country in ["US", "GB", "DE", "GE", "JP"] {
-            for (i, t) in all.iter().enumerate().filter(|(_, t)| t.fits(country)) {
-                let mut ctx = Ctx::new(country, &pools);
-                let mut rng = ChaCha8Rng::seed_from_u64(i as u64);
-                let doc = render(t, &mut ctx, &mut rng).unwrap();
-                assert_eq!(
-                    check(&doc, 900),
-                    Ok(()),
-                    "template {} in {country}: {:?}",
-                    t.id,
-                    doc.text
-                );
-                assert_eq!(t.derived_category().unwrap(), t.category);
+            for split in [Split::Train, Split::Valid, Split::Test] {
+                let mut pools = stub_pools(&[("Nino Beridze", "latin"), ("山田太郎", "han")]);
+                pools.bodies = Bodies::new(country, split);
+                for (i, t) in all
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, t)| supported_template(t, country))
+                {
+                    let mut ctx = Ctx::new(country, &pools);
+                    let mut rng = ChaCha8Rng::seed_from_u64(i as u64);
+                    let doc = render(t, &mut ctx, &mut rng).unwrap();
+                    assert_eq!(
+                        check(&doc, 900),
+                        Ok(()),
+                        "template {} in {country}: {:?}",
+                        t.id,
+                        doc.text
+                    );
+                    assert_eq!(t.derived_category().unwrap(), t.category);
+                }
             }
         }
     }
@@ -2330,7 +2414,9 @@ mod tests {
             (Split::Valid, "Valid Person"),
             (Split::Test, "Test Person"),
         ] {
-            pools.insert((split, "GB"), stub_pools(&[(name, "latin")]));
+            let mut pool = stub_pools(&[(name, "latin")]);
+            pool.bodies = Bodies::new("GB", split);
+            pools.insert((split, "GB"), pool);
         }
         let cfg = GenerateConfig {
             train: 200,
