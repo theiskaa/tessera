@@ -150,82 +150,6 @@ pub fn address_like(name: &str) -> bool {
             .any(|x| STREET_WORDS.contains(&x.as_str()))
 }
 
-/// Institutions that a company legal form would misname.
-const INSTITUTION: [&str; 18] = [
-    "university",
-    "universität",
-    "institute",
-    "institut",
-    "foundation",
-    "stiftung",
-    "association",
-    "agency",
-    "ministry",
-    "prefecture",
-    "school",
-    "hospital",
-    "party",
-    "museum",
-    "council",
-    "church",
-    "society",
-    "college",
-];
-
-/// A public body or non-profit: never given a company's legal form.
-pub fn institution(name: &str) -> bool {
-    any_phrase(&words(name), &INSTITUTION)
-}
-
-/// Legal forms written after a company name, longest first so `L.L.C.` wins over `LLC`.
-const LEGAL_FORMS: [&str; 29] = [
-    "gmbh & co. kg",
-    "ug (haftungsbeschränkt)",
-    "co., ltd.",
-    "incorporated",
-    "corporation",
-    "limited",
-    "l.l.c.",
-    "company",
-    "corp.",
-    "gmbh",
-    "llc",
-    "llp",
-    "plc",
-    "inc.",
-    "ltd.",
-    "inc",
-    "ltd",
-    "co.",
-    "k.k.",
-    "g.k.",
-    "e.k.",
-    "gbr",
-    "ohg",
-    "mbh",
-    "ag",
-    "kg",
-    "ug",
-    "se",
-    "lp",
-];
-
-/// `name` without a trailing legal form and the comma before it; `None` when a second form
-/// remains, as in `… MEZZ, LLC, INC`, where the name would still read as a foreign company.
-pub fn without_legal_form(name: &str) -> Option<String> {
-    let strip = |s: &str| -> Option<String> {
-        let lower = s.to_lowercase();
-        LEGAL_FORMS.iter().find_map(|form| {
-            let cut = lower.strip_suffix(form)?;
-            let before = cut.chars().last();
-            (before.is_none_or(|c| c == ' ' || c == ','))
-                .then(|| s[..cut.len()].trim_end_matches([' ', ',']).to_string())
-        })
-    };
-    let base = strip(name).unwrap_or_else(|| name.to_string());
-    (!base.is_empty() && strip(&base).is_none()).then_some(base)
-}
-
 /// Words Wikidata adds in parentheses to tell items apart, which no document writes.
 const DISAMBIGUATORS: [&str; 16] = [
     "party",
@@ -556,33 +480,13 @@ mod tests {
     }
 
     #[test]
-    fn address_like_companies_and_institutions() {
+    fn address_like_companies() {
         assert!(address_like("2100 POWELL STREET MEZZ, LLC"));
         assert!(!address_like("3M Company"));
-        assert!(institution(
-            "Okayama Prefecture Industrial Promotion Foundation"
-        ));
-        assert!(!institution("Acme Holdings"));
     }
 
     #[test]
-    fn legal_forms_come_off_once() {
-        assert_eq!(
-            without_legal_form("Acme Widgets LIMITED").as_deref(),
-            Some("Acme Widgets")
-        );
-        assert_eq!(without_legal_form("Acme, L.L.C.").as_deref(), Some("Acme"));
-        assert_eq!(without_legal_form("Acme").as_deref(), Some("Acme"));
-        assert_eq!(without_legal_form("Mezz, LLC, INC"), None);
-        assert_eq!(without_legal_form("LLC"), None);
-        assert_eq!(without_legal_form("Bagging").as_deref(), Some("Bagging"));
-        assert_eq!(
-            without_legal_form("PSG Can UG"),
-            Some("PSG Can".to_string())
-        );
-        assert!(private_arrangement(
-            "Peak Oil Products Ltd Retirement Benefits Scheme"
-        ));
+    fn article_removal_keeps_acronyms() {
         assert_eq!(
             without_article("The Planning Inspectorate"),
             "Planning Inspectorate"

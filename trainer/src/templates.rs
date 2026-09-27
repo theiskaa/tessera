@@ -1814,11 +1814,6 @@ pub const FILLER_SENTENCES: &[&str] = &[
     "We confirmed the booking this afternoon.",
 ];
 
-/// Georgian legal forms for organizations borrowed into a small GE pool: the Latin
-/// abbreviations after the name, the Georgian ones before it.
-pub const GE_LEGAL_FORMS: &[(&str, bool)] =
-    &[("LLC", false), ("JSC", false), ("შპს", true), ("სს", true)];
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -12,12 +12,12 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, bail};
 use polars::prelude::{Column, DataFrame, ParquetReader, ParquetWriter, SerReader};
-use rand::seq::{IndexedRandom, SliceRandom};
+use rand::seq::IndexedRandom;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 use serde::Serialize;
 use tessera::Kind;
-use tessera::internal::{fnv1a, is_content, tokenize};
+use tessera::internal::{is_content, tokenize};
 use unicode_normalization::UnicodeNormalization;
 
 use crate::bodies::Bodies;
@@ -419,8 +419,6 @@ pub struct Pools {
     pub people: Vec<PoolPerson>,
     pub orgs: Vec<PoolOrg>,
     pub addresses: Vec<PoolAddress>,
-    /// Orgs added from other countries because the country's own pool was too small.
-    pub borrowed_orgs: usize,
     pub bodies: Bodies,
 }
 
@@ -1438,15 +1436,6 @@ impl Subset {
     }
 }
 
-/// Pools below these sizes borrow organizations from other countries, so one small pool is
-/// not repeated in thousands of documents.
-fn min_org_pool(split: Split) -> usize {
-    match split {
-        Split::Train => 2000,
-        Split::Valid | Split::Test => 200,
-    }
-}
-
 struct Row {
     id: u64,
     split: Split,
@@ -1496,7 +1485,6 @@ pub fn run(config_path: &Path, sample: Option<usize>, family: Option<&str>) -> a
         Path::new(&names.out),
         Path::new(&gen_cfg.addresses),
         &countries,
-        cfg.seed,
     )?;
     let all = templates::all()?;
     let mut rng = ChaCha8Rng::seed_from_u64(cfg.seed);
@@ -1671,15 +1659,11 @@ fn generate(
     Ok((rows, dropped))
 }
 
-/// Reads the names and address pools per (split, country). Organization pools below
-/// `min_org_pool` borrow Latin-script names from the other countries' pools of the same
-/// split, with their legal form swapped for a Georgian one; only GE has such forms, and a
-/// short pool of any other country is used as it is.
+/// Reads the names and address pools per (split, country).
 fn load_pools(
     names: &Path,
     addresses: &Path,
     countries: &[&'static str],
-    seed: u64,
 ) -> anyhow::Result<HashMap<(Split, &'static str), Pools>> {
     let mut pools: HashMap<(Split, &'static str), Pools> = HashMap::new();
     for &c in countries {
@@ -1765,63 +1749,6 @@ fn load_pools(
             if let Some(p) = pool_mut(&mut pools, &e.country, split.name()) {
                 p.addresses.push(PoolAddress::from_example(&e));
             }
-        }
-    }
-    for split in Split::ALL {
-        for &c in countries {
-            let native = pools[&(split, c)].orgs.len();
-            let mut need = min_org_pool(split).saturating_sub(native);
-            if need == 0 || c != "GE" {
-                continue;
-            }
-            // At most as many borrowed names as native ones where the native pool allows it:
-            // a Georgian org should mostly be a Georgian name.
-            if split == Split::Train {
-                need = need.min(native);
-            }
-            let mut donors: Vec<PoolOrg> = countries
-                .iter()
-                .filter(|&&d| d != c)
-                .flat_map(|&d| pools[&(split, d)].orgs.iter().cloned())
-                .filter(|o| {
-                    o.name
-                        .chars()
-                        .filter(|ch| ch.is_alphabetic())
-                        .all(|ch| ch.is_ascii())
-                        && !pool_filter::private_arrangement(&o.name)
-                        && !pool_filter::address_like(&o.name)
-                        && !pool_filter::institution(&o.name)
-                })
-                // A donor keeping a second legal form would still read as a foreign company.
-                .filter_map(|o| {
-                    pool_filter::without_legal_form(&o.name).map(|base| PoolOrg {
-                        name: base,
-                        legal_form: String::new(),
-                    })
-                })
-                .collect();
-            let mut rng = ChaCha8Rng::seed_from_u64(seed ^ fnv1a(c.as_bytes(), 0) ^ split as u64);
-            donors.shuffle(&mut rng);
-            let borrowed: Vec<PoolOrg> = donors
-                .into_iter()
-                .take(need)
-                .map(|o| {
-                    let base = o.name;
-                    let &(form, before) = pick(templates::GE_LEGAL_FORMS, &mut rng);
-                    let name = if before {
-                        format!("{form} {base}")
-                    } else {
-                        format!("{base} {form}")
-                    };
-                    PoolOrg {
-                        name,
-                        legal_form: form.to_string(),
-                    }
-                })
-                .collect();
-            let p = pools.get_mut(&(split, c)).context("pool")?;
-            p.borrowed_orgs = borrowed.len();
-            p.orgs.extend(borrowed);
         }
     }
     Ok(pools)
@@ -1947,7 +1874,7 @@ fn write_manifest(
             serde_json::json!({
                 "people": p.people.len(),
                 "orgs": p.orgs.len(),
-                "borrowed_orgs": p.borrowed_orgs,
+                "borrowed_orgs": 0,
                 "addresses": p.addresses.len(),
             }),
         );
@@ -2021,7 +1948,6 @@ mod tests {
                     text: "4 Misty Wood Circle".into(),
                 },
             ],
-            borrowed_orgs: 0,
             bodies: Bodies::new("GE", Split::Train),
         }
     }
