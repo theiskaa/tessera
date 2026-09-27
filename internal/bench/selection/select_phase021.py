@@ -19,6 +19,8 @@ COUNTRIES = ("US", "GB", "DE", "GE", "JP")
 KINDS = ("person", "org", "address", "email", "phone")
 TARGETS = {"person_exact_f1": 0.90, "address_exact_f1": 0.80,
            "address_found_recall": 0.95}
+REGRESSION_TOLERANCE = 0.02
+MIN_REGRESSION_SUPPORT = 50
 EXPECTED_GOLD = "3940db21008a51dc71e78fdb390b1be3b1f69ca4596b4c49b50da0af77b2abbd"
 EXPECTED_BASELINE = "cb056415282f79504c5b14f9766f126fc5379cf3941503bb030a00fec530b4c6"
 
@@ -170,10 +172,14 @@ def report_scores(report, label):
             kinds = by_country[country]
             if kinds["person"]["gold"] <= 0 or kinds["address"]["gold"] <= 0:
                 raise ValueError(f"{label}: {country} has no person or address gold")
+            person = kinds["person"]
+            address = kinds["address"]
             values = {
-                "person_exact_f1": kinds["person"]["exact"]["f1"],
-                "address_exact_f1": kinds["address"]["exact"]["f1"],
-                "address_found_recall": kinds["address"]["lenient_one_to_one"]["recall"],
+                "person_exact_f1": 2 * person["exact_tp"] /
+                                   (person["gold"] + person["predicted"]),
+                "address_exact_f1": 2 * address["exact_tp"] /
+                                    (address["gold"] + address["predicted"]),
+                "address_found_recall": address["one_to_one_gold_hits"] / address["gold"],
             }
         except (KeyError, TypeError) as error:
             raise ValueError(f"{label}: missing {country} score: {error}") from error
@@ -181,6 +187,38 @@ def report_scores(report, label):
             if not isinstance(value, (int, float)) or not math.isfinite(value) or not 0 <= value <= 1:
                 raise ValueError(f"{label}: invalid {country} {metric} score")
             scores[f"{country}.{metric}"] = float(value)
+    return scores
+
+
+def regression_scores(report):
+    system = next(system for system in report["systems"] if system["system"] == "tessera")
+    scores = {}
+
+    def add_exact(key, gold, predicted, correct):
+        scores[key] = (2 * correct / (gold + predicted) if gold + predicted else 0.0, gold)
+
+    overall = system["overall"]
+    add_exact("all.overall_exact_f1", overall["gold"], overall["predicted"],
+              overall["exact_tp"])
+    for kind in KINDS:
+        metrics = system["by_kind"][kind]
+        add_exact(f"all.{kind}_exact_f1", metrics["gold"], metrics["predicted"],
+                  metrics["exact_tp"])
+    for country in COUNTRIES:
+        totals = Counter()
+        kinds = system["by_slice"]["country"][country]
+        for kind in KINDS:
+            metrics = kinds.get(kind, {})
+            gold, predicted, correct = (metrics.get(field, 0)
+                                        for field in ("gold", "predicted", "exact_tp"))
+            add_exact(f"{country}.{kind}_exact_f1", gold, predicted, correct)
+            totals.update({"gold": gold, "predicted": predicted, "exact_tp": correct})
+            if kind == "address":
+                found = metrics.get("one_to_one_gold_hits", 0)
+                scores[f"{country}.address_found_recall"] = (found / gold if gold else 0.0,
+                                                             gold)
+        add_exact(f"{country}.overall_exact_f1", totals["gold"], totals["predicted"],
+                  totals["exact_tp"])
     return scores
 
 
@@ -194,7 +232,7 @@ def verify_report(path, bundle, gold_hash, evaluator_hash, label, support):
     if provenance.get("bundle_sha256") != digest(bundle):
         raise ValueError(f"{label}: bundle hash differs from the evaluated bundle")
     verify_support(report, support, label)
-    return report_scores(report, label)
+    return report_scores(report, label), regression_scores(report)
 
 
 def completed_epochs(run_dir):
@@ -232,8 +270,8 @@ def select(baseline_report, baseline_bundle, manifest_path, run_dir, gold, evalu
     if v17_scores is not None and digest(baseline_report) != dev_v2_lock.NATIVE_V17_REPORT_SHA256:
         raise ValueError("dev-v2 V17 report differs from the pinned native baseline")
     evaluator_hash = digest(evaluator)
-    baseline = verify_report(baseline_report, baseline_bundle, gold_hash,
-                             evaluator_hash, "baseline", support)
+    baseline, baseline_regression = verify_report(baseline_report, baseline_bundle, gold_hash,
+                                                  evaluator_hash, "baseline", support)
     if v17_scores is not None:
         dev_v2_lock.verify_native_v17(read_json(baseline_report), v17_scores)
     manifest = read_json(manifest_path)
@@ -270,15 +308,24 @@ def select(baseline_report, baseline_bundle, manifest_path, run_dir, gold, evalu
         for key in ("best_sha256", "quantized_sha256", "input_snapshot_sha256"):
             if metadata.get(f"detector_{key}") != artifact_hashes[key]:
                 raise ValueError(f"epoch {epoch}: exported bundle does not bind detector {key}")
-        scores = verify_report(entry["report"], entry["bundle"], gold_hash,
-                               evaluator_hash, f"epoch {epoch}", support)
-        losses = [key for key, target in ((f"{country}.{metric}", target)
-                                             for country in COUNTRIES
-                                             for metric, target in TARGETS.items())
-                  if baseline[key] >= target and scores[key] < baseline[key] - 0.02]
+        scores, regression = verify_report(entry["report"], entry["bundle"], gold_hash,
+                                           evaluator_hash, f"epoch {epoch}", support)
+        if regression.keys() != baseline_regression.keys() or any(
+                regression[key][1] != baseline_regression[key][1]
+                for key in baseline_regression):
+            raise ValueError(f"epoch {epoch}: regression score support differs from baseline")
+        manual_review = [key for key, (_, gold_count) in baseline_regression.items()
+                         if gold_count < MIN_REGRESSION_SUPPORT]
+        losses = [key for key, (value, gold_count) in regression.items()
+                  if gold_count >= MIN_REGRESSION_SUPPORT and
+                  value < baseline_regression[key][0] - REGRESSION_TOLERANCE]
         ge_found_gain = scores["GE.address_found_recall"] - baseline["GE.address_found_recall"]
         ge_exact_gain = scores["GE.address_exact_f1"] - baseline["GE.address_exact_f1"]
-        reasons = [f"passing slice lost over two points: {key}" for key in losses]
+        reasons = [f"regression over two points: {key} "
+                   f"({baseline_regression[key][0]:.4f} -> {regression[key][0]:.4f})"
+                   for key in losses]
+        reasons.extend(f"manual review required: {key} has "
+                       f"{baseline_regression[key][1]} gold spans" for key in manual_review)
         if ge_found_gain < 0.05:
             reasons.append("GE address found recall gain below five points")
         if ge_exact_gain < 0.01:
@@ -287,6 +334,7 @@ def select(baseline_report, baseline_bundle, manifest_path, run_dir, gold, evalu
                 for country in COUNTRIES for metric, target in TARGETS.items()]
         maximum, total = max(gaps), sum(gaps)
         decisions.append({"epoch": epoch, "eligible": not reasons, "reasons": reasons,
+                          "manual_review_required": bool(manual_review),
                           "maximum_shortfall": maximum, "total_shortfall": total,
                           "report_sha256": digest(entry["report"])})
         if not reasons:

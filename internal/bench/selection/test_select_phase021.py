@@ -24,25 +24,30 @@ def metric(gold, predicted, correct, found):
 def report(gold, evaluator, bundle, *, ge_found=.5, ge_exact=.3, us_exact=.9):
     countries = {}
     for country in selection.COUNTRIES:
-        address_correct = int(round(10 * (ge_exact if country == "GE" else
+        address_correct = int(round(50 * (ge_exact if country == "GE" else
                                           us_exact if country == "US" else .8)))
-        address_found = int(round(10 * (ge_found if country == "GE" else .9)))
+        address_found = int(round(50 * (ge_found if country == "GE" else .9)))
         countries[country] = {
-            "person": metric(10, 10, 9, 9),
-            "address": metric(10, 10, address_correct, address_found),
+            "person": metric(50, 50, 35 if country == "GB" else 45, 45),
+            "org": metric(50, 50, 30, 35),
+            "address": metric(50, 50, address_correct, address_found),
+            "email": metric(50, 50, 49, 49),
+            "phone": metric(50, 50, 48, 48),
         }
-    kinds = {kind: metric(0, 0, 0, 0) for kind in selection.KINDS}
-    for kind in ("person", "address"):
-        kinds[kind] = metric(50, 50,
-                             sum(countries[country][kind]["exact_tp"] for country in countries),
-                             sum(countries[country][kind]["one_to_one_gold_hits"] for country in countries))
-    overall = metric(100, 100, sum(row["exact_tp"] for row in kinds.values()),
+    kinds = {
+        kind: metric(250, 250,
+                     sum(countries[country][kind]["exact_tp"] for country in countries),
+                     sum(countries[country][kind]["one_to_one_gold_hits"]
+                         for country in countries))
+        for kind in selection.KINDS
+    }
+    overall = metric(1250, 1250, sum(row["exact_tp"] for row in kinds.values()),
                      sum(row["one_to_one_gold_hits"] for row in kinds.values()))
     return {"country_hint_mode": "auto", "provenance": {
         "gold_sha256": selection.digest(gold),
         "evaluator_sha256": selection.digest(evaluator),
         "bundle_sha256": selection.digest(bundle),
-    }, "systems": [{"system": "tessera", "cases": 50, "overall": overall,
+    }, "systems": [{"system": "tessera", "cases": 250, "overall": overall,
                     "by_kind": kinds, "by_slice": {"country": countries}}]}
 
 
@@ -58,8 +63,8 @@ class EpochSelectionTests(unittest.TestCase):
         self.gold = self.write("gold.jsonl", "".join(
             json.dumps({"name": f"{country}-{number}", "country": country,
                         "input": "Alice Smith, 12 Main St",
-                        "expected": [{"kind": "person"}, {"kind": "address"}]}) + "\n"
-            for country in selection.COUNTRIES for number in range(10)))
+                        "expected": [{"kind": kind} for kind in selection.KINDS]}) + "\n"
+            for country in selection.COUNTRIES for number in range(50)))
         self.evaluator = self.write("trainer", "evaluator binary")
         self.base_bundle = self.write("base.safetensors", "base bundle")
         self.base_report = self.write_json(
@@ -113,6 +118,40 @@ class EpochSelectionTests(unittest.TestCase):
             return selection.select(self.base_report, self.base_bundle, self.manifest,
                                     self.run, self.gold, self.evaluator)
 
+    @staticmethod
+    def change_exact(report_data, country, kind, exact_tp):
+        system = report_data["systems"][0]
+        current = system["by_slice"]["country"][country][kind]["exact_tp"]
+        delta = exact_tp - current
+        for row in (system["by_slice"]["country"][country][kind],
+                    system["by_kind"][kind], system["overall"]):
+            row.update(metric(row["gold"], row["predicted"], row["exact_tp"] + delta,
+                              row["one_to_one_gold_hits"]))
+
+    @staticmethod
+    def change_found(report_data, country, kind, found):
+        system = report_data["systems"][0]
+        current = system["by_slice"]["country"][country][kind]["one_to_one_gold_hits"]
+        delta = found - current
+        for row in (system["by_slice"]["country"][country][kind],
+                    system["by_kind"][kind], system["overall"]):
+            row.update(metric(row["gold"], row["predicted"], row["exact_tp"],
+                              row["one_to_one_gold_hits"] + delta))
+
+    @staticmethod
+    def remove_one_gold(report_data, country, kind):
+        system = report_data["systems"][0]
+        for row in (system["by_slice"]["country"][country][kind],
+                    system["by_kind"][kind], system["overall"]):
+            row.update(metric(row["gold"] - 1, row["predicted"] - 1,
+                              row["exact_tp"] - 1, row["one_to_one_gold_hits"] - 1))
+
+    def rewrite_epoch_exact(self, entry, country, kind, exact_tp):
+        path = Path(entry["report"])
+        candidate = json.loads(path.read_text())
+        self.change_exact(candidate, country, kind, exact_tp)
+        path.write_text(json.dumps(candidate))
+
     def test_selects_eligible_epoch_by_worst_shortfall_then_total(self):
         first = self.add_epoch(1, ge_found=.6, ge_exact=.4)
         second = self.add_epoch(2, ge_found=.7, ge_exact=.5)
@@ -127,7 +166,88 @@ class EpochSelectionTests(unittest.TestCase):
         entry = self.add_epoch(1, ge_found=.7, ge_exact=.4, us_exact=.8)
         decision = self.decide([entry])
         self.assertIsNone(decision["selected_epoch"])
-        self.assertIn("US.address_exact_f1", decision["epochs"][0]["reasons"][0])
+        self.assertTrue(any("US.address_exact_f1" in reason
+                            for reason in decision["epochs"][0]["reasons"]))
+
+    def test_rejects_ge_organization_collapse_with_address_gain(self):
+        entry = self.add_epoch(1, ge_found=.6, ge_exact=.4)
+        self.rewrite_epoch_exact(entry, "GE", "org", 0)
+        decision = self.decide([entry])
+        self.assertIsNone(decision["selected_epoch"])
+        self.assertFalse(decision["epochs"][0]["manual_review_required"])
+        self.assertTrue(any("GE.org_exact_f1" in reason
+                            for reason in decision["epochs"][0]["reasons"]))
+
+    def test_rejects_gb_person_collapse_below_target(self):
+        entry = self.add_epoch(1, ge_found=.6, ge_exact=.4)
+        self.rewrite_epoch_exact(entry, "GB", "person", 0)
+        decision = self.decide([entry])
+        self.assertIsNone(decision["selected_epoch"])
+        self.assertTrue(any("GB.person_exact_f1" in reason
+                            for reason in decision["epochs"][0]["reasons"]))
+
+    def test_rejects_email_and_phone_regressions(self):
+        email = self.add_epoch(1, ge_found=.6, ge_exact=.4)
+        phone = self.add_epoch(2, ge_found=.6, ge_exact=.4)
+        self.rewrite_epoch_exact(email, "US", "email", 0)
+        self.rewrite_epoch_exact(phone, "JP", "phone", 0)
+        decision = self.decide([email, phone])
+        self.assertIsNone(decision["selected_epoch"])
+        self.assertTrue(any("US.email_exact_f1" in reason
+                            for reason in decision["epochs"][0]["reasons"]))
+        self.assertTrue(any("JP.phone_exact_f1" in reason
+                            for reason in decision["epochs"][1]["reasons"]))
+
+    def test_rejects_address_found_regression_below_target(self):
+        entry = self.add_epoch(1, ge_found=.6, ge_exact=.4)
+        path = Path(entry["report"])
+        candidate = json.loads(path.read_text())
+        self.change_found(candidate, "DE", "address", 40)
+        path.write_text(json.dumps(candidate))
+        decision = self.decide([entry])
+        self.assertIsNone(decision["selected_epoch"])
+        self.assertTrue(any("DE.address_found_recall" in reason
+                            for reason in decision["epochs"][0]["reasons"]))
+
+    def test_low_support_requires_manual_review(self):
+        rows = [json.loads(line) for line in self.gold.read_text().splitlines()]
+        phone = rows[-1]["expected"]
+        rows[-1]["expected"] = [span for span in phone if span["kind"] != "phone"]
+        self.gold.write_text("".join(json.dumps(row) + "\n" for row in rows))
+        baseline = json.loads(self.base_report.read_text())
+        baseline["provenance"]["gold_sha256"] = selection.digest(self.gold)
+        self.remove_one_gold(baseline, "JP", "phone")
+        self.base_report.write_text(json.dumps(baseline))
+        entry = self.add_epoch(1, ge_found=.6, ge_exact=.4)
+        path = Path(entry["report"])
+        candidate = json.loads(path.read_text())
+        self.remove_one_gold(candidate, "JP", "phone")
+        path.write_text(json.dumps(candidate))
+        decision = self.decide([entry])
+        self.assertIsNone(decision["selected_epoch"])
+        self.assertTrue(decision["epochs"][0]["manual_review_required"])
+        self.assertTrue(any("JP.phone_exact_f1 has 49 gold spans" in reason
+                            for reason in decision["epochs"][0]["reasons"]))
+
+    def test_target_scores_use_checked_counts_despite_report_rounding(self):
+        baseline = json.loads(self.base_report.read_text())
+        address = baseline["systems"][0]["by_slice"]["country"]["GE"]["address"]
+        address["exact"]["f1"] = .30004
+        address["lenient_one_to_one"]["recall"] = .50004
+        support = selection.gold_support(self.gold)
+        selection.verify_support(baseline, support, "baseline")
+        scores = selection.report_scores(baseline, "baseline")
+        self.assertEqual(scores["GE.address_exact_f1"], .3)
+        self.assertEqual(scores["GE.address_found_recall"], .5)
+
+    def test_regression_scores_cover_country_and_global_overall(self):
+        baseline = json.loads(self.base_report.read_text())
+        scores = selection.regression_scores(baseline)
+        self.assertEqual(len(scores), 41)
+        self.assertEqual(scores["GE.overall_exact_f1"][1], 250)
+        self.assertEqual(scores["all.overall_exact_f1"][1], 1250)
+        self.assertEqual(scores["GB.person_exact_f1"][0], .7)
+        self.assertEqual(scores["US.email_exact_f1"][0], .98)
 
     def test_missing_completed_epoch_is_an_error(self):
         entry = self.add_epoch(1, ge_found=.6, ge_exact=.32)
@@ -198,7 +318,7 @@ class EpochSelectionTests(unittest.TestCase):
         Path(entry["report"]).write_text(json.dumps(candidate))
         with self.assertRaisesRegex(ValueError, "case count differs"):
             self.decide([entry])
-        candidate["systems"][0]["cases"] = 50
+        candidate["systems"][0]["cases"] = 250
         candidate["systems"][0]["by_slice"]["country"]["GE"]["address"]["gold"] = 1
         Path(entry["report"]).write_text(json.dumps(candidate))
         with self.assertRaisesRegex(ValueError, "gold support"):
