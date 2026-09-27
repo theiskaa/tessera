@@ -1721,19 +1721,16 @@ pub fn prepare(config_path: &Path, date: &str) -> anyhow::Result<()> {
         }
     }
     check_parser_coverage(&cfg, &counts)?;
-    let augmented: Vec<LabelledExample> = rows
-        .iter()
-        .filter(|r| r.split == Split::Train)
-        .flat_map(|r| {
-            augment::augment_row(
-                cfg.seed,
-                r,
-                cfg.augment.copies,
-                &fc,
-                &mut dropped.unencodable_copies,
-            )
-        })
-        .collect();
+    let mut augmented = Vec::new();
+    for row in rows.iter().filter(|r| r.split == Split::Train) {
+        augmented.extend(augment::augment_row(
+            cfg.seed,
+            row,
+            cfg.augment.copies,
+            &fc,
+            &mut dropped.unencodable_copies,
+        )?);
+    }
     let mut augmented_counts: BTreeMap<String, usize> = BTreeMap::new();
     for r in &augmented {
         *augmented_counts.entry(r.country.clone()).or_default() += 1;
@@ -2086,11 +2083,14 @@ mod shard {
     }
 }
 
-/// Conservative augmentation of training rows. Every function edits pieces and separators
-/// and never invents a format nobody writes; `reorder` only swaps pairs a country allows.
+/// Address augmentation for training rows. Preparation enables only edits that preserve
+/// the source components; other generators remain available to their focused tests.
 pub(crate) mod augment {
+    use std::collections::HashMap;
+
     use rand_chacha::ChaCha8Rng;
     use tessera::AddressLabel as L;
+    use unicode_normalization::UnicodeNormalization;
 
     use super::{
         LabelledExample, Pieces, Rng, SeedableRng, decompose, glued, japanese_script,
@@ -2099,31 +2099,19 @@ pub(crate) mod augment {
 
     type Augmentation = fn(&str, &mut Pieces, &mut ChaCha8Rng) -> bool;
 
-    /// In application order, with the probability each is tried on one copy.
+    /// Format-only edits in application order, with the probability each is tried on one copy.
+    /// Every enabled edit preserves the source's labelled address components.
     pub const AUGMENTATIONS: &[(Augmentation, f32)] = &[
         (separators_commas, 0.5),
         (separators_newlines, 0.3),
         (one_line_commas, 0.35),
         (separator_variants, 0.10),
-        (insert_postcode_ge, 0.5),
-        (po_box_digits, 0.4),
-        (insert_banchi_jp, 0.6),
         (digit_width_jp, 0.5),
         (ideographic_comma_jp, 0.15),
         (abbreviate_road, 0.4),
         (casing_upper, 0.15),
         (casing_lower, 0.10),
-        (omit_country, 0.5),
-        (omit_region, 0.3),
-        (official_format_ge, 0.35),
-        (floor_room_ge, 0.2),
-        (official_layout_jp, 0.4),
-        (office_unit_us, 0.2),
-        (number_range_de, 0.15),
         (postcode_prefix_de, 0.05),
-        (notes_between, 0.15),
-        (insert_unit_line, 0.15),
-        (ocr_substitute, 0.10),
         (unicode_variant, 0.10),
         (reorder, 0.20),
     ];
@@ -2149,11 +2137,12 @@ pub(crate) mod augment {
         copies: usize,
         fc: &tessera::internal::FeatureConfig,
         unencodable: &mut u64,
-    ) -> Vec<LabelledExample> {
+    ) -> anyhow::Result<Vec<LabelledExample>> {
         let mut out = Vec::new();
+        let source = decompose(&row.text, &row.spans);
         for c in 0..copies {
             let mut rng = ChaCha8Rng::seed_from_u64(seed ^ row.id ^ ((c as u64) << 48));
-            let mut p = decompose(&row.text, &row.spans);
+            let mut p = source.clone();
             let mut changed = false;
             for (f, rate) in AUGMENTATIONS {
                 if rng.random::<f32>() < *rate {
@@ -2163,6 +2152,15 @@ pub(crate) mod augment {
             if !changed {
                 continue;
             }
+            anyhow::ensure!(
+                preserves_source_components(&row.country, &source, &p),
+                "augmentation changed source address components: {} row {} copy {}: {:?} -> {:?}",
+                row.country,
+                row.id,
+                c,
+                source.items,
+                p.items
+            );
             let (text, spans) = render_pieces(&p);
             // Exact text, not the normalized fingerprint: a copy that differs only in its
             // separators or casing is exactly what these augmentations are for.
@@ -2183,7 +2181,77 @@ pub(crate) mod augment {
                 ..row.clone()
             });
         }
-        out
+        Ok(out)
+    }
+
+    fn canonical_component(text: &str) -> String {
+        text.nfkc()
+            .collect::<String>()
+            .to_lowercase()
+            .replace('ß', "ss")
+    }
+
+    /// Accept only source component values, known road abbreviations, and an attached German
+    /// postcode prefix. Case and Unicode width changes compare by normalized value.
+    pub(super) fn preserves_source_components(
+        country: &str,
+        source: &Pieces,
+        candidate: &Pieces,
+    ) -> bool {
+        let mut abbreviated = source.clone();
+        abbreviate_road(country, &mut abbreviated, &mut ChaCha8Rng::seed_from_u64(0));
+        let mut road_aliases = HashMap::new();
+        for (original, short) in source.items.iter().zip(&abbreviated.items) {
+            if original.label != Some(L::Road) {
+                continue;
+            }
+            let original_text = canonical_component(&original.text);
+            let short_text = canonical_component(&short.text);
+            if short_text != original_text
+                && road_aliases
+                    .insert(short_text, original_text.clone())
+                    .is_some_and(|previous| previous != original_text)
+            {
+                return false;
+            }
+        }
+        let inventory = |p: &Pieces| {
+            let mut counts = HashMap::new();
+            for item in &p.items {
+                let mut text = canonical_component(&item.text);
+                if item.label == Some(L::Road)
+                    && let Some(source_text) = road_aliases.get(&text)
+                {
+                    text = source_text.clone();
+                }
+                *counts.entry((item.label, text)).or_insert(0usize) += 1;
+            }
+            counts
+        };
+        let source_counts = inventory(source);
+        let mut candidate_counts = inventory(candidate);
+        let prefix = (None, String::from("d-"));
+        let source_prefixes = source_counts.get(&prefix).copied().unwrap_or(0);
+        if country == "DE"
+            && candidate_counts.get(&prefix).copied().unwrap_or(0) == source_prefixes + 1
+            && source.items.iter().any(|item| {
+                item.label == Some(L::Postcode)
+                    && item.text.starts_with(|c: char| c.is_ascii_digit())
+            })
+            && candidate.items.windows(2).enumerate().any(|(index, pair)| {
+                pair[0].label.is_none()
+                    && pair[0].text == "D-"
+                    && pair[1].label == Some(L::Postcode)
+                    && candidate.seps.get(index).is_some_and(String::is_empty)
+            })
+            && let Some(count) = candidate_counts.get_mut(&prefix)
+        {
+            *count -= 1;
+            if *count == 0 {
+                candidate_counts.remove(&prefix);
+            }
+        }
+        source_counts == candidate_counts
     }
 
     fn labelled(p: &Pieces, i: usize) -> bool {
@@ -2323,6 +2391,7 @@ pub(crate) mod augment {
 
     /// Georgian rows rarely carry a postcode, though people write one after or before the
     /// town. Only towns with known codes get one, and only one of their own codes.
+    #[cfg(test)]
     pub fn insert_postcode_ge(country: &str, p: &mut Pieces, rng: &mut ChaCha8Rng) -> bool {
         const TOWNS: [(&str, &str, &[&str]); 7] = [
             (
@@ -2370,6 +2439,7 @@ pub(crate) mod augment {
     /// A lot number after the block of a Japanese address that has none: `梅田3丁目1-1`,
     /// `栄3丁目5-12`, `12番4号`. The source almost never carries one; real addresses nearly
     /// always do.
+    #[cfg(test)]
     pub fn insert_banchi_jp(country: &str, p: &mut Pieces, rng: &mut ChaCha8Rng) -> bool {
         let has = |l: L| p.items.iter().any(|i| i.label == Some(l));
         if country != "JP" || has(L::HouseNumber) || has(L::PoBox) || !japanese_script(p) {
@@ -2436,6 +2506,7 @@ pub(crate) mod augment {
     }
 
     /// A German Postfach number written as it is printed, often in pairs: `Postfach 10 02 34`.
+    #[cfg(test)]
     pub fn po_box_digits(country: &str, p: &mut Pieces, rng: &mut ChaCha8Rng) -> bool {
         if country != "DE" {
             return false;
@@ -2600,12 +2671,14 @@ pub(crate) mod augment {
     }
 
     /// Drops the country line, as most addresses written for a local reader do.
+    #[cfg(test)]
     pub fn omit_country(country: &str, p: &mut Pieces, _: &mut ChaCha8Rng) -> bool {
         omit(country, p, L::Country)
     }
 
     /// Drops the region, except in Georgia, where it is usually written, and in the US when a
     /// ZIP follows it, which is never written without its state.
+    #[cfg(test)]
     pub fn omit_region(country: &str, p: &mut Pieces, _: &mut ChaCha8Rng) -> bool {
         let us_zip = country == "US" && p.items.iter().any(|i| i.label == Some(L::Postcode));
         country != "GE" && !us_zip && omit(country, p, L::Region)
@@ -2613,6 +2686,7 @@ pub(crate) mod augment {
 
     /// Removes the first `label` piece with one of its separators. The two pieces that become
     /// neighbours get a space when they are a pair that is written together.
+    #[cfg(test)]
     fn omit(country: &str, p: &mut Pieces, label: L) -> bool {
         let labelled = p.items.iter().filter(|i| i.label.is_some()).count();
         let Some(i) = p.items.iter().position(|it| it.label == Some(label)) else {
@@ -2653,6 +2727,7 @@ pub(crate) mod augment {
     /// in Germany after the house number (`Parkstraße 8, 3. OG`), in the US after the street
     /// on the same line (`123 Main St Apt 4B`), in Georgia after the house number in the
     /// street's own script (`ქ. 12, ბინა 5`).
+    #[cfg(test)]
     pub fn insert_unit_line(country: &str, p: &mut Pieces, rng: &mut ChaCha8Rng) -> bool {
         let has = |l: L| p.items.iter().any(|i| i.label == Some(l));
         if has(L::Unit) || has(L::Level) || has(L::PoBox) || !has(L::HouseNumber) {
@@ -2772,6 +2847,7 @@ pub(crate) mod augment {
         p.items.iter().position(|i| i.label == Some(label))
     }
 
+    #[cfg(test)]
     fn georgian(text: &str) -> bool {
         text.chars().any(|c| ('\u{10D0}'..='\u{10FF}').contains(&c))
     }
@@ -2781,6 +2857,7 @@ pub(crate) mod augment {
     /// `№71`, `№ 71`, `N12`, `N 12` or `#5`, then any floor and room: `ქ. ქუთაისი, წერეთლის
     /// ქ. №15`. Everything else (country, postcode, region, district, suburb, venue) is left
     /// off. A glued mark is part of the number; a spaced one is not.
+    #[cfg(test)]
     pub fn official_format_ge(country: &str, p: &mut Pieces, rng: &mut ChaCha8Rng) -> bool {
         if country != "GE" {
             return false;
@@ -2859,6 +2936,7 @@ pub(crate) mod augment {
 
     /// A floor and a room after a Georgian street address, as offices print them:
     /// `მე-3 სართული`, `III სართული`, `ოთახი №309`, `ოფისი 12`.
+    #[cfg(test)]
     pub fn floor_room_ge(country: &str, p: &mut Pieces, rng: &mut ChaCha8Rng) -> bool {
         let has = |l: L| p.items.iter().any(|i| i.label == Some(l));
         if country != "GE" || has(L::Level) || has(L::Unit) || !has(L::HouseNumber) {
@@ -2926,6 +3004,7 @@ pub(crate) mod augment {
     /// The layout of Japanese public offices' addresses: the postcode without `〒`, often on a
     /// line of its own, no country, and at times the building with its floor after the lot
     /// number (`横浜第２合同庁舎3階`, `日進ビル1・2階`, `センタービル10F`).
+    #[cfg(test)]
     pub fn official_layout_jp(country: &str, p: &mut Pieces, rng: &mut ChaCha8Rng) -> bool {
         if country != "JP" || !japanese_script(p) {
             return false;
@@ -3004,6 +3083,7 @@ pub(crate) mod augment {
 
     /// A US federal office's room, suite, or mail stop, before the street or after it:
     /// `Room 6D-033`, `Suite CC-5610`, `Mail Stop H21-8`, `Mail Code 28221T`.
+    #[cfg(test)]
     pub fn office_unit_us(country: &str, p: &mut Pieces, rng: &mut ChaCha8Rng) -> bool {
         let has = |l: L| p.items.iter().any(|i| i.label == Some(l));
         if country != "US" || has(L::Unit) || has(L::Level) || has(L::PoBox) {
@@ -3051,6 +3131,7 @@ pub(crate) mod augment {
     }
 
     /// A German house number as a range of numbers: `52–54`, `2 - 4`, `16/18`.
+    #[cfg(test)]
     pub fn number_range_de(country: &str, p: &mut Pieces, rng: &mut ChaCha8Rng) -> bool {
         if country != "DE" {
             return false;
@@ -3096,6 +3177,7 @@ pub(crate) mod augment {
     /// it: a bracketed note after the number (`52 (Hinterhaus)`), a bullet or bar between the
     /// street and the town (`Hansastraße 19 • 80686 München`), `in` before a German postcode,
     /// and a federal building's name after the street (`, West Building,`).
+    #[cfg(test)]
     pub fn notes_between(country: &str, p: &mut Pieces, rng: &mut ChaCha8Rng) -> bool {
         if country == "US" {
             let Some(road) = position(p, L::Road) else {
@@ -3160,6 +3242,7 @@ pub(crate) mod augment {
         true
     }
 
+    #[cfg(test)]
     fn ordinal(n: u32) -> String {
         let suffix = match (n % 10, n % 100) {
             (1, x) if x != 11 => "st",
@@ -3168,51 +3251,6 @@ pub(crate) mod augment {
             _ => "th",
         };
         format!("{n}{suffix}")
-    }
-
-    /// One character in one ASCII component, swapped for a common OCR confusion.
-    pub fn ocr_substitute(country: &str, p: &mut Pieces, rng: &mut ChaCha8Rng) -> bool {
-        const SWAPS: [(char, char); 7] = [
-            ('0', 'O'),
-            ('O', '0'),
-            ('1', 'l'),
-            ('l', '1'),
-            ('5', 'S'),
-            ('S', '5'),
-            ('8', 'B'),
-        ];
-        if country == "GE" {
-            return false;
-        }
-        // Postcodes and house numbers keep their exact form: a misread one is no longer valid.
-        let candidates: Vec<usize> = (0..p.items.len())
-            .filter(|&i| {
-                matches!(p.items[i].label, Some(l) if !matches!(l, L::Postcode | L::HouseNumber))
-                    && p.items[i].text.is_ascii()
-            })
-            .collect();
-        if candidates.is_empty() {
-            return false;
-        }
-        let i = candidates[rng.random_range(0..candidates.len())];
-        let text = &p.items[i].text;
-        let positions: Vec<(usize, char)> = text
-            .char_indices()
-            .filter_map(|(k, c)| {
-                SWAPS
-                    .iter()
-                    .find(|(from, _)| *from == c)
-                    .map(|(_, to)| (k, *to))
-            })
-            .collect();
-        if positions.is_empty() {
-            return false;
-        }
-        let (k, to) = positions[rng.random_range(0..positions.len())];
-        let mut next = text.clone();
-        next.replace_range(k..k + 1, &to.to_string());
-        p.items[i].text = next;
-        true
     }
 
     /// Japanese digits in the other width: the source writes blocks fullwidth (`１丁目`) and
@@ -3743,6 +3781,106 @@ mod tests {
             &mut ChaCha8Rng::seed_from_u64(0)
         ));
         assert!(render_pieces(&p).0.contains("Downing St"));
+    }
+
+    #[test]
+    fn enabled_augmentations_preserve_source_components() {
+        let cases = [
+            (
+                "GB",
+                "en\tgb\t10/house_number Downing/road Street/road |/FSEP London/city |/FSEP SW1A/postcode 2AA/postcode |/FSEP United/country Kingdom/country",
+            ),
+            (
+                "GE",
+                "ka\tge\tწერეთლის/road ქ./road 15/house_number |/FSEP ქუთაისი/city |/FSEP საქართველო/country",
+            ),
+            (
+                "DE",
+                "de\tde\tMarzahner/road Promenade/road 52/house_number |/FSEP 12679/postcode Berlin/city",
+            ),
+            (
+                "US",
+                "en\tus\t1000/house_number Independence/road Avenue/road SW/road |/FSEP Washington/city DC/state 20585/postcode",
+            ),
+            (
+                "JP",
+                "ja\tjp\t〒100-8926/postcode |/FSEP 東/state 京/state 都/state |/FSEP 千/city 代/city 田/city 区/city |/FSEP 霞/suburb が/suburb 関/suburb 2/suburb 丁/suburb 目/suburb |/FSEP 1-2/house_number",
+            ),
+        ];
+        for (country, line) in cases {
+            let e = example(country, line);
+            let original = decompose(&e.text, &e.spans);
+            for seed in 0..64 {
+                let mut p = original.clone();
+                let mut rng = ChaCha8Rng::seed_from_u64(seed);
+                for (edit, _) in augment::AUGMENTATIONS {
+                    edit(country, &mut p, &mut rng);
+                    assert!(
+                        augment::preserves_source_components(country, &original, &p),
+                        "{country} seed {seed}: {:?}",
+                        p.items
+                    );
+                }
+                let (text, spans) = render_pieces(&p);
+                assert_invariant(&LabelledExample {
+                    text,
+                    spans,
+                    ..e.clone()
+                });
+            }
+        }
+    }
+
+    #[test]
+    fn semantic_guard_rejects_fabricated_components() {
+        let ge = example(
+            "GE",
+            "ka\tge\tწერეთლის/road ქ./road 15/house_number |/FSEP ქუთაისი/city |/FSEP საქართველო/country",
+        );
+        let source = decompose(&ge.text, &ge.spans);
+        let mut changed_road = source.clone();
+        let road = changed_road
+            .items
+            .iter_mut()
+            .find(|item| item.label == Some(AddressLabel::Road))
+            .unwrap();
+        road.text = "28-ე ქ.".into();
+        assert!(!augment::preserves_source_components(
+            "GE",
+            &source,
+            &changed_road
+        ));
+        let mut office = source.clone();
+        assert!(augment::floor_room_ge(
+            "GE",
+            &mut office,
+            &mut ChaCha8Rng::seed_from_u64(0)
+        ));
+        assert!(!augment::preserves_source_components(
+            "GE", &source, &office
+        ));
+        let mut official = source.clone();
+        assert!(augment::official_format_ge(
+            "GE",
+            &mut official,
+            &mut ChaCha8Rng::seed_from_u64(0)
+        ));
+        assert!(!augment::preserves_source_components(
+            "GE", &source, &official
+        ));
+
+        let jp = example(
+            "JP",
+            "ja\tjp\t東/state 京/state 都/state |/FSEP 千/city 代/city 田/city 区/city |/FSEP 霞/suburb が/suburb 関/suburb 2/suburb 丁/suburb 目/suburb",
+        );
+        let source = decompose(&jp.text, &jp.spans);
+        let mut lot = source.clone();
+        assert!(augment::insert_banchi_jp(
+            "JP",
+            &mut lot,
+            &mut ChaCha8Rng::seed_from_u64(0)
+        ));
+        assert!(!augment::preserves_source_components("JP", &source, &lot));
     }
 
     #[test]
@@ -4649,7 +4787,9 @@ mod tests {
         assert_ne!(text, e.text);
         assert_eq!(fingerprint(&text), fingerprint(&e.text));
         let copies: Vec<_> = (0..64)
-            .flat_map(|seed| augment::augment_row(seed, &e, 2, &FeatureConfig::default(), &mut 0))
+            .flat_map(|seed| {
+                augment::augment_row(seed, &e, 2, &FeatureConfig::default(), &mut 0).unwrap()
+            })
             .collect();
         assert!(
             copies.iter().any(|c| c.text == "9 Elm Rd, Norwich NR2 3HU"),
@@ -4851,7 +4991,7 @@ mod tests {
         );
         let mut made = 0;
         for seed in 0..50 {
-            for a in augment::augment_row(seed, &e, 2, &FeatureConfig::default(), &mut 0) {
+            for a in augment::augment_row(seed, &e, 2, &FeatureConfig::default(), &mut 0).unwrap() {
                 assert!(a.augmented);
                 assert_ne!(a.text, e.text);
                 assert_eq!(a.group_id, e.group_id);
