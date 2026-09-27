@@ -651,8 +651,9 @@ async fn unserved_operation_rejects_with_a_stage() {
 }
 
 #[cfg(feature = "markdown")]
-const MARKDOWN_DOC: &str = include_str!("../../fixtures/markdown/international.md");
-const CODE_DOC: &str = "Write to [Nino](mailto:nino@kavkaz-freight.example).\n\n```\nhidden@kavkaz-freight.example\n```\n";
+const MARKDOWN_DOC: &str =
+    "# Pacific Cargo contacts\n\nMaya Johnson\nmaya@pacific-cargo.example\n(202) 555-0142\n";
+const CODE_DOC: &str = "Write to [Maya](mailto:maya@pacific-cargo.example).\n\n```\nhidden@pacific-cargo.example\n```\n";
 
 /// `detect` through the binding with `options` against native `detect` with `format`: the same
 /// entities, whose UTF-16 offsets slice the JavaScript string to their text.

@@ -2,7 +2,6 @@
 
 mod demo;
 mod document;
-mod figures;
 mod format;
 mod highlight;
 mod json;
@@ -19,9 +18,7 @@ use wasm_bindgen::{JsCast, JsValue};
 
 use crate::inference::Inference;
 use crate::samples::SAMPLES;
-use crate::stats;
 use demo::{Demo, DemoState, Failure};
-use figures::Figures;
 use parse::ParseBox;
 
 /// The worker's loader, `site/worker_loader.js`, which Trunk copies beside the worker binary.
@@ -35,12 +32,12 @@ const SOURCE_URL: &str = "https://github.com/theiskaa/tessera";
 const SNIPPET: &str = "import { createTessera } from './tessera/index.js'
 
 const tessera = await createTessera({ modelUrl, integrity })
-const found = await tessera.detect(text, { countryHint: ['GB'] })
+const found = await tessera.detect(text, { countryHint: ['US'] })
 // [{ kind: 'person' | 'org' | 'address' | 'email' | 'phone',
 //    text, start, end, confidence, source, ... }]
 // addresses also carry components: [{ label, text, start, end, confidence }]
 
-const address = await tessera.parseAddress('Flat 4, 221B Baker Street, London NW1 6XE')
+const address = await tessera.parseAddress('1200 Market Street, Philadelphia, PA 19107')
 // offsets are UTF-16 code units";
 
 /// The whole page. Spawns the worker and sends it the first document; the worker answers once
@@ -58,7 +55,6 @@ pub fn App() -> impl IntoView {
             <Intro />
             <Demo state=state />
             <ParseBox state=state />
-            <Figures />
             <Footer state=state />
         </main>
     }
@@ -130,9 +126,7 @@ fn Header() -> impl IntoView {
                 <span class="name">"tessera"</span>
                 <span class="meta">
                     {format!("v{}", env!("CARGO_PKG_VERSION"))}
-                    <span class="wide-only">
-                        {format!(" · {} gzip · on-device", format::bytes(stats::BUNDLE_GZIP))}
-                    </span>
+                    <span class="wide-only">" · on-device"</span>
                 </span>
             </div>
             <nav aria-label="Links">
@@ -153,6 +147,9 @@ fn Intro() -> impl IntoView {
             <pre class="code">{highlight::render(highlight::javascript(SNIPPET))}</pre>
             <p>
                 "Emails and phone numbers are found by validating rules, people, organizations and addresses by an int8 network, and each address is split into its parts by a second one, all in WebAssembly. Offsets are UTF-8 bytes from Rust and UTF-16 code units from JavaScript."
+            </p>
+            <p>
+                "US demo using the previous experimental model. A new US-only model and independent accuracy results are pending."
             </p>
         </section>
     }

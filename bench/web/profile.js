@@ -29,7 +29,7 @@ function simd() {
 async function profile() {
   await init();
   const tessera = Tessera.load(await fetched("/models/tessera-v1.safetensors", "bytes"));
-  const address = (await fetched("/fixtures/profile/address-gb.txt")).trimEnd();
+  const address = (await fetched("/fixtures/profile/address-us.txt")).trimEnd();
   const doc = await fetched("/fixtures/profile/document-10k.txt");
   const now = performance.now.bind(performance);
   const before = tessera.memoryBytes();
@@ -53,7 +53,7 @@ window.profileResult = profile().then(
   (result) => {
     document.getElementById("table").innerHTML =
       `<tr><th>input</th>${STAGES.map((k) => `<th>${k.replace("_ms", "")}</th>`).join("")}<th>p95 total</th></tr>` +
-      row("address-gb", result.address.median, result.address.p95_total) +
+      row("address-us", result.address.median, result.address.p95_total) +
       row("document-10k", result.document.median, result.document.p95_total);
     document.getElementById("json").textContent = JSON.stringify(result, null, 2);
     status.textContent = "done";

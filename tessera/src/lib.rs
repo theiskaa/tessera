@@ -61,7 +61,10 @@ pub mod internal {
         DETECTOR_KINDS, DetectedSpan, argmax, decode_detector, detector_label_strings,
         parser_label_strings,
     };
-    pub use crate::model::{DETECTOR_LABELS, FLAG_BITS, PARSER_LABELS, SCRIPT_ROWS, SHAPE_ROWS};
+    pub use crate::model::{
+        DECODER_CONTRACT, DETECTOR_LABELS, FLAG_BITS, PARSER_LABELS, SCRIPT_ROWS, SHAPE_ROWS,
+        TOKENIZER_CONTRACT,
+    };
     pub use crate::policy::{
         DETECT_MIN_ADDRESS, DETECT_MIN_ORG, DETECT_MIN_PERSON, display_confidence,
     };

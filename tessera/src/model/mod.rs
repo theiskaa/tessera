@@ -16,9 +16,13 @@ pub(crate) mod weights;
 
 /// Bundle layout version this library reads.
 pub(crate) const SUPPORTED_FORMAT: &str = "1";
-/// Model version series this library runs: under semver before 1.0 a minor bump is breaking,
-/// so bundles `0.2.*` load and `0.1.*` or `0.3.0` do not.
+/// Model version series this library runs: under semver before 1.0 a minor bump is breaking.
+/// Bundles in `0.2.*` also need compatible tokenizer and decoder contracts.
 pub(crate) const SUPPORTED_MODEL_SERIES: (u32, u32) = (0, 2);
+/// Token boundaries and token classes used by the shipped 0.2 models.
+pub const TOKENIZER_CONTRACT: &str = "tessera-tokenize-legacy-v1";
+/// Parser BIO and detector sequence decoding used by the shipped 0.2 models.
+pub const DECODER_CONTRACT: &str = "tessera-bio-legacy-v1";
 /// Width of the flag input: one entry per bit of `TokenFeatures::flags`. Bits 0 to 21 are the
 /// constants in `features::flag`; bit 22 is reserved for marking text hidden by Markdown syntax
 /// and is always 0 until Markdown input sets it, so bundles need no retraining then.

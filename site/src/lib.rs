@@ -7,4 +7,3 @@ pub mod protocol;
 pub mod ui;
 
 mod samples;
-mod stats;

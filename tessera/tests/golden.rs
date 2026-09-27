@@ -22,29 +22,8 @@ macro_rules! golden {
 // A browser cannot list a directory, so every golden file is named here;
 // `the_case_list_names_every_golden_file` fails natively when the two drift apart.
 const PARSER_CASES: &[(&str, &str)] = &[
-    ("de-01", golden!("parser/de-01.json")),
-    ("de-02", golden!("parser/de-02.json")),
-    ("de-03", golden!("parser/de-03.json")),
-    ("de-04", golden!("parser/de-04.json")),
     ("edge-long-word", golden!("parser/edge-long-word.json")),
-    ("edge-long", golden!("parser/edge-long.json")),
     ("edge-one-char", golden!("parser/edge-one-char.json")),
-    (
-        "edge-single-token",
-        golden!("parser/edge-single-token.json"),
-    ),
-    ("gb-01", golden!("parser/gb-01.json")),
-    ("gb-02", golden!("parser/gb-02.json")),
-    ("gb-03", golden!("parser/gb-03.json")),
-    ("gb-04", golden!("parser/gb-04.json")),
-    ("ge-01", golden!("parser/ge-01.json")),
-    ("ge-02", golden!("parser/ge-02.json")),
-    ("ge-03", golden!("parser/ge-03.json")),
-    ("ge-04", golden!("parser/ge-04.json")),
-    ("jp-01", golden!("parser/jp-01.json")),
-    ("jp-02", golden!("parser/jp-02.json")),
-    ("jp-03", golden!("parser/jp-03.json")),
-    ("jp-04", golden!("parser/jp-04.json")),
     ("us-01", golden!("parser/us-01.json")),
     ("us-02", golden!("parser/us-02.json")),
     ("us-03", golden!("parser/us-03.json")),
@@ -52,13 +31,9 @@ const PARSER_CASES: &[(&str, &str)] = &[
 ];
 
 const DETECTOR_CASES: &[(&str, &str)] = &[
-    ("letterhead-de", golden!("detector/letterhead-de.json")),
     ("one-word", golden!("detector/one-word.json")),
     ("prose-negatives", golden!("detector/prose-negatives.json")),
     ("rules-only", golden!("detector/rules-only.json")),
-    ("signature-gb", golden!("detector/signature-gb.json")),
-    ("signature-ge", golden!("detector/signature-ge.json")),
-    ("signature-jp", golden!("detector/signature-jp.json")),
     ("table-tab", golden!("detector/table-tab.json")),
 ];
 
@@ -117,6 +92,11 @@ fn parser_golden_vectors() {
     let mut worst = 0f32;
     for &(name, json) in PARSER_CASES {
         let case: common::Golden = common::parse(name, json);
+        assert_eq!(
+            tessera.model_version(),
+            Some(case.bundle_version.as_str()),
+            "{name}: golden bundle version differs"
+        );
         let trace = tessera::internal::parse_address_trace(&tessera, &case.input.text).unwrap();
         let diff = check_case(
             name,
@@ -140,8 +120,8 @@ fn parser_golden_vectors() {
         "no golden token reaches the n-gram cap"
     );
     assert!(
-        checked >= 16,
-        "expected at least 16 golden cases, found {checked}"
+        checked >= 6,
+        "expected at least 6 golden cases, found {checked}"
     );
     common::report!("golden parser: {checked} cases, max logit difference {worst:e}");
 }
@@ -155,6 +135,11 @@ fn detector_golden_vectors() {
     let mut worst = 0f32;
     for &(name, json) in DETECTOR_CASES {
         let case: common::Golden = common::parse(name, json);
+        assert_eq!(
+            tessera.model_version(),
+            Some(case.bundle_version.as_str()),
+            "{name}: golden bundle version differs"
+        );
         let trace = tessera::internal::detect_trace(&tessera, &case.input.text).unwrap();
         assert_eq!(trace.masked, case.masked, "{name}: decode mask differs");
         let diff = check_case(

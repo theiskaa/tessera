@@ -124,6 +124,9 @@ const PHONE_LABELS: &[&str] = &[
     "電話番号",
     "携帯",
     "携帯電話",
+    "ファックス番号",
+    "ファクス番号",
+    "fax番号",
 ];
 /// Words that label a number as something else: `ISBN 0-306-40615-2`, `routing 021000021`.
 const NOT_PHONE_LABELS: &[&str] = &[
@@ -928,6 +931,7 @@ fn labels_before(chars: &[(usize, char)], first_i: usize) -> [Label; 2] {
     let word_char = |c: char| c.is_alphabetic() || matches!(c, '°' | 'º' | '№');
     let mut out = [Label::Other; 2];
     let mut country_code = false;
+    let mut ge_number_marker_start = None;
     let mut j = first_i;
     for k in 0..out.len() {
         while j > 0
@@ -948,7 +952,21 @@ fn labels_before(chars: &[(usize, char)], first_i: usize) -> [Label; 2] {
         let word = &chars[j..end];
         let lower: String = word.iter().flat_map(|&(_, c)| c.to_lowercase()).collect();
         let dotted = chars.get(end).is_some_and(|&(_, c)| c == '.');
-        out[k] = label_of(&lower, dotted);
+        if k == 0 && lower == "ნომერი" {
+            ge_number_marker_start = Some(j);
+        }
+        out[k] = if k == 1
+            && lower == "საკონტაქტო"
+            && ge_number_marker_start.is_some_and(|marker_start| {
+                end < marker_start
+                    && chars[end..marker_start]
+                        .iter()
+                        .all(|&(_, c)| matches!(c, ' ' | '\u{A0}'))
+            }) {
+            Label::Phone
+        } else {
+            label_of(&lower, dotted)
+        };
         if k == 0 {
             country_code = out[0] == Label::Other
                 && word.len() == 2
@@ -1133,9 +1151,9 @@ fn service_entity(start: usize, end: usize, number: &str, region: &str) -> Entit
     }
 }
 
-/// Georgian hotlines, four digits from `1000` to `1899` (`ტელეფონი: 1403`), standing alone
-/// right after a phone label: not the first block of a longer number (`1403 55 55`,
-/// `1234 5678 9012 3456`), a decimal or an amount (`1403.5`, `1403,50`), or a year (`1998`).
+/// Georgian hotlines, four digits from `1000` to `1899` (`ტელეფონი: 1403`) after a phone
+/// label, or the three-digit `199` after the exact `ცხელი ხაზი` label. They must stand alone,
+/// not start a longer number (`1403 55 55`), decimal, amount, or year.
 fn short_hotlines(
     text: &str,
     chars: &[(usize, char)],
@@ -1146,13 +1164,14 @@ fn short_hotlines(
     }
     let mut out = Vec::new();
     for (i, &(at, c)) in chars.iter().enumerate() {
-        let end = at + 4;
+        let three = text.get(at..at + 3) == Some("199");
+        let end = at + if three { 3 } else { 4 };
         let four = c == '1'
             && text
-                .get(at..end)
+                .get(at..at + 4)
                 .is_some_and(|s| s.bytes().all(|b| b.is_ascii_digit()))
             && !text[at..].starts_with("19");
-        if !four {
+        if !four && !three {
             continue;
         }
         let glued = i > 0 && chars[i - 1].1.is_alphanumeric();
@@ -1160,11 +1179,26 @@ fn short_hotlines(
         let continued = after.starts_with(|d: char| d.is_alphanumeric())
             || (after.starts_with([' ', '-', '.', '/', ','])
                 && after[1..].starts_with(|d: char| d.is_ascii_digit()));
-        if !glued && !continued && labelled_as_phone(chars, i) {
+        let labelled = if three {
+            ge_hotline_label_before(text, at)
+        } else {
+            labelled_as_phone(chars, i)
+        };
+        if !glued && !continued && labelled {
             out.push((at, end));
         }
     }
     out
+}
+
+/// Accept `199` only on the `ცხელი ხაზი` line or the immediately following line.
+fn ge_hotline_label_before(text: &str, at: usize) -> bool {
+    let before = text[..at].trim_end_matches([' ', '\t', '\r']);
+    let label = before.strip_suffix('\n').unwrap_or(before);
+    matches!(
+        label.rsplit('\n').next().unwrap_or("").trim(),
+        "ცხელი ხაზი" | "ცხელი ხაზი:"
+    )
 }
 
 /// `found` with every `18001 <number>` read as one phone: the number after the prefix is
@@ -2262,6 +2296,29 @@ mod tests {
 
     #[cfg(feature = "phone-metadata")]
     #[test]
+    fn georgian_199_hotline_requires_its_exact_label_and_standalone_number() {
+        for text in ["ცხელი ხაზი\n199\n", "ცხელი ხაზი: 199", "ცხელი ხაზი\r\n199"]
+        {
+            assert_eq!(read(text, &["GE"]), vec![("199".into(), "199".into())]);
+            assert!(scan(text, &["GB"]).is_empty());
+        }
+        for text in [
+            "199",
+            "ტელეფონი: 199",
+            "ცხელი ხაზი\n\n199",
+            "არაცხელი ხაზი: 199",
+            "ცხელი ხაზი\n1998",
+            "ცხელი ხაზი: 199-555",
+            "ცხელი ხაზი: 199.5",
+            "ცხელი ხაზი: 199,50 ლარი",
+            "ცხელი ხაზი: 199 2024",
+        ] {
+            assert!(scan(text, &["GE"]).is_empty(), "{text}");
+        }
+    }
+
+    #[cfg(feature = "phone-metadata")]
+    #[test]
     fn japanese_dashes_separate_groups() {
         for text in [
             "直通電話：03−5253−5533",
@@ -2429,9 +2486,27 @@ mod tests {
             ("00 49 30 1234567", &["DE"]),
             ("030 / 1234567", &["DE"]),
             ("電話番号 03-1234-5678", &["JP"]),
+            ("ファックス番号：042-544-5121", &["JP"]),
+            ("ファクス番号：042-544-5121", &["JP"]),
+            ("FAX番号：042-544-5121", &["JP"]),
         ];
         for (text, hints) in cases {
             assert!(!scan(text, hints).is_empty(), "{text} with {hints:?}");
+        }
+    }
+
+    #[cfg(feature = "phone-metadata")]
+    #[test]
+    fn japanese_fax_number_label_keeps_office_fax_and_rejects_ids() {
+        let text = "電話番号：042-544-5111（内線番号：2362）\nファックス番号：042-544-5121";
+        let found: Vec<_> = scan(text, &["JP"])
+            .iter()
+            .map(|entity| &text[entity.start..entity.end])
+            .collect();
+        assert_eq!(found, ["042-544-5111", "042-544-5121"]);
+        for label in ["受付番号", "請求番号", "整理番号", "注文番号"] {
+            let text = format!("{label}：042-544-5121");
+            assert!(scan(&text, &["JP"]).is_empty(), "{text}");
         }
     }
 
@@ -2960,6 +3035,42 @@ mod tests {
         assert_eq!(scan("Account fax 020 7946 0321", &["GB"]).len(), 1);
         assert_eq!(scan("Hotline: 020 7946 0321", &["GB"]).len(), 1);
         assert_eq!(scan("Tel. no. 020 7946 0321", &["GB"]).len(), 1);
+    }
+
+    #[cfg(feature = "phone-metadata")]
+    #[test]
+    fn ge_contact_number_marker_does_not_open_other_number_labels() {
+        let text = "საკონტაქტო ნომერი: 555 50 51 58";
+        let found = scan(text, &["GE"]);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].text(text), "555 50 51 58");
+        assert_eq!(found[0].normalized.as_deref(), Some("+995555505158"));
+        assert_eq!(
+            (found[0].start, found[0].end),
+            (text.len() - 12, text.len())
+        );
+        assert!(scan(text, &[]).is_empty());
+
+        for text in [
+            "საკონტაქტო კოდი: 555 50 51 58",
+            "საქმის ნომერი: 555 50 51 58",
+            "ანგარიშის ნომერი: 555 50 51 58",
+            "ნომერი: 555 50 51 58",
+            "საკონტაქტო. ნომერი: 555 50 51 58",
+            "საკონტაქტო: ნომერი: 555 50 51 58",
+            "საკონტაქტო/ნომერი: 555 50 51 58",
+        ] {
+            assert!(scan(text, &["GE"]).is_empty(), "{text}");
+        }
+        assert_eq!(
+            scan("საკონტაქტო\u{A0}ნომერი: 555 50 51 58", &["GE"]).len(),
+            1
+        );
+        assert_eq!(scan("ტელ ნომერი: 555 50 51 58", &["GE"]).len(), 1);
+        assert_eq!(
+            scan("საკონტაქტო ნომერი: +995 555 50 51 58", &["GE"]).len(),
+            1
+        );
     }
 
     #[test]

@@ -21,7 +21,7 @@ fn load(bytes: &[u8], checksum: Option<&str>) -> Result<Tessera, Error> {
 #[test]
 fn committed_bundle_loads() {
     let t = load(common::BUNDLE, Some(common::bundle_checksum())).unwrap();
-    assert!(t.model_version().is_some_and(|v| v.starts_with("0.2.")));
+    assert_eq!(t.model_version(), Some("0.2.0"));
 }
 
 #[test]
@@ -93,10 +93,90 @@ fn with_model_version(version: &str) -> Vec<u8> {
     })
 }
 
+fn with_metadata(edit: impl FnOnce(&mut serde_json::Map<String, serde_json::Value>)) -> Vec<u8> {
+    let bytes = common::BUNDLE;
+    let n = u64::from_le_bytes(bytes[..8].try_into().unwrap()) as usize;
+    let mut header: serde_json::Value = serde_json::from_slice(&bytes[8..8 + n]).unwrap();
+    edit(header["__metadata__"].as_object_mut().unwrap());
+    let header = serde_json::to_vec(&header).unwrap();
+    let mut out = (header.len() as u64).to_le_bytes().to_vec();
+    out.extend_from_slice(&header);
+    out.extend_from_slice(&bytes[8 + n..]);
+    out
+}
+
+#[test]
+fn explicit_legacy_contracts_load_with_the_next_patch_version() {
+    let bytes = with_metadata(|m| {
+        m.insert("model_version".into(), "0.2.1".into());
+        m.insert(
+            "tokenizer_contract".into(),
+            "tessera-tokenize-legacy-v1".into(),
+        );
+        m.insert("decoder_contract".into(), "tessera-bio-legacy-v1".into());
+    });
+    let t = load(&bytes, None).unwrap();
+    assert_eq!(t.model_version(), Some("0.2.1"));
+    let legacy = load(common::BUNDLE, None).unwrap();
+    let text = "14 Wharf Road, Leeds LS1 4AP";
+    assert_eq!(
+        t.parse_address(text, &tessera::Query::default()).unwrap(),
+        legacy
+            .parse_address(text, &tessera::Query::default())
+            .unwrap()
+    );
+}
+
+#[test]
+fn incompatible_or_partial_contracts_fail_before_network_loading() {
+    let tagged = |tokenizer: Option<&str>, decoder: Option<&str>| {
+        with_metadata(|m| {
+            m.insert("model_version".into(), "0.2.1".into());
+            if let Some(id) = tokenizer {
+                m.insert("tokenizer_contract".into(), id.into());
+            }
+            if let Some(id) = decoder {
+                m.insert("decoder_contract".into(), id.into());
+            }
+        })
+    };
+    for bytes in [
+        tagged(Some("future-tokenizer"), Some("tessera-bio-legacy-v1")),
+        tagged(Some("tessera-tokenize-legacy-v1"), Some("future-decoder")),
+    ] {
+        assert_eq!(load(&bytes, None).unwrap_err(), Error::UnsupportedVersion);
+    }
+    for bytes in [
+        tagged(Some("tessera-tokenize-legacy-v1"), None),
+        tagged(None, Some("tessera-bio-legacy-v1")),
+    ] {
+        assert_eq!(load(&bytes, None).unwrap_err(), Error::BundleInvalid);
+    }
+    assert_eq!(
+        load(&tagged(None, None), None).unwrap_err(),
+        Error::UnsupportedVersion
+    );
+    let malformed = with_metadata(|m| {
+        m.insert("model_version".into(), "0.2.1".into());
+        m.insert("tokenizer_contract".into(), serde_json::Value::Null);
+        m.insert("decoder_contract".into(), "tessera-bio-legacy-v1".into());
+    });
+    assert_eq!(load(&malformed, None).unwrap_err(), Error::BundleInvalid);
+    let legacy_with_wrong_id = with_metadata(|m| {
+        m.insert("tokenizer_contract".into(), "future-tokenizer".into());
+        m.insert("decoder_contract".into(), "tessera-bio-legacy-v1".into());
+    });
+    assert_eq!(
+        load(&legacy_with_wrong_id, None).unwrap_err(),
+        Error::UnsupportedVersion
+    );
+}
+
 #[test]
 fn the_series_is_read_before_the_rest_of_the_version() {
     let result = |v: &str| load(&with_model_version(v), None).map(|_| ());
-    assert_eq!(result("0.2.7"), Ok(()));
+    assert_eq!(result("0.2.0"), Ok(()));
+    assert_eq!(result("0.2.7"), Err(Error::UnsupportedVersion));
     assert_eq!(result("0.3.0-rc1"), Err(Error::UnsupportedVersion));
     assert_eq!(result("0.1.9"), Err(Error::UnsupportedVersion));
     assert_eq!(result("1.0"), Err(Error::UnsupportedVersion));

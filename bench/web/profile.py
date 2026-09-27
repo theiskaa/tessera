@@ -38,7 +38,7 @@ def run(name, url):
 
 def table(result):
     rows = ["| input | tokenize | featurize | rules | detect | parse | group | total | p95 total |", "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"]
-    for name, key in [("address-gb", "address"), ("document-10k", "document")]:
+    for name, key in [("address-us", "address"), ("document-10k", "document")]:
         m = result[key]["median"]
         cells = " | ".join(f"{m[s]:.3f}" for s in STAGES)
         rows.append(f"| {name} | {cells} | {result[key]['p95_total']:.3f} |")

@@ -34,10 +34,8 @@ const DEBOUNCE: Duration = Duration::from_millis(300);
 /// The hint that sends none, so the library reads the region from the document itself.
 pub(crate) const AUTO: &str = "auto";
 
-/// `AUTO`, then the regions the phone tables cover, offered as the country hint.
-pub(crate) const HINTS: [&str; 12] = [
-    AUTO, "GB", "DE", "US", "GE", "JP", "AT", "BE", "CH", "IE", "NL", "CA",
-];
+/// Automatic US inference or an explicit US phone hint.
+pub(crate) const HINTS: [&str; 2] = [AUTO, "US"];
 
 /// What the library returned for one text, kept with that text so the output never mixes a
 /// result with a newer edit.

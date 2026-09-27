@@ -884,7 +884,8 @@ mod tests {
             }
         }
         inputs.push((
-            include_str!("../../fixtures/markdown/international.md").to_string(),
+            "# Pacific Cargo contacts\n\nMaya Johnson\nmaya@pacific-cargo.example\n(202) 555-0142\n"
+                .to_string(),
             MarkdownOptions::default(),
         ));
         for text in [

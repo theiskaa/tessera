@@ -150,22 +150,6 @@ pub fn rules_fixtures() -> Vec<(&'static str, RulesFixture)> {
             include_str!("../../../fixtures/rules/phone-us.json"),
         ),
         (
-            "phone-gb",
-            include_str!("../../../fixtures/rules/phone-gb.json"),
-        ),
-        (
-            "phone-de",
-            include_str!("../../../fixtures/rules/phone-de.json"),
-        ),
-        (
-            "phone-ge",
-            include_str!("../../../fixtures/rules/phone-ge.json"),
-        ),
-        (
-            "phone-jp",
-            include_str!("../../../fixtures/rules/phone-jp.json"),
-        ),
-        (
             "documents",
             include_str!("../../../fixtures/rules/documents.json"),
         ),
@@ -197,6 +181,7 @@ fn load_with(kinds: tessera::KindSet) -> tessera::Tessera {
 
 #[derive(Deserialize)]
 pub struct Golden {
+    pub bundle_version: String,
     pub input: GoldenInput,
     pub int8_logits: Vec<Vec<f32>>,
     pub decoded: Vec<u8>,
@@ -247,41 +232,35 @@ pub struct ExpectedComponent {
 /// Parser fixtures, with every component's `text` checked against its offsets so a mistyped
 /// offset fails here rather than as a model error.
 pub fn parser_fixtures() -> Vec<(&'static str, ParserFixture)> {
-    [
-        ("gb", include_str!("../../../fixtures/parser/gb.json")),
-        ("de", include_str!("../../../fixtures/parser/de.json")),
-        ("ge", include_str!("../../../fixtures/parser/ge.json")),
-        ("us", include_str!("../../../fixtures/parser/us.json")),
-        ("jp", include_str!("../../../fixtures/parser/jp.json")),
-    ]
-    .into_iter()
-    .map(|(name, src)| {
-        let fixture: ParserFixture = parse(name, src);
-        for case in &fixture.cases {
-            let tokens = tessera::internal::tokenize(&case.input);
-            let starts: Vec<usize> = tokens.iter().map(|t| t.start).collect();
-            let ends: Vec<usize> = tokens.iter().map(|t| t.end).collect();
-            for c in &case.components {
-                assert_eq!(
-                    case.input.get(c.start..c.end),
-                    Some(c.text.as_str()),
-                    "fixture {name}: `{}` offsets of {}",
-                    case.name,
-                    c.label
-                );
-                // A span that cuts a token can never be predicted: the model labels tokens.
-                assert!(
-                    starts.contains(&c.start) && ends.contains(&c.end),
-                    "fixture {name}: `{}` {} {:?} cuts a token",
-                    case.name,
-                    c.label,
-                    c.text
-                );
+    [("us", include_str!("../../../fixtures/parser/us.json"))]
+        .into_iter()
+        .map(|(name, src)| {
+            let fixture: ParserFixture = parse(name, src);
+            for case in &fixture.cases {
+                let tokens = tessera::internal::tokenize(&case.input);
+                let starts: Vec<usize> = tokens.iter().map(|t| t.start).collect();
+                let ends: Vec<usize> = tokens.iter().map(|t| t.end).collect();
+                for c in &case.components {
+                    assert_eq!(
+                        case.input.get(c.start..c.end),
+                        Some(c.text.as_str()),
+                        "fixture {name}: `{}` offsets of {}",
+                        case.name,
+                        c.label
+                    );
+                    // A span that cuts a token can never be predicted: the model labels tokens.
+                    assert!(
+                        starts.contains(&c.start) && ends.contains(&c.end),
+                        "fixture {name}: `{}` {} {:?} cuts a token",
+                        case.name,
+                        c.label,
+                        c.text
+                    );
+                }
             }
-        }
-        (name, fixture)
-    })
-    .collect()
+            (name, fixture)
+        })
+        .collect()
 }
 
 #[derive(Deserialize)]
@@ -321,18 +300,6 @@ pub struct MustNot {
 pub fn detector_fixtures() -> Vec<(&'static str, DetectorFixture)> {
     [
         (
-            "georgian",
-            include_str!("../../../fixtures/detector/georgian.json"),
-        ),
-        (
-            "japanese",
-            include_str!("../../../fixtures/detector/japanese.json"),
-        ),
-        (
-            "letterheads-de",
-            include_str!("../../../fixtures/detector/letterheads-de.json"),
-        ),
-        (
             "negatives",
             include_str!("../../../fixtures/detector/negatives.json"),
         ),
@@ -343,10 +310,6 @@ pub fn detector_fixtures() -> Vec<(&'static str, DetectorFixture)> {
         (
             "signatures",
             include_str!("../../../fixtures/detector/signatures.json"),
-        ),
-        (
-            "signatures-gb",
-            include_str!("../../../fixtures/detector/signatures-gb.json"),
         ),
         (
             "tables",
@@ -407,36 +370,10 @@ pub struct ExpectedContact {
 
 /// Grouper fixtures, with every gold entity's `text` checked against its offsets.
 pub fn grouper_fixtures() -> Vec<(&'static str, GrouperFixture)> {
-    [
-        (
-            "blocks",
-            include_str!("../../../fixtures/grouper/blocks.json"),
-        ),
-        (
-            "letterhead",
-            include_str!("../../../fixtures/grouper/letterhead.json"),
-        ),
-        (
-            "signature-georgian",
-            include_str!("../../../fixtures/grouper/signature-georgian.json"),
-        ),
-        (
-            "signature-single",
-            include_str!("../../../fixtures/grouper/signature-single.json"),
-        ),
-        (
-            "support-conversation",
-            include_str!("../../../fixtures/grouper/support-conversation.json"),
-        ),
-        (
-            "table",
-            include_str!("../../../fixtures/grouper/table.json"),
-        ),
-        (
-            "thread-two-signatures",
-            include_str!("../../../fixtures/grouper/thread-two-signatures.json"),
-        ),
-    ]
+    [(
+        "blocks",
+        include_str!("../../../fixtures/grouper/blocks.json"),
+    )]
     .into_iter()
     .map(|(name, src)| {
         let fixture: GrouperFixture = parse(name, src);

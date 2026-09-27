@@ -13,15 +13,8 @@ use crate::protocol::{Found, Request};
 /// Quiet time after the last keystroke before the address is parsed.
 const DEBOUNCE: Duration = Duration::from_millis(250);
 
-/// One example per country the parser was trained on. Where a real place is named, it is a
-/// public landmark; the rest are the stock example addresses of their countries.
-const EXAMPLES: [(&str, &str); 5] = [
-    ("GB", "Flat 4, 221B Baker Street, London NW1 6XE"),
-    ("DE", "Musterstraße 12, 10115 Berlin"),
-    ("US", "742 Evergreen Terrace, Springfield, OR 97477, USA"),
-    ("GE", "14 Rustaveli Avenue, Tbilisi 0108, Georgia"),
-    ("JP", "〒530-0001 大阪府大阪市北区梅田3丁目1-1"),
-];
+/// US address used in the parser demo.
+const EXAMPLES: [(&str, &str); 1] = [("US", "742 Evergreen Terrace, Springfield, OR 97477, USA")];
 
 /// The parser's answer for one input, kept with that input.
 #[derive(Debug, Clone, PartialEq)]

@@ -1037,8 +1037,11 @@ mod tests {
                 );
                 println!(
                     "BOUNDARY_V1_AUDIT {name} {variant} docs={total_docs} gold={total_gold} changed_docs={} added_tokens={} max_added_tokens_in_doc={} newly_boundary_reachable={} lost_boundary_reachable={} gold_with_new_internal_boundaries={}",
-                    changed_docs[i], added_tokens[i], max_added_tokens_in_doc[i],
-                    newly_boundary_reachable[i], lost_boundary_reachable[i],
+                    changed_docs[i],
+                    added_tokens[i],
+                    max_added_tokens_in_doc[i],
+                    newly_boundary_reachable[i],
+                    lost_boundary_reachable[i],
                     gold_with_new_internal_boundaries[i]
                 );
             }

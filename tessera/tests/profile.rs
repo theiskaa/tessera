@@ -11,7 +11,7 @@ use tessera::Query;
 use tessera::profile::{StageTimings, extract_timed, parse_timed};
 
 const DOCUMENT: &str = include_str!("../../fixtures/profile/document-10k.txt");
-const ADDRESS: &str = include_str!("../../fixtures/profile/address-gb.txt");
+const ADDRESS: &str = include_str!("../../fixtures/profile/address-us.txt");
 
 fn clock() -> impl Fn() -> f64 + 'static {
     let origin = Instant::now();

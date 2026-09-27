@@ -100,6 +100,7 @@ impl<'a> Bundle<'a> {
         let data = bytes.get(header_end..).ok_or(Error::BundleInvalid)?;
         let meta = json.get("__metadata__").ok_or(Error::BundleInvalid)?;
         check_version(meta)?;
+        check_contracts(meta)?;
         let manifest = Manifest::from_json(meta)?;
         manifest.check_supported()?;
         let entries = entries(&json, data.len())?;
@@ -262,6 +263,25 @@ fn check_version(meta: &Json) -> Result<(), Error> {
     }
     match parts[..] {
         [_, _, patch] if plain(patch) => Ok(()),
+        _ => Err(Error::BundleInvalid),
+    }
+}
+
+fn check_contracts(meta: &Json) -> Result<(), Error> {
+    let tokenizer = meta.get("tokenizer_contract");
+    let decoder = meta.get("decoder_contract");
+    match (tokenizer, decoder) {
+        (None, None) if text(meta, "model_version")? == "0.2.0" => Ok(()),
+        (None, None) => Err(Error::UnsupportedVersion),
+        (Some(tokenizer), Some(decoder)) => {
+            let tokenizer = tokenizer.as_str().ok_or(Error::BundleInvalid)?;
+            let decoder = decoder.as_str().ok_or(Error::BundleInvalid)?;
+            if tokenizer == super::TOKENIZER_CONTRACT && decoder == super::DECODER_CONTRACT {
+                Ok(())
+            } else {
+                Err(Error::UnsupportedVersion)
+            }
+        }
         _ => Err(Error::BundleInvalid),
     }
 }
