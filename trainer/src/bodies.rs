@@ -1109,24 +1109,14 @@ impl Bodies {
         }
     }
 
-    /// A Japanese or Georgian body and its units written as one name on one line, which gold
-    /// labels as one org: `総務省 総合通信基盤局 電波部 移動通信課`, `თბილისის მერიის
-    /// ტრანსპორტის საქალაქო სამსახური`. English and German chains are one org per unit, so
-    /// elsewhere this is a single unit.
+    /// A body name used in a Japanese or Georgian contact line. Japanese contact names use
+    /// a listed native body alone until source-backed unit chains are available. Georgian names
+    /// keep their inflected unit form. English and German contact lines use a single unit.
     pub fn chain(&self, rng: &mut ChaCha8Rng) -> String {
         let native: Vec<&Body> = self.own.iter().filter(|b| native_script(&b.name)).collect();
         let body = native.choose(rng).map(|b| b.name.clone());
         match (self.country, body) {
-            ("JP", Some(body)) => {
-                let sep = if rng.random_bool(0.5) { " " } else { "" };
-                let mut parts = vec![body];
-                for _ in 0..rng.random_range(1..=3) {
-                    let topic = pick_str(JP_TOPICS, rng);
-                    let unit = pick_str(&["局", "部", "課", "室", "班", "係"], rng);
-                    parts.push(format!("{topic}{unit}"));
-                }
-                parts.join(sep)
-            }
+            ("JP", Some(body)) => body,
             ("GE", Some(body)) => {
                 let (genitive, _) =
                     crate::inflect::apply(&body, crate::inflect::Form::Gen, false, rng);
@@ -1291,6 +1281,24 @@ mod tests {
                     assert!(!b.body(false, &mut rng).name.is_empty());
                     assert!(!b.unit(&mut rng).is_empty());
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn jp_contact_org_uses_a_listed_native_body() {
+        let mut rng = ChaCha8Rng::seed_from_u64(42);
+        for split in [Split::Train, Split::Valid, Split::Test] {
+            let bodies = Bodies::new("JP", split);
+            let native: Vec<&str> = bodies
+                .own
+                .iter()
+                .filter(|body| native_script(&body.name))
+                .map(|body| body.name.as_str())
+                .collect();
+            assert!(!native.is_empty());
+            for _ in 0..200 {
+                assert!(native.contains(&bodies.chain(&mut rng).as_str()));
             }
         }
     }

@@ -2351,6 +2351,39 @@ mod tests {
     }
 
     #[test]
+    fn jp_contact_templates_do_not_label_random_units() {
+        let all = templates::all().unwrap();
+        let mut pools = stub_pools(&[("山田太郎", "han")]);
+        pools.bodies = Bodies::new("JP", Split::Train);
+        for id in [60, 63, 69] {
+            let template = all.iter().find(|template| template.id == id).unwrap();
+            let marker = if id == 63 { "連絡先" } else { "問合せ先" };
+            for seed in 0..30 {
+                let mut ctx = Ctx::new("JP", &pools);
+                ctx.plain = true;
+                let mut rng = ChaCha8Rng::seed_from_u64(seed);
+                let doc = render(template, &mut ctx, &mut rng).unwrap();
+                let after_marker = doc.text.find(marker).unwrap() + marker.len();
+                let contact_org = doc
+                    .entities
+                    .iter()
+                    .filter(|entity| entity.kind == "org" && entity.start >= after_marker)
+                    .min_by_key(|entity| entity.start)
+                    .unwrap();
+                let surface = &doc.text[contact_org.start..contact_org.end];
+                assert!(!surface.is_empty(), "template {id}, seed {seed}");
+                assert!(
+                    !["局", "部", "課", "室", "班", "係"]
+                        .iter()
+                        .any(|suffix| surface.ends_with(suffix)),
+                    "template {id}, seed {seed}: {surface}"
+                );
+                assert_eq!(check(&doc, 900), Ok(()));
+            }
+        }
+    }
+
+    #[test]
     fn every_template_renders_for_every_country() {
         let pools = stub_pools(&[("Nino Beridze", "latin"), ("山田太郎", "han")]);
         let all = templates::all().unwrap();
