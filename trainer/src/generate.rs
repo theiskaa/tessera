@@ -367,22 +367,19 @@ pub struct PoolOrg {
     pub legal_form: String,
 }
 
-/// An address from the parser shards, with one-line and multi-line renderings.
+/// An unaugmented address from the parser shards, with one-line and multi-line renderings.
 #[derive(Debug, Clone)]
 pub struct PoolAddress {
     pub text: String,
-    /// The one-line layout Georgian public bodies print, when the row has a city, a street,
-    /// and a number: `ქ. ქუთაისი, წერეთლის ქ. №15, III კორპუსი, ოთახი №206`.
-    pub official: Option<String>,
 }
 
 impl PoolAddress {
     fn from_example(e: &LabelledExample) -> PoolAddress {
-        let mut text = pool_filter::with_local_country(e, &pool_filter::without_venue_lines(e));
+        let text = pool_filter::with_local_country(e, &pool_filter::without_venue_lines(e));
         // Japanese documents write the postal mark before the postcode and outside the address,
         // and no country name in front.
-        if e.country == "JP" {
-            text = text.replace('〒', "").trim().to_string();
+        let text = if e.country == "JP" {
+            let mut text = text.replace('〒', "").trim().to_string();
             for country in ["日本国", "日本", "Japan"] {
                 // Only the country itself: `日本橋` and `日本平` are places.
                 if let Some(rest) = text.strip_prefix(country)
@@ -395,18 +392,11 @@ impl PoolAddress {
                         .to_string();
                 }
             }
-        }
-        let official = if e.country == "GE" {
-            let mut rng = ChaCha8Rng::seed_from_u64(e.id);
-            let mut p = crate::data::decompose(&e.text, &e.spans);
-            crate::data::augment::official_format_ge("GE", &mut p, &mut rng).then(|| {
-                crate::data::augment::floor_room_ge("GE", &mut p, &mut rng);
-                crate::data::render_pieces(&p).0
-            })
+            text
         } else {
-            None
+            text
         };
-        PoolAddress { text, official }
+        PoolAddress { text }
     }
 
     fn multiline(&self) -> bool {
@@ -595,16 +585,8 @@ impl<'a> Ctx<'a> {
             Slot::OrgMedia => Filled::plain(self.pools.bodies.media(rng)),
             Slot::OrgParty => Filled::plain(self.pools.bodies.party(rng)),
             Slot::Address => {
-                let pooled = self.address(false, rng)?;
-                match &pooled.official {
-                    Some(official) if !self.plain && rng.random_bool(0.4) => {
-                        Filled::plain(official.clone())
-                    }
-                    _ => {
-                        let a = pooled.one_line();
-                        Filled::plain(self.shaped(a, ", ", rng))
-                    }
-                }
+                let a = self.address(false, rng)?.one_line();
+                Filled::plain(self.shaped(a, ", ", rng))
             }
             Slot::AddressMultiline => {
                 let a = self.address(true, rng)?.text.clone();
@@ -824,34 +806,20 @@ impl<'a> Ctx<'a> {
         acronym
     }
 
-    /// `address` shaped as the country's documents write it. Gold includes a room, suite, mail
-    /// stop, or building line directly before the street, which a quarter of British and
-    /// American addresses carry; American federal addresses are often Washington quadrant
-    /// addresses with ZIP+4; German ones rarely end in a country line, often abbreviate
-    /// `Straße`, and give house-number ranges.
+    /// Keep each parser address tied to its source location. Only change presentation:
+    /// a final country line, a common street abbreviation, or Japanese postcode layout.
     fn shaped(&self, address: String, sep: &str, rng: &mut ChaCha8Rng) -> String {
         if self.plain {
             return address;
         }
         let mut address = address;
         match self.country {
-            "US" => {
-                if rng.random_bool(0.12) {
-                    address = washington(sep, rng);
-                }
-                if rng.random_bool(0.2) {
-                    address = with_zip4(&address, rng);
-                }
-            }
             "DE" => {
                 if rng.random_bool(0.8) {
                     address = without_last_line(&address, &["Deutschland", "Germany"], sep);
                 }
                 if rng.random_bool(0.2) {
                     address = address.replace("straße", "str.").replace("Straße", "Str.");
-                }
-                if rng.random_bool(0.1) {
-                    address = with_number_range(&address, rng);
                 }
             }
             // Office pages print the postcode on a line of its own above the rest.
@@ -864,35 +832,7 @@ impl<'a> Ctx<'a> {
             }
             _ => {}
         }
-        let rate = match self.country {
-            "US" | "GB" => 0.25,
-            "DE" => 0.1,
-            _ => 0.0,
-        };
-        if !rng.random_bool(rate) {
-            return address;
-        }
-        let n = rng.random_range(2..=950);
-        let room = match self.country {
-            "US" | "GB" => match rng.random_range(0..7) {
-                0 => format!("Suite {n}"),
-                1 => format!("Room {}{}", n, ["", "A", "B"][rng.random_range(0..3)]),
-                2 => format!("Mail Stop {}", rng.random_range(1000..9999)),
-                3 => format!("Floor {}", rng.random_range(2..=30)),
-                4 => format!("Unit {}, {}", rng.random_range(1..=40), building_name(rng)),
-                _ => building_name(rng),
-            },
-            _ => match rng.random_range(0..3) {
-                0 => format!(
-                    "Raum {}.{}",
-                    rng.random_range(0..6),
-                    rng.random_range(1..40)
-                ),
-                1 => format!("Gebäude {}", ["A", "B", "C", "D"][rng.random_range(0..4)]),
-                _ => format!("{}. OG", rng.random_range(1..=6)),
-            },
-        };
-        format!("{room}{sep}{address}")
+        address
     }
 
     /// A random org, 30% of all-caps names title-cased and 20% with a trailing legal form
@@ -1043,141 +983,12 @@ const GLUED_ROLES: &[&str] = &[
     "-Adviser",
 ];
 
-/// A building or site line: `Marine House`, `The Law Courts`, `Riverside Campus`.
-fn building_name(rng: &mut ChaCha8Rng) -> String {
-    if rng.random_bool(0.3) {
-        return pick(templates::BUILDINGS, rng).to_string();
-    }
-    let name = pick(
-        &[
-            "Anchor",
-            "Crown",
-            "Victoria",
-            "Riverside",
-            "Harbour",
-            "Albion",
-            "Kingsway",
-            "Wellington",
-            "Beaumont",
-            "Castle",
-            "Priory",
-            "Bridgewater",
-            "Lancaster",
-            "Endeavour",
-            "Mercury",
-        ],
-        rng,
-    );
-    let kind = pick(
-        &[
-            "House",
-            "Court",
-            "Building",
-            "Centre",
-            "Campus",
-            "Hall",
-            "Lodge",
-            "Plaza",
-            "Tower",
-            "Chambers",
-            "Business Park",
-            "Justice Centre",
-        ],
-        rng,
-    );
-    format!("{name} {kind}")
-}
-
-/// A federal address in Washington: `1200 New Jersey Avenue SE, West Building, Room
-/// W12-140, Washington, DC 20590-0001`.
-fn washington(sep: &str, rng: &mut ChaCha8Rng) -> String {
-    let avenue = pick(
-        &[
-            "New Jersey Avenue",
-            "Pennsylvania Avenue",
-            "Constitution Avenue",
-            "Independence Avenue",
-            "Massachusetts Avenue",
-            "Maryland Avenue",
-            "Virginia Avenue",
-            "Delaware Avenue",
-        ],
-        rng,
-    );
-    let quadrant = pick(&["NW", "SE", "SW", "NE"], rng);
-    let number = rng.random_range(1..=2500);
-    let street = format!("{number} {avenue} {quadrant}");
-    let zip = rng.random_range(20001..=20599);
-    let mut lines = vec![street];
-    if rng.random_bool(0.5) {
-        lines.push(format!(
-            "{}, Room {}{}-{}",
-            pick(
-                &["West Building", "East Building", "Main Building", "Annex"],
-                rng
-            ),
-            pick(&["W", "E", ""], rng),
-            rng.random_range(1..=12),
-            rng.random_range(100..=499)
-        ));
-    }
-    lines.push(format!("Washington, DC {zip}"));
-    lines.join(sep)
-}
-
-/// `address` with a ZIP+4 in place of its five-digit ZIP.
-fn with_zip4(address: &str, rng: &mut ChaCha8Rng) -> String {
-    let bytes = address.as_bytes();
-    let zip = (0..bytes.len().saturating_sub(4)).rev().find(|&i| {
-        bytes[i..i + 5].iter().all(u8::is_ascii_digit)
-            && (i == 0 || !bytes[i - 1].is_ascii_digit())
-            && bytes.get(i + 5).is_none_or(|b| !b.is_ascii_digit())
-            && !(bytes.get(i + 5) == Some(&b'-')
-                && bytes.get(i + 6).is_some_and(u8::is_ascii_digit))
-    });
-    match zip {
-        Some(i) => format!(
-            "{}-{:04}{}",
-            &address[..i + 5],
-            rng.random_range(1..=9999),
-            &address[i + 5..]
-        ),
-        None => address.to_string(),
-    }
-}
-
 /// `address` without a last line (or last comma-separated part) that is one of `names`.
 fn without_last_line(address: &str, names: &[&str], sep: &str) -> String {
     match address.rsplit_once(sep) {
         Some((head, last)) if names.contains(&last.trim()) => head.to_string(),
         _ => address.to_string(),
     }
-}
-
-/// `address` with its first house number turned into a range: `Heidestraße 26–28`.
-fn with_number_range(address: &str, rng: &mut ChaCha8Rng) -> String {
-    let bytes = address.as_bytes();
-    let Some(start) = (1..bytes.len()).find(|&i| bytes[i].is_ascii_digit() && bytes[i - 1] == b' ')
-    else {
-        return address.to_string();
-    };
-    let end = (start..bytes.len())
-        .find(|&i| !bytes[i].is_ascii_digit())
-        .unwrap_or(bytes.len());
-    // Five digits are a postcode and a following '.' makes an ordinal or a date, not a number.
-    if end - start >= 5 || bytes.get(end) == Some(&b'.') {
-        return address.to_string();
-    }
-    let Ok(n) = address[start..end].parse::<u32>() else {
-        return address.to_string();
-    };
-    let dash = pick(&["–", "-", " – "], rng);
-    format!(
-        "{}{dash}{}{}",
-        &address[..end],
-        n + rng.random_range(1..=4),
-        &address[end..]
-    )
 }
 
 /// The family name alone: the last word of a Latin or Georgian name, the first word of a
@@ -2174,11 +1985,9 @@ mod tests {
             addresses: vec![
                 PoolAddress {
                     text: "12 Rustaveli Avenue\n0108 Tbilisi\nGeorgia".into(),
-                    official: None,
                 },
                 PoolAddress {
                     text: "4 Misty Wood Circle".into(),
-                    official: None,
                 },
             ],
             borrowed_orgs: 0,
@@ -2251,9 +2060,51 @@ mod tests {
     fn single_line_addresses_join_lines_with_commas() {
         let a = PoolAddress {
             text: "12 Rustaveli Avenue\n0108 Tbilisi\nGeorgia".into(),
-            official: None,
         };
         assert_eq!(a.one_line(), "12 Rustaveli Avenue, 0108 Tbilisi, Georgia");
+    }
+
+    #[test]
+    fn ge_address_slot_keeps_the_source_road_and_house_number() {
+        use tessera::AddressLabel;
+
+        let source = "ქუთაისი, წერეთლის ქ. 15";
+        let component = |label: AddressLabel, value: &str| {
+            let start = source.find(value).unwrap();
+            crate::data::Span {
+                label,
+                start: start as u32,
+                end: (start + value.len()) as u32,
+            }
+        };
+        let example = LabelledExample {
+            id: 7,
+            group_id: 7,
+            country: "GE".into(),
+            language: "ka".into(),
+            text: source.into(),
+            spans: vec![
+                component(AddressLabel::City, "ქუთაისი"),
+                component(AddressLabel::Road, "წერეთლის ქ."),
+                component(AddressLabel::HouseNumber, "15"),
+            ],
+            split: Split::Train,
+            augmented: false,
+        };
+        let mut pools = stub_pools(&[("Nino Beridze", "latin")]);
+        pools.addresses = vec![PoolAddress::from_example(&example)];
+        assert_eq!(pools.addresses[0].text, source);
+        for seed in 0..500 {
+            let mut ctx = Ctx::new("GE", &pools);
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            let doc = render(&template("{address}"), &mut ctx, &mut rng).unwrap();
+            let entity = &doc.entities[0];
+            assert_eq!(
+                &doc.text[entity.start..entity.end],
+                source,
+                "seed {seed} changed the sourced Georgian address"
+            );
+        }
     }
 
     #[test]
@@ -2361,7 +2212,11 @@ mod tests {
         pools.bodies = Bodies::new("JP", Split::Train);
         for id in [60, 63, 69] {
             let template = all.iter().find(|template| template.id == id).unwrap();
-            let marker = if id == 63 { "連絡先" } else { "問合せ先" };
+            let marker = if id == 63 {
+                "連絡先"
+            } else {
+                "問合せ先"
+            };
             for seed in 0..30 {
                 let mut ctx = Ctx::new("JP", &pools);
                 ctx.plain = true;
@@ -2539,28 +2394,28 @@ mod tests {
     }
 
     #[test]
-    fn address_shapes_keep_their_parts() {
-        let mut rng = ChaCha8Rng::seed_from_u64(4);
-        let dc = washington("\n", &mut rng);
-        assert!(dc.ends_with(|c: char| c.is_ascii_digit()) && dc.contains("Washington, DC 20"));
-        assert_eq!(
-            with_zip4("1 Main St, Albany, NY 12207", &mut rng).len(),
-            "1 Main St, Albany, NY 12207".len() + 5
-        );
-        assert_eq!(with_zip4("No zip here", &mut rng), "No zip here");
-        assert_eq!(
-            with_zip4("Washington, DC 20590-0001", &mut rng),
-            "Washington, DC 20590-0001"
-        );
-        let person = |name: &str, script: &str| PoolPerson {
-            name: name.to_string(),
-            script: script.to_string(),
-        };
-        assert_eq!(family_name(&person("John Smith Jr.", "latin")), "Smith");
-        assert_eq!(family_name(&person("Mary J. Blige", "latin")), "Blige");
-        assert_eq!(family_name(&person("佐々木 希", "han")), "佐々木");
-        assert_eq!(family_name(&person("佐々木希", "han")), "佐々木希");
-        assert_eq!(family_name(&person("ジョン・スミス", "katakana")), "スミス");
+    fn address_shapes_keep_source_locations() {
+        let pools = stub_pools(&[("Nino Beridze", "latin")]);
+        for country in ["US", "GB", "GE", "JP"] {
+            let ctx = Ctx::new(country, &pools);
+            for seed in 0..500 {
+                let mut rng = ChaCha8Rng::seed_from_u64(seed);
+                assert_eq!(
+                    ctx.shaped("1 Main St, Albany, NY 12207".into(), ", ", &mut rng),
+                    "1 Main St, Albany, NY 12207",
+                    "{country} seed {seed} changed a sourced address"
+                );
+            }
+        }
+        let ctx = Ctx::new("DE", &pools);
+        for seed in 0..500 {
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            let shaped = ctx.shaped("Heidestraße 26, 10557 Berlin".into(), ", ", &mut rng);
+            assert!(
+                shaped == "Heidestraße 26, 10557 Berlin" || shaped == "Heidestr. 26, 10557 Berlin",
+                "seed {seed} fabricated a new German address: {shaped}"
+            );
+        }
         assert_eq!(
             without_last_line(
                 "Hauptstraße 5\n10115 Berlin\nDeutschland",
@@ -2569,9 +2424,6 @@ mod tests {
             ),
             "Hauptstraße 5\n10115 Berlin"
         );
-        let range = with_number_range("Heidestraße 26, 10557 Berlin", &mut rng);
-        assert!(range.starts_with("Heidestraße 26") && range.ends_with(", 10557 Berlin"));
-        assert_ne!(range, "Heidestraße 26, 10557 Berlin");
     }
 
     #[test]

@@ -1530,18 +1530,6 @@ pub const POSTNOMINALS: &[&str] = &[
 /// Suffixes written straight after a Japanese name; outside the span.
 pub const NAME_SUFFIXES_JP: &[&str] = &["様", "さん", "氏", "殿"];
 
-/// Building lines that open an address.
-pub const BUILDINGS: &[&str] = &[
-    "Marine House",
-    "Anchor Court",
-    "Riverside Building",
-    "Forrestal Building",
-    "Crown House",
-    "Victoria Plaza",
-    "Harbour Exchange",
-    "Wexford Tower",
-];
-
 /// Labels before the officers of a company in an imprint or footer.
 pub const OFFICERS: &[(&str, &[&str])] = &[
     (
