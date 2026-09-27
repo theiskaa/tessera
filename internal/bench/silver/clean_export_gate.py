@@ -17,12 +17,24 @@ import unicodedata
 from urllib.parse import urlsplit
 
 from source_profiles import PROFILES, verify_source_profile
+from publisher_split import blocking_ids, load_development, reviewed_role_ids
 
 
 ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_CANDIDATE = ROOT / "data/interim/silver/qa-dedup-20260926/train.jsonl"
 DEFAULT_LINEAGE = ROOT / "data/interim/silver/qa-dedup-20260926/source-lineage-pending-v2.jsonl"
 DEV_GOLD_SHA256 = "e283b6db04469fc67945f0204a597fe25da092fa2f91062073325f1213028887"
+DEV_V2_HOSTED_GOLD_SHA256 = "f9ecfc77eaaf0e334757396c5a7be881edd552a281039cffcffc6744dc08f02e"
+DEV_PUBLISHER_PINS_BY_GOLD = {
+    DEV_GOLD_SHA256: {
+        "manifest": None, "index": None, "registry": None,
+        "source_index": "bb42b111576b22f156e1c0a076e14f8a41c6b832062784da924c82ba414cdb2e",
+    },
+    DEV_V2_HOSTED_GOLD_SHA256: {
+        "manifest": None, "index": None, "registry": None,
+        "source_index": "0e101c4a1498741d437cfd9823489d2757d3d89179018dafc4744e93c6b9989f",
+    },
+}
 EVAL_GOLD_SHA256 = "ada3de32f65d9d57f0cca1d53928bdaa35bee5e95707974ebf517384c9088e78"
 EVAL_PUBLISHER_INDEX_SHA256 = "28fc7a3da42e308dfba52d7828a5ec66c4071caac4894008e558a83211579d8f"
 KINDS = {"person", "org", "address"}
@@ -127,26 +139,26 @@ def development_near_copy(value, pages):
 def load_eval_hosts(path, errors):
     if path is None:
         errors.append("missing sealed development host manifest")
-        return None, None, None
+        return None, None, None, None, None
     manifest = json.loads(path.read_text())
     if (manifest.get("status") != "sealed" or not filled(manifest.get("version"))
             or not filled(manifest.get("reviewer")) or not filled(manifest.get("reviewed_at"))):
         errors.append("development host manifest needs sealed status, version, reviewer, date")
     gold_path = manifest.get("gold_path")
-    if manifest.get("gold_sha256") != DEV_GOLD_SHA256:
+    if manifest.get("gold_sha256") not in {DEV_GOLD_SHA256, DEV_V2_HOSTED_GOLD_SHA256}:
         errors.append("development host gold identity differs from pinned gold")
-        return None, None, None
+        return None, None, None, None, None
     if not isinstance(gold_path, str) or not Path(gold_path).is_file():
         errors.append("development host gold path missing")
-        return None, None, None
+        return None, None, None, None, None
     gold_bytes = Path(gold_path).read_bytes()
     if digest(gold_bytes) != manifest.get("gold_sha256"):
         errors.append("development host gold SHA mismatch")
-        return None, None, None
+        return None, None, None, None, None
     gold = rows(Path(gold_path))
     if not gold:
         errors.append("development host gold is empty")
-        return None, None, None
+        return None, None, None, None, None
     hosts = set()
     hashes = set()
     identities = set()
@@ -156,24 +168,24 @@ def load_eval_hosts(path, errors):
             identity, value = eval_gold_identity_text(row)
         except ValueError as exc:
             errors.append(str(exc))
-            return None, None, None
+            return None, None, None, None, None
         if identity in identities:
             errors.append(f"development gold duplicate identity {identity}")
-            return None, None, None
+            return None, None, None, None, None
         identities.add(identity)
         source_host = row.get("source_host")
         if not isinstance(source_host, str) or source_host.count("|") != 1:
             errors.append(f"development gold missing source_host {identity}")
-            return None, None, None
+            return None, None, None, None, None
         country, host = source_host.split("|", 1)
         host = normalized_host(host)
         if country != row.get("country") or host is None:
             errors.append(f"development gold invalid source_host {identity}")
-            return None, None, None
+            return None, None, None, None, None
         normalized = normalized_near_text(value)
         if not normalized:
             errors.append(f"development gold empty normalized text {identity}")
-            return None, None, None
+            return None, None, None, None, None
         hosts.add(host)
         hashes.add(digest(value.encode("utf-8")))
         near_pages.append(
@@ -181,7 +193,7 @@ def load_eval_hosts(path, errors):
              character_shingles(normalized) if len(normalized) >= NEAR_COPY_MIN_CHARS else set()))
     if len(gold) != manifest.get("rows"):
         errors.append("development host gold row count mismatch")
-    return hosts, hashes, near_pages
+    return hosts, hashes, near_pages, gold, manifest["gold_sha256"]
 
 
 def indexed(items, name, errors):
@@ -222,7 +234,7 @@ def validate_spans(text, spans):
 
 def validate_inputs(candidate_path, lineage_path, qualification_path, labels_path, eval_path,
                     root=ROOT, selection_path=None, eval_hosts_path=None,
-                    source_proofs_path=None):
+                    source_proofs_path=None, dev_publishers_path=None):
     errors = []
     counts = Counter()
     candidate_bytes = candidate_path.read_bytes()
@@ -287,7 +299,23 @@ def validate_inputs(candidate_path, lineage_path, qualification_path, labels_pat
             errors.append("source proof has keys outside selection")
     eval_publishers = None
     eval_text_hashes = None
-    eval_hosts, dev_text_hashes, dev_near_pages = load_eval_hosts(eval_hosts_path, errors)
+    eval_hosts, dev_text_hashes, dev_near_pages, dev_gold, dev_gold_sha = load_eval_hosts(
+        eval_hosts_path, errors)
+    dev_publishers = None
+    dev_families = None
+    dev_aliases = None
+    dev_kinds = None
+    source_family_policy = None
+    if dev_gold is not None:
+        try:
+            pins = DEV_PUBLISHER_PINS_BY_GOLD.get(dev_gold_sha, {})
+            (dev_publishers, dev_families, dev_aliases, dev_kinds,
+             source_family_policy) = load_development(
+                dev_publishers_path, dev_gold_sha, dev_gold, root,
+                pins.get("manifest"), pins.get("index"), pins.get("registry"),
+                pins.get("source_index"))
+        except (ValueError, KeyError, TypeError, OSError) as exc:
+            errors.append(str(exc))
     if eval_path:
         ev = json.loads(eval_path.read_text())
         if (ev.get("status") != "sealed" or not filled(ev.get("version"))
@@ -298,6 +326,7 @@ def validate_inputs(candidate_path, lineage_path, qualification_path, labels_pat
             errors.append("evaluation publisher identity differs from pinned seal")
         gold_path = ev.get("gold_path")
         gold = []
+        gold_fields = []
         if not isinstance(gold_path, str) or not Path(gold_path).is_file():
             errors.append("sealed evaluation gold path missing")
         elif digest(Path(gold_path).read_bytes()) != ev.get("gold_sha256"):
@@ -332,6 +361,12 @@ def validate_inputs(candidate_path, lineage_path, qualification_path, labels_pat
                 errors.append("sealed evaluation publisher index incomplete or invalid")
             else:
                 eval_publishers = {group for i in index for group in i["publisher_groups"]}
+                if dev_aliases is not None:
+                    unknown = eval_publishers - set(dev_aliases)
+                    if unknown:
+                        errors.append("sealed evaluation publisher ID absent from registry")
+                    else:
+                        eval_publishers = {dev_aliases[group] for group in eval_publishers}
     else:
         errors.append("missing sealed evaluation publisher manifest")
     output = []
@@ -412,6 +447,7 @@ def validate_inputs(candidate_path, lineage_path, qualification_path, labels_pat
             if near is not None:
                 errors.append(prefix + f"near-copy overlaps development gold {near[0]} ({near[1]})")
         proof = pmap.get(k)
+        profile = None
         if proof is None:
             errors.append(prefix + "approved row missing typed source proof")
         elif (set(proof) != {"source", "id", "candidate_text_sha256", "raw_file_sha256",
@@ -456,6 +492,32 @@ def validate_inputs(candidate_path, lineage_path, qualification_path, labels_pat
         if (eval_publishers is not None and publisher_ids(decision.get("publisher_groups"))
                 and eval_publishers.intersection(decision["publisher_groups"])):
             errors.append(prefix + "evaluation publisher overlap")
+        if dev_publishers is not None:
+            try:
+                candidate_roles = reviewed_role_ids(
+                    decision.get("publisher"), dev_aliases, dev_kinds)
+                candidate_publishers = blocking_ids(candidate_roles)
+                if (dev_publishers & candidate_publishers):
+                    errors.append(prefix + "development publisher overlap")
+                if (source_family_policy == "disjoint"
+                        and dev_families & candidate_roles["source_families"]):
+                    errors.append(prefix + "development source-family overlap")
+                flat_groups = decision.get("publisher_groups")
+                if publisher_ids(flat_groups):
+                    if not set(flat_groups).issubset(dev_aliases):
+                        errors.append(prefix + "qualification publisher ID absent from registry")
+                    elif {dev_aliases[group] for group in flat_groups} != candidate_publishers:
+                        errors.append(prefix + "reviewed publisher roles disagree with linked groups")
+                profile_groups = set(profile.required_publisher_groups) if profile else set()
+                if not profile_groups.issubset(dev_aliases):
+                    errors.append(prefix + "source-profile publisher ID absent from registry")
+                elif not {dev_aliases[group] for group in profile_groups}.issubset(
+                        candidate_publishers):
+                    errors.append(prefix + "reviewed publisher roles omit source-profile chain")
+                if eval_publishers is not None and eval_publishers & candidate_publishers:
+                    errors.append(prefix + "evaluation publisher overlap")
+            except (ValueError, TypeError) as exc:
+                errors.append(prefix + str(exc))
         label = lmap.get(k)
         if label is None:
             counts["missing_reviewed_labels"] += 1
@@ -574,6 +636,7 @@ def main():
     parser.add_argument("--source-proofs", type=Path)
     parser.add_argument("--eval-publishers", type=Path)
     parser.add_argument("--eval-hosts", type=Path)
+    parser.add_argument("--dev-publishers", type=Path)
     parser.add_argument("--config", type=Path)
     parser.add_argument("--trainer", type=Path)
     parser.add_argument("--output", type=Path)
@@ -581,7 +644,8 @@ def main():
     output, report = validate_inputs(args.candidate, args.lineage, args.qualification,
                                      args.labels, args.eval_publishers,
                                      selection_path=args.selection, eval_hosts_path=args.eval_hosts,
-                                     source_proofs_path=args.source_proofs)
+                                     source_proofs_path=args.source_proofs,
+                                     dev_publishers_path=args.dev_publishers)
     if not report["errors"]:
         if not args.config or not args.trainer:
             report["errors"].append("config and trainer executable required for runtime preflight")
@@ -605,6 +669,7 @@ def main():
                                 "labels_sha256": digest(args.labels.read_bytes()),
                                 "eval_publishers_sha256": digest(args.eval_publishers.read_bytes()),
                                 "eval_hosts_sha256": digest(args.eval_hosts.read_bytes()),
+                                "dev_publishers_sha256": digest(args.dev_publishers.read_bytes()),
                                 "trainer_sha256": digest(args.trainer.read_bytes()),
                                 "config_sha256": digest(args.config.read_bytes())}
                     with args.output.open("xb") as handle:
