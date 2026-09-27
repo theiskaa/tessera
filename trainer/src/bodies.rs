@@ -146,7 +146,6 @@ const LISTED: &[(&str, Listed)] = &[
             ("Bank of England", ""),
             ("Serious Fraud Office", "SFO"),
             ("Disclosure and Barring Service", "DBS"),
-            ("Valuation Office Agency", "VOA"),
             ("Driver and Vehicle Standards Agency", "DVSA"),
             ("UK Visas and Immigration", "UKVI"),
             ("Office of Rail and Road", "ORR"),
@@ -164,12 +163,26 @@ const LISTED: &[(&str, Listed)] = &[
         &[
             ("Bundesministerium der Finanzen", "BMF"),
             ("Bundesministerium des Innern", "BMI"),
-            ("Bundesministerium für Wirtschaft und Klimaschutz", "BMWK"),
+            ("Bundesministerium für Wirtschaft und Energie", "BMWE"),
             ("Bundesministerium für Gesundheit", "BMG"),
-            ("Bundesministerium der Justiz", "BMJ"),
+            (
+                "Bundesministerium der Justiz und für Verbraucherschutz",
+                "BMJV",
+            ),
             ("Bundesministerium für Arbeit und Soziales", "BMAS"),
-            ("Bundesministerium für Bildung und Forschung", "BMBF"),
-            ("Bundesministerium für Digitales und Verkehr", "BMDV"),
+            (
+                "Bundesministerium für Forschung, Technologie und Raumfahrt",
+                "BMFTR",
+            ),
+            (
+                "Bundesministerium für Bildung, Familie, Senioren, Frauen und Jugend",
+                "BMBFSFJ",
+            ),
+            (
+                "Bundesministerium für Digitales und Staatsmodernisierung",
+                "BMDS",
+            ),
+            ("Bundesministerium für Verkehr", "BMV"),
             ("Auswärtiges Amt", ""),
             ("Bundesamt für Migration und Flüchtlinge", "BAMF"),
             ("Bundesamt für Sicherheit in der Informationstechnik", "BSI"),
@@ -1337,6 +1350,47 @@ mod tests {
                 .filter(|&s| in_split(name, s))
                 .count();
             assert_eq!(n, 1, "{name}");
+        }
+    }
+
+    #[test]
+    fn listed_current_bodies_exclude_closed_or_renamed_names() {
+        let gb = listed("GB");
+        assert!(!gb.iter().any(|body| body.name == "Valuation Office Agency"));
+        let de = listed("DE");
+        for old in [
+            "Bundesministerium für Wirtschaft und Klimaschutz",
+            "Bundesministerium der Justiz",
+            "Bundesministerium für Bildung und Forschung",
+            "Bundesministerium für Digitales und Verkehr",
+        ] {
+            assert!(!de.iter().any(|body| body.name == old), "{old}");
+        }
+        for (current, acronym) in [
+            ("Bundesministerium für Wirtschaft und Energie", "BMWE"),
+            (
+                "Bundesministerium der Justiz und für Verbraucherschutz",
+                "BMJV",
+            ),
+            (
+                "Bundesministerium für Forschung, Technologie und Raumfahrt",
+                "BMFTR",
+            ),
+            (
+                "Bundesministerium für Bildung, Familie, Senioren, Frauen und Jugend",
+                "BMBFSFJ",
+            ),
+            (
+                "Bundesministerium für Digitales und Staatsmodernisierung",
+                "BMDS",
+            ),
+            ("Bundesministerium für Verkehr", "BMV"),
+        ] {
+            assert!(
+                de.iter()
+                    .any(|body| body.name == current && body.acronym.as_deref() == Some(acronym)),
+                "{current} ({acronym})"
+            );
         }
     }
 
