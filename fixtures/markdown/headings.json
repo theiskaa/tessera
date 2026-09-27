@@ -2,20 +2,55 @@
   "cases": [
     {
       "name": "heading_paragraph_heading",
-      "options": {"include_code": false, "include_html": false, "gfm_tables": true},
-      "input": "# Kavkaz Freight LLC\n\n## Contact\n\nNino Beridze  \nnino@kavkaz-freight.example\n\n### Phone\n\n+44 20 7946 0958\n",
+      "options": {
+        "include_code": false,
+        "include_html": false,
+        "gfm_tables": true
+      },
+      "input": "# Pacific Cargo LLC\n\n## Contact\n\nMaya Johnson  \nmaya@pacific-cargo.example\n\n### Phone\n\n+1 202 555 0142\n",
       "blocks": [
-        {"start": 2, "end": 20},
-        {"start": 25, "end": 32},
-        {"start": 34, "end": 76},
-        {"start": 82, "end": 87},
-        {"start": 89, "end": 105}
+        {
+          "start": 2,
+          "end": 19
+        },
+        {
+          "start": 24,
+          "end": 31
+        },
+        {
+          "start": 33,
+          "end": 74
+        },
+        {
+          "start": 80,
+          "end": 85
+        },
+        {
+          "start": 87,
+          "end": 102
+        }
       ],
       "skip": [],
       "links": [],
       "expected": [
-        {"kind": "email", "text": "nino@kavkaz-freight.example", "start": 49, "end": 76, "normalized": "nino@kavkaz-freight.example", "region": null, "min_confidence": 0.9},
-        {"kind": "phone", "text": "+44 20 7946 0958", "start": 89, "end": 105, "normalized": "+442079460958", "region": "GB", "min_confidence": 0.9}
+        {
+          "kind": "email",
+          "text": "maya@pacific-cargo.example",
+          "start": 48,
+          "end": 74,
+          "normalized": "maya@pacific-cargo.example",
+          "region": null,
+          "min_confidence": 0.9
+        },
+        {
+          "kind": "phone",
+          "text": "+1 202 555 0142",
+          "start": 87,
+          "end": 102,
+          "normalized": "+12025550142",
+          "region": "US",
+          "min_confidence": 0.9
+        }
       ]
     }
   ]

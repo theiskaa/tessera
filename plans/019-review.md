@@ -1,7 +1,0 @@
-# Phase 019 review — 2026-09-26
-
-The finding is supported by `chunk::merge`: duplicate removal compares only start, end, and kind before the subsequent confidence-aware sort. The only duplicate fixture uses equal confidences. `group.rs` uses entity confidence for attachment and card confidence, so the impact can propagate. This establishes a possible wrong-confidence winner; it does not establish frequency or a measured product accuracy effect.
-
-After V19c's paired evaluation, a new test with duplicate spans at confidences 0.7 and 0.9 failed on the old implementation and passed after the fix. `chunk::merge` now groups exact `(start, end, kind)` duplicates and keeps the winner under its existing source/confidence rank before resolving overlaps. The six focused merge tests and all release Tessera tests pass. Release Clippy, format, `git diff --check`, and `cargo check --release --target wasm32-unknown-unknown -p tessera --features wasm` pass. The diff is confined to `tessera/src/chunk.rs` plus this plan/review.
-
-Private before/after binaries scored all 877 frozen reviewed documents with both V17 and V19c bundles: zero entity output changes, including confidence, across 1,754 bundle-document comparisons (`internal/reports/m7/merge-confidence-output.json`). The complete V17 and V19c contact fixture reports are byte-for-byte unchanged. Thus the fix corrects a reachable edge case without a measured gain on the current gold; it does not resolve V19c's US regression. The shipped bundle and site remain unchanged.

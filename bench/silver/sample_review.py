@@ -15,7 +15,7 @@ import pathlib
 import random
 import sys
 
-SOURCES = ["data/interim/silver/federal-register.jsonl", "data/interim/silver/govuk.jsonl"]
+SOURCES = ["data/interim/silver/federal-register.jsonl"]
 PER_SOURCE = 100
 SEED = 42
 CONTEXT = 60

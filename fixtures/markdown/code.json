@@ -2,44 +2,128 @@
   "cases": [
     {
       "name": "code_excluded_by_default",
-      "options": {"include_code": false, "include_html": false, "gfm_tables": true},
-      "input": "Contact nino@kavkaz-freight.example.\n\n```text\nhidden@kavkaz-freight.example\n```\n\n    indented@kavkaz-freight.example\n\nUse `inline@kavkaz-freight.example` for tests.\n",
+      "options": {
+        "include_code": false,
+        "include_html": false,
+        "gfm_tables": true
+      },
+      "input": "Contact maya@pacific-cargo.example.\n\n```text\nhidden@pacific-cargo.example\n```\n\n    indented@pacific-cargo.example\n\nUse `inline@pacific-cargo.example` for tests.\n",
       "blocks": [
-        {"start": 0, "end": 36},
-        {"start": 118, "end": 164}
+        {
+          "start": 0,
+          "end": 35
+        },
+        {
+          "start": 115,
+          "end": 160
+        }
       ],
       "skip": [
-        {"start": 38, "end": 79},
-        {"start": 85, "end": 117},
-        {"start": 122, "end": 153}
+        {
+          "start": 37,
+          "end": 77
+        },
+        {
+          "start": 83,
+          "end": 114
+        },
+        {
+          "start": 119,
+          "end": 149
+        }
       ],
       "links": [],
       "expected": [
-        {"kind": "email", "text": "nino@kavkaz-freight.example", "start": 8, "end": 35, "normalized": "nino@kavkaz-freight.example", "region": null, "min_confidence": 0.9}
+        {
+          "kind": "email",
+          "text": "maya@pacific-cargo.example",
+          "start": 8,
+          "end": 34,
+          "normalized": "maya@pacific-cargo.example",
+          "region": null,
+          "min_confidence": 0.9
+        }
       ],
       "must_not": [
-        {"kind": "email", "text": "hidden@kavkaz-freight.example"},
-        {"kind": "email", "text": "indented@kavkaz-freight.example"},
-        {"kind": "email", "text": "inline@kavkaz-freight.example"}
+        {
+          "kind": "email",
+          "text": "hidden@pacific-cargo.example"
+        },
+        {
+          "kind": "email",
+          "text": "indented@pacific-cargo.example"
+        },
+        {
+          "kind": "email",
+          "text": "inline@pacific-cargo.example"
+        }
       ]
     },
     {
       "name": "code_included",
-      "options": {"include_code": true, "include_html": false, "gfm_tables": true},
-      "input": "Contact nino@kavkaz-freight.example.\n\n```text\nhidden@kavkaz-freight.example\n```\n\n    indented@kavkaz-freight.example\n\nUse `inline@kavkaz-freight.example` for tests.\n",
+      "options": {
+        "include_code": true,
+        "include_html": false,
+        "gfm_tables": true
+      },
+      "input": "Contact maya@pacific-cargo.example.\n\n```text\nhidden@pacific-cargo.example\n```\n\n    indented@pacific-cargo.example\n\nUse `inline@pacific-cargo.example` for tests.\n",
       "blocks": [
-        {"start": 0, "end": 36},
-        {"start": 46, "end": 76},
-        {"start": 85, "end": 117},
-        {"start": 118, "end": 164}
+        {
+          "start": 0,
+          "end": 35
+        },
+        {
+          "start": 45,
+          "end": 74
+        },
+        {
+          "start": 83,
+          "end": 114
+        },
+        {
+          "start": 115,
+          "end": 160
+        }
       ],
       "skip": [],
       "links": [],
       "expected": [
-        {"kind": "email", "text": "nino@kavkaz-freight.example", "start": 8, "end": 35, "normalized": "nino@kavkaz-freight.example", "region": null, "min_confidence": 0.9},
-        {"kind": "email", "text": "hidden@kavkaz-freight.example", "start": 46, "end": 75, "normalized": "hidden@kavkaz-freight.example", "region": null, "min_confidence": 0.9},
-        {"kind": "email", "text": "indented@kavkaz-freight.example", "start": 85, "end": 116, "normalized": "indented@kavkaz-freight.example", "region": null, "min_confidence": 0.9},
-        {"kind": "email", "text": "inline@kavkaz-freight.example", "start": 123, "end": 152, "normalized": "inline@kavkaz-freight.example", "region": null, "min_confidence": 0.9}
+        {
+          "kind": "email",
+          "text": "maya@pacific-cargo.example",
+          "start": 8,
+          "end": 34,
+          "normalized": "maya@pacific-cargo.example",
+          "region": null,
+          "min_confidence": 0.9
+        },
+        {
+          "kind": "email",
+          "text": "hidden@pacific-cargo.example",
+          "start": 45,
+          "end": 73,
+          "normalized": "hidden@pacific-cargo.example",
+          "region": null,
+          "min_confidence": 0.9
+        },
+        {
+          "kind": "email",
+          "text": "indented@pacific-cargo.example",
+          "start": 83,
+          "end": 113,
+          "normalized": "indented@pacific-cargo.example",
+          "region": null,
+          "min_confidence": 0.9
+        },
+        {
+          "kind": "email",
+          "text": "inline@pacific-cargo.example",
+          "start": 120,
+          "end": 148,
+          "normalized": "inline@pacific-cargo.example",
+          "region": null,
+          "min_confidence": 0.9
+        }
       ]
     }
   ]

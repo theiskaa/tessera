@@ -31,11 +31,6 @@ SOURCES = {
         "license": "public-domain-us-government",
         "attribution": "Federal Register, Office of the Federal Register and the Government Publishing Office",
     },
-    "govuk": {
-        "url": "https://www.gov.uk/api/search.json (list); https://www.gov.uk/api/content<link> (text)",
-        "license": "OGL-3.0",
-        "attribution": "Contains public sector information licensed under the Open Government Licence v3.0.",
-    },
 }
 
 

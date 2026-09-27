@@ -2,7 +2,7 @@
   "cases": [
     {
       "name": "untimestamped_chat",
-      "input": "Agent (Priya Raman): Hi, I can help with the delivery. Which address should we use?\nCustomer: Please ship to 45 Queen Street, Manchester M2 5HX. My number is 07700 900123.\nAgent (Priya Raman): Thanks. And the invoice email?\nCustomer: billing@okafor-consulting.example, attention Amelia Okafor.\n",
+      "input": "Agent (Priya Raman): Hi, I can help with the delivery. Which address should we use?\nCustomer: Please ship to 1200 Market Street, Philadelphia, PA 19107. My number is (215) 555-0199.\nAgent (Priya Raman): Thanks. And the invoice email?\nCustomer: billing@okafor-consulting.example, attention Amelia Okafor.\n",
       "entities": [
         {
           "kind": "person",
@@ -12,33 +12,33 @@
         },
         {
           "kind": "address",
-          "text": "45 Queen Street, Manchester M2 5HX",
+          "text": "1200 Market Street, Philadelphia, PA 19107",
           "start": 109,
-          "end": 143
+          "end": 151
         },
         {
           "kind": "phone",
-          "text": "07700 900123",
-          "start": 158,
-          "end": 170
+          "text": "(215) 555-0199",
+          "start": 166,
+          "end": 180
         },
         {
           "kind": "person",
           "text": "Priya Raman",
-          "start": 179,
-          "end": 190
+          "start": 189,
+          "end": 200
         },
         {
           "kind": "email",
           "text": "billing@okafor-consulting.example",
-          "start": 234,
-          "end": 267
+          "start": 244,
+          "end": 277
         },
         {
           "kind": "person",
           "text": "Amelia Okafor",
-          "start": 279,
-          "end": 292
+          "start": 289,
+          "end": 302
         }
       ],
       "contacts": [

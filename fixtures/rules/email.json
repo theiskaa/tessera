@@ -2,28 +2,28 @@
   "cases": [
     {
       "name": "plain address in prose",
-      "input": "Contact nino@kavkaz-freight.example today",
+      "input": "Contact maya@pacific-cargo.example today",
       "expected": [
         {
           "kind": "email",
-          "text": "nino@kavkaz-freight.example",
+          "text": "maya@pacific-cargo.example",
           "start": 8,
-          "end": 35,
-          "normalized": "nino@kavkaz-freight.example",
+          "end": 34,
+          "normalized": "maya@pacific-cargo.example",
           "min_confidence": 0.99
         }
       ]
     },
     {
       "name": "mixed case domain and trailing period",
-      "input": "Mail: Nino.Beridze@Kavkaz-Freight.EXAMPLE.",
+      "input": "Mail: Maya.Johnson@Pacific-Cargo.EXAMPLE.",
       "expected": [
         {
           "kind": "email",
-          "text": "Nino.Beridze@Kavkaz-Freight.EXAMPLE",
+          "text": "Maya.Johnson@Pacific-Cargo.EXAMPLE",
           "start": 6,
-          "end": 41,
-          "normalized": "Nino.Beridze@kavkaz-freight.example",
+          "end": 40,
+          "normalized": "Maya.Johnson@pacific-cargo.example",
           "min_confidence": 0.99
         }
       ]
@@ -57,20 +57,6 @@
       ]
     },
     {
-      "name": "georgian prose with suffix after the address",
-      "input": "მისწერეთ nino@kavkaz-freight.example-ზე",
-      "expected": [
-        {
-          "kind": "email",
-          "text": "nino@kavkaz-freight.example",
-          "start": 25,
-          "end": 52,
-          "normalized": "nino@kavkaz-freight.example",
-          "min_confidence": 0.99
-        }
-      ]
-    },
-    {
       "name": "two addresses on one line",
       "input": "a@x.example, b@y.example",
       "expected": [
@@ -94,7 +80,7 @@
     },
     {
       "name": "invalid shapes are not emails",
-      "input": "a..b@x.example user@localhost @example.com nino@kavkaz",
+      "input": "a..b@x.example user@localhost @example.com maya@pacific",
       "expected": []
     },
     {

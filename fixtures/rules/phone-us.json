@@ -68,7 +68,7 @@
     },
     {
       "name": "hard negatives",
-      "input": "ip 10.0.0.1 date 2024-01-15 price $555-0100 id 202555014312 iban GB29NWBK60161331926819",
+      "input": "ip 10.0.0.1 date 2024-01-15 price $555-0100 id 202555014312 routing 000000000",
       "country_hint": [
         "US"
       ],

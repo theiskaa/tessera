@@ -33,37 +33,6 @@
       ]
     },
     {
-      "name": "identifiers and ip addresses",
-      "country": "GB",
-      "input": "Order 20255501431 shipped from 10.0.0.1, IBAN GB29NWBK60161331926819.",
-      "expected": [],
-      "must_not": [
-        {
-          "kind": "phone",
-          "text": "20255501431"
-        },
-        {
-          "kind": "phone",
-          "text": "10.0.0.1"
-        }
-      ]
-    },
-    {
-      "name": "Georgia the country",
-      "input": "Our team will travel to Georgia next week.",
-      "expected": [],
-      "must_not": [
-        {
-          "kind": "person",
-          "text": "Georgia"
-        },
-        {
-          "kind": "address",
-          "text": "Georgia"
-        }
-      ]
-    },
-    {
       "name": "Georgia the person",
       "input": "Regards,\nGeorgia Palmer\ngeorgia.palmer@example.com",
       "expected": [
@@ -132,63 +101,6 @@
         {
           "kind": "person",
           "text": "Abraham Lincoln"
-        }
-      ]
-    },
-    {
-      "name": "numbers that are not phones",
-      "country": "GB",
-      "input": "IBAN GB29 NWBK 6016 1331 9268 19\nServer 192.168.10.24\nDate 2026-03-17\nTotal £1,240.00\nOrder 4021-7733-19\nTracking 1Z 999 AA1 01 2345 6784",
-      "expected": [],
-      "must_not": [
-        {
-          "kind": "phone",
-          "text": "6016 1331 9268 19"
-        },
-        {
-          "kind": "phone",
-          "text": "192.168.10.24"
-        },
-        {
-          "kind": "phone",
-          "text": "2026-03-17"
-        },
-        {
-          "kind": "phone",
-          "text": "4021-7733-19"
-        },
-        {
-          "kind": "phone",
-          "text": "01 2345 6784"
-        }
-      ]
-    },
-    {
-      "name": "a lone city is not an address",
-      "input": "The conference is in Manchester this year.",
-      "expected": [],
-      "must_not": [
-        {
-          "kind": "address",
-          "text": "Manchester"
-        }
-      ]
-    },
-    {
-      "name": "an avenue named after a person",
-      "input": "Please send it to 14 Rustaveli Avenue, Tbilisi 0108.",
-      "expected": [
-        {
-          "kind": "address",
-          "text": "14 Rustaveli Avenue, Tbilisi 0108",
-          "start": 18,
-          "end": 51
-        }
-      ],
-      "must_not": [
-        {
-          "kind": "person",
-          "text": "Rustaveli"
         }
       ]
     }

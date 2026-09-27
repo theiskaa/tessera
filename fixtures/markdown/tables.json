@@ -2,42 +2,144 @@
   "cases": [
     {
       "name": "gfm_table_cells",
-      "options": {"include_code": false, "include_html": false, "gfm_tables": true},
-      "input": "| Name | Email | Phone |\n| --- | --- | --- |\n| Nino Beridze | nino@kavkaz-freight.example | +44 20 7946 0958 |\n| Ana Kapanadze | ana@kavkaz-freight.example | +1 202 555 0143 |\n",
+      "options": {
+        "include_code": false,
+        "include_html": false,
+        "gfm_tables": true
+      },
+      "input": "| Name | Email | Phone |\n| --- | --- | --- |\n| Maya Johnson | maya@pacific-cargo.example | +1 202 555 0142 |\n| Ana Martinez | ana@pacific-cargo.example | +1 202 555 0143 |\n",
       "blocks": [
-        {"start": 2, "end": 6},
-        {"start": 9, "end": 14},
-        {"start": 17, "end": 22},
-        {"start": 47, "end": 59},
-        {"start": 62, "end": 89},
-        {"start": 92, "end": 108},
-        {"start": 113, "end": 126},
-        {"start": 129, "end": 155},
-        {"start": 158, "end": 173}
+        {
+          "start": 2,
+          "end": 6
+        },
+        {
+          "start": 9,
+          "end": 14
+        },
+        {
+          "start": 17,
+          "end": 22
+        },
+        {
+          "start": 47,
+          "end": 59
+        },
+        {
+          "start": 62,
+          "end": 88
+        },
+        {
+          "start": 91,
+          "end": 106
+        },
+        {
+          "start": 111,
+          "end": 123
+        },
+        {
+          "start": 126,
+          "end": 151
+        },
+        {
+          "start": 154,
+          "end": 169
+        }
       ],
       "skip": [],
       "links": [],
       "expected": [
-        {"kind": "email", "text": "nino@kavkaz-freight.example", "start": 62, "end": 89, "normalized": "nino@kavkaz-freight.example", "region": null, "min_confidence": 0.9},
-        {"kind": "phone", "text": "+44 20 7946 0958", "start": 92, "end": 108, "normalized": "+442079460958", "region": "GB", "min_confidence": 0.9},
-        {"kind": "email", "text": "ana@kavkaz-freight.example", "start": 129, "end": 155, "normalized": "ana@kavkaz-freight.example", "region": null, "min_confidence": 0.9},
-        {"kind": "phone", "text": "+1 202 555 0143", "start": 158, "end": 173, "normalized": "+12025550143", "region": "US", "min_confidence": 0.9}
+        {
+          "kind": "email",
+          "text": "maya@pacific-cargo.example",
+          "start": 62,
+          "end": 88,
+          "normalized": "maya@pacific-cargo.example",
+          "region": null,
+          "min_confidence": 0.9
+        },
+        {
+          "kind": "phone",
+          "text": "+1 202 555 0142",
+          "start": 91,
+          "end": 106,
+          "normalized": "+12025550142",
+          "region": "US",
+          "min_confidence": 0.9
+        },
+        {
+          "kind": "email",
+          "text": "ana@pacific-cargo.example",
+          "start": 126,
+          "end": 151,
+          "normalized": "ana@pacific-cargo.example",
+          "region": null,
+          "min_confidence": 0.9
+        },
+        {
+          "kind": "phone",
+          "text": "+1 202 555 0143",
+          "start": 154,
+          "end": 169,
+          "normalized": "+12025550143",
+          "region": "US",
+          "min_confidence": 0.9
+        }
       ]
     },
     {
       "name": "gfm_tables_disabled_is_one_paragraph",
-      "options": {"include_code": false, "include_html": false, "gfm_tables": false},
-      "input": "| Name | Email | Phone |\n| --- | --- | --- |\n| Nino Beridze | nino@kavkaz-freight.example | +44 20 7946 0958 |\n| Ana Kapanadze | ana@kavkaz-freight.example | +1 202 555 0143 |\n",
+      "options": {
+        "include_code": false,
+        "include_html": false,
+        "gfm_tables": false
+      },
+      "input": "| Name | Email | Phone |\n| --- | --- | --- |\n| Maya Johnson | maya@pacific-cargo.example | +1 202 555 0142 |\n| Ana Martinez | ana@pacific-cargo.example | +1 202 555 0143 |\n",
       "blocks": [
-        {"start": 0, "end": 175}
+        {
+          "start": 0,
+          "end": 171
+        }
       ],
       "skip": [],
       "links": [],
       "expected": [
-        {"kind": "email", "text": "nino@kavkaz-freight.example", "start": 62, "end": 89, "normalized": "nino@kavkaz-freight.example", "region": null, "min_confidence": 0.9},
-        {"kind": "phone", "text": "+44 20 7946 0958", "start": 92, "end": 108, "normalized": "+442079460958", "region": "GB", "min_confidence": 0.9},
-        {"kind": "email", "text": "ana@kavkaz-freight.example", "start": 129, "end": 155, "normalized": "ana@kavkaz-freight.example", "region": null, "min_confidence": 0.9},
-        {"kind": "phone", "text": "+1 202 555 0143", "start": 158, "end": 173, "normalized": "+12025550143", "region": "US", "min_confidence": 0.9}
+        {
+          "kind": "email",
+          "text": "maya@pacific-cargo.example",
+          "start": 62,
+          "end": 88,
+          "normalized": "maya@pacific-cargo.example",
+          "region": null,
+          "min_confidence": 0.9
+        },
+        {
+          "kind": "phone",
+          "text": "+1 202 555 0142",
+          "start": 91,
+          "end": 106,
+          "normalized": "+12025550142",
+          "region": "US",
+          "min_confidence": 0.9
+        },
+        {
+          "kind": "email",
+          "text": "ana@pacific-cargo.example",
+          "start": 126,
+          "end": 151,
+          "normalized": "ana@pacific-cargo.example",
+          "region": null,
+          "min_confidence": 0.9
+        },
+        {
+          "kind": "phone",
+          "text": "+1 202 555 0143",
+          "start": 154,
+          "end": 169,
+          "normalized": "+12025550143",
+          "region": "US",
+          "min_confidence": 0.9
+        }
       ]
     }
   ]

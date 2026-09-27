@@ -1,7 +1,0 @@
-# Phase 012 review — V18 silver hygiene diagnostic
-
-V18 completed four epochs and saved its summary/checkpoints. The artifact-bound quantization gate passed, and the bundle exported with the original parser v7 path. Fresh V17/V18 evaluations used the same 877-document gold SHA-256 (`3940db21008a51dc71e78fdb390b1be3b1f69ca4596b4c49b50da0af77b2abbd`) and the same release trainer. Both auto and known hint modes were recorded. An isolated V18 epoch 3 was also quantized, exported, and scored.
-
-V18 epoch 4 fails the predeclared regression guard: US address exact F1 92.4→88.3 and JP 90.1→81.6. GE address exact 35.7→31.1 and DE address lenient recall 93.7→90.2 also worsen. Epoch 3 does not fix these losses. Synthetic validation stayed near V17, confirming it cannot select the detector alone. V17 remains the internal reference; no shipped model or site changed.
-
-Two separate post-result reviews are recorded under ignored `internal/reports/m7/post-v18-review-1-data.md` and `post-v18-review-2-evaluation.md`. The data review found that the filter removed 20 of 202 GE address spans, yet removed zero US and seven JP address spans; it cannot directly explain every regression. The evaluation review found that 282/311 GE and 302/328 JP gold addresses are in address-focused collections. These are not single publishers: the subsets span 37 GE and 43 JP URL hosts, with uneven address counts per host. Both reviews led to a distinct V19 data hypothesis, frozen before training.

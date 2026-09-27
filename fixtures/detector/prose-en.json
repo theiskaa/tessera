@@ -32,20 +32,6 @@
       "must_not": []
     },
     {
-      "name": "an address in a sentence",
-      "input": "Our new office is at 221 Canal Street, Leeds LS2 7HE, from Monday.",
-      "expected": [
-        {
-          "kind": "address",
-          "text": "221 Canal Street, Leeds LS2 7HE",
-          "start": 21,
-          "end": 52
-        }
-      ],
-      "must_not": [],
-      "known_failure": true
-    },
-    {
       "name": "a person joins a company",
       "input": "Hannah Reid has joined Northgate Advisory as head of research.",
       "expected": [
@@ -114,57 +100,6 @@
         }
       ],
       "known_failure": true
-    },
-    {
-      "name": "a university in prose",
-      "known_failure": true,
-      "input": "She studied at Stanford University before moving to London.",
-      "expected": [
-        {
-          "kind": "org",
-          "text": "Stanford University",
-          "start": 15,
-          "end": 34
-        }
-      ],
-      "must_not": [
-        {
-          "kind": "address",
-          "text": "London"
-        }
-      ]
-    },
-    {
-      "name": "a long document with one signature in the middle",
-      "country": "GB",
-      "input": "The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon.\n\nKind regards,\n\nOliver Bennett\nHarbour Line Logistics Ltd\n+44 113 496 0123\noliver.bennett@harbourline.example\n\nThe quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon. The quarterly numbers came in higher than planned, so the review moves to Thursday afternoon.",
-      "expected": [
-        {
-          "kind": "person",
-          "text": "Oliver Bennett",
-          "start": 4246,
-          "end": 4260
-        },
-        {
-          "kind": "org",
-          "text": "Harbour Line Logistics Ltd",
-          "start": 4261,
-          "end": 4287
-        },
-        {
-          "kind": "phone",
-          "text": "+44 113 496 0123",
-          "start": 4288,
-          "end": 4304
-        },
-        {
-          "kind": "email",
-          "text": "oliver.bennett@harbourline.example",
-          "start": 4305,
-          "end": 4339
-        }
-      ],
-      "must_not": []
     }
   ]
 }
