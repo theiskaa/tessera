@@ -1,6 +1,7 @@
 """Tiny private fixtures for the source/label/export contract."""
 
 import json
+from dataclasses import replace
 from pathlib import Path
 import sys
 import tempfile
@@ -31,7 +32,8 @@ class ExportGateTest(unittest.TestCase):
             self.profile_id, "unit", "one", "US", self.raw["url"],
             gate.digest(self.raw_path.read_bytes()), "capture.html",
             gate.digest(self.capture_path.read_bytes()), gate.digest(self.text.encode()),
-            "de_sh_press_v1")
+            "de_sh_press_v1", publisher_group="unit:example-agency",
+            required_publisher_groups=("unit:example-agency",))
         profile_patch = patch.dict(PROFILES, {self.profile_id: profile})
         profile_patch.start()
         self.addCleanup(profile_patch.stop)
@@ -161,6 +163,33 @@ class ExportGateTest(unittest.TestCase):
         self.write()
         _, report = self.check()
         self.assertTrue(any("not allowlisted" in e for e in report["errors"]))
+
+    def test_approved_row_requires_profile_publisher_and_parent(self):
+        profile = replace(PROFILES[self.profile_id],
+                          publisher_group="unit:example-agency",
+                          required_publisher_groups=("unit:example-agency", "unit:parent"))
+        with patch.dict(PROFILES, {self.profile_id: profile}):
+            _, report = self.check()
+            self.assertTrue(any("omits source-profile publisher or parent" in e
+                                for e in report["errors"]))
+            self.qualification["publisher_groups"].append("unit:parent")
+            self.write()
+            _, report = self.check()
+            self.assertFalse(any("omits source-profile publisher or parent" in e
+                                 for e in report["errors"]))
+            self.qualification["publisher_group"] = "unit:parent"
+            self.write()
+            _, report = self.check()
+            self.assertTrue(any("omits source-profile publisher or parent" in e
+                                for e in report["errors"]))
+
+    def test_approved_row_rejects_profile_without_publisher_pin(self):
+        profile = replace(PROFILES[self.profile_id], publisher_group="",
+                          required_publisher_groups=())
+        with patch.dict(PROFILES, {self.profile_id: profile}):
+            _, report = self.check()
+            self.assertTrue(any("source profile lacks a pinned publisher chain" in e
+                                for e in report["errors"]))
 
     def test_capture_tamper_and_self_hashed_receipt_fail(self):
         self.capture_path.write_text(self.capture_path.read_text() + " ")

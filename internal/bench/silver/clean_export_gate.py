@@ -381,6 +381,17 @@ def validate_inputs(candidate_path, lineage_path, qualification_path, labels_pat
             if profile is None or proof.get("capture_sha256") != profile.capture_sha256:
                 errors.append(prefix + "source proof profile or capture is not allowlisted")
             else:
+                groups = decision.get("publisher_groups")
+                if (not profile.publisher_group or not profile.required_publisher_groups
+                        or profile.publisher_group not in profile.required_publisher_groups):
+                    errors.append(prefix + "source profile lacks a pinned publisher chain")
+                primary_missing = (profile.publisher_group
+                                   and decision.get("publisher_group") != profile.publisher_group)
+                linked_missing = (profile.required_publisher_groups
+                                  and (not publisher_ids(groups)
+                                       or not set(profile.required_publisher_groups).issubset(groups)))
+                if primary_missing or linked_missing:
+                    errors.append(prefix + "qualification omits source-profile publisher or parent")
                 try:
                     verify_source_profile(root, profile_id, doc, info)
                 except (ValueError, OSError, UnicodeError) as exc:
