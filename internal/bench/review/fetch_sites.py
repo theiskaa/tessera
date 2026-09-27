@@ -4,10 +4,10 @@
 
 Each site lists article pages (from index pages or a range of sequential ids), extracts the
 main text, and keeps pages with enough text (and a phone number where `contact` is set).
-Evaluation sites write to data/raw/review/<site>/, training sites to data/raw/silver/<site>/:
-the two never share a site, so no evaluation document can be trained on. Pages are fetched
-three at a time with a 0.75 s pause, with the bench User-Agent, and a resumed run skips pages
-already on disk.
+Evaluation sites write to data/raw/review/<site>/, training sites to data/raw/silver/<site>/.
+Pages are fetched three at a time with a 0.75 s pause, with the bench User-Agent, and a
+resumed run skips pages already on disk. Oversized extracted text is rejected rather than
+joining nonadjacent sections; existing saved pages still require separate source review.
 """
 
 import datetime
@@ -190,6 +190,12 @@ def article_links(site):
     return seen
 
 
+def bounded_source_text(text):
+    """Return complete extracted text within the input budget, or reject it."""
+    text = common.normalize(text)
+    return text if text and len(text) <= common.MAX_CHARS else None
+
+
 def economy_news_text(soup):
     """Extract a Georgian Economy article only when its title, date, and body are present."""
     carousel = soup.find(id="newsCarousel")
@@ -206,7 +212,7 @@ def economy_news_text(soup):
         return None
     if published <= datetime.date(1970, 1, 1):
         return None
-    text = common.tail_clip(common.normalize(common.block_text(body)))
+    text = bounded_source_text(common.block_text(body))
     return text or None
 
 
@@ -236,7 +242,9 @@ def main(name, limit):
             if text is None:
                 return False
         else:
-            text = common.tail_clip(common.normalize(common.content_text(soup)))
+            text = bounded_source_text(common.content_text(soup))
+        if text is None:
+            return False
         if site["contact"] == "any":
             wanted = common.has_contact(text) or DE_POSTCODE.search(text)
         else:
