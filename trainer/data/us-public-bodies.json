@@ -1,0 +1,1165 @@
+{
+  "source": "USAGov A-Z agency index",
+  "captured_on": "2026-09-28",
+  "selection": "one reviewed acronymed body per source alias group; evaluation bodies excluded",
+  "bodies": [
+    {
+      "name": "American Battle Monuments Commission",
+      "acronym": "ABMC",
+      "source_url": "https://www.usa.gov/agency-index",
+      "source_line": 447
+    },
+    {
+      "name": "Administration for Children and Families",
+      "acronym": "ACF",
+      "source_url": "https://www.usa.gov/agency-index",
+      "source_line": 90
+    },
+    {
+      "name": "Advisory Council on Historic Preservation",
+      "acronym": "ACHP",
+      "source_url": "https://www.usa.gov/agency-index",
+      "source_line": 173
+    },
+    {
+      "name": "Administration for Community Living",
+      "acronym": "ACL",
+      "source_url": "https://www.usa.gov/agency-index",
+      "source_line": 108
+    },
+    {
+      "name": "Administrative Conference of the United States",
+      "acronym": "ACUS",
+      "source_url": "https://www.usa.gov/agency-index",
+      "source_line": 137
+    },
+    {
+      "name": "Armed Forces Retirement Home",
+      "acronym": "AFRH",
+      "source_url": "https://www.usa.gov/agency-index",
+      "source_line": 601
+    },
+    {
+      "name": "Agency for Healthcare Research and Quality",
+      "acronym": "AHRQ",
+      "source_url": "https://www.usa.gov/agency-index",
+      "source_line": 237
+    },
+    {
+      "name": "Agricultural Marketing Service",
+      "acronym": "AMS",
+      "source_url": "https://www.usa.gov/agency-index",
+      "source_line": 291
+    },
+    {
+      "name": "Administration for Native Americans",
+      "acronym": "ANA",
+      "source_url": "https://www.usa.gov/agency-index",
+      "source_line": 125
+    },
+    {
+      "name": "Appalachian Regional Commission",
+      "acronym": "ARC",
+      "source_url": "https://www.usa.gov/agency-index",
+      "source_line": 531
+    },
+    {
+      "name": "Agricultural Research Service",
+      "acronym": "ARS",
+      "source_url": "https://www.usa.gov/agency-index",
+      "source_line": 311
+    },
+    {
+      "name": "Agency for Toxic Substances and Disease Registry",
+      "acronym": "ATSDR",
+      "source_url": "https://www.usa.gov/agency-index",
+      "source_line": 275
+    },
+    {
+      "name": "Bureau of Economic Analysis",
+      "acronym": "BEA",
+      "source_url": "https://www.usa.gov/agency-index/b",
+      "source_line": 190
+    },
+    {
+      "name": "Bureau of Engraving and Printing",
+      "acronym": "BEP",
+      "source_url": "https://www.usa.gov/agency-index/b",
+      "source_line": 207
+    },
+    {
+      "name": "Bureau of Industry and Security",
+      "acronym": "BIS",
+      "source_url": "https://www.usa.gov/agency-index/b",
+      "source_line": 244
+    },
+    {
+      "name": "Bureau of Labor Statistics",
+      "acronym": "BLS",
+      "source_url": "https://www.usa.gov/agency-index/b",
+      "source_line": 294
+    },
+    {
+      "name": "Bureau of Ocean Energy Management",
+      "acronym": "BOEM",
+      "source_url": "https://www.usa.gov/agency-index/b",
+      "source_line": 332
+    },
+    {
+      "name": "Bureau of Safety and Environmental Enforcement",
+      "acronym": "BSEE",
+      "source_url": "https://www.usa.gov/agency-index/b",
+      "source_line": 383
+    },
+    {
+      "name": "Bureau of Transportation Statistics",
+      "acronym": "BTS",
+      "source_url": "https://www.usa.gov/agency-index/b",
+      "source_line": 430
+    },
+    {
+      "name": "Chief Acquisition Officers Council",
+      "acronym": "CAOC",
+      "source_url": "https://www.usa.gov/agency-index/c",
+      "source_line": 228
+    },
+    {
+      "name": "Congressional Budget Office",
+      "acronym": "CBO",
+      "source_url": "https://www.usa.gov/agency-index/c",
+      "source_line": 591
+    },
+    {
+      "name": "Council of Economic Advisers",
+      "acronym": "CEA",
+      "source_url": "https://www.usa.gov/agency-index/c",
+      "source_line": 735
+    },
+    {
+      "name": "U.S. Central Command",
+      "acronym": "CENTCOM",
+      "source_url": "https://www.usa.gov/agency-index/u",
+      "source_line": 289
+    },
+    {
+      "name": "Committee on Foreign Investment in the United States",
+      "acronym": "CFIUS",
+      "source_url": "https://www.usa.gov/agency-index/c",
+      "source_line": 476
+    },
+    {
+      "name": "Chief Financial Officers Council",
+      "acronym": "CFO",
+      "source_url": "https://www.usa.gov/agency-index/c",
+      "source_line": 241
+    },
+    {
+      "name": "Consumer Financial Protection Bureau",
+      "acronym": "CFPB",
+      "source_url": "https://www.usa.gov/agency-index/c",
+      "source_line": 658
+    },
+    {
+      "name": "U.S. Commodity Futures Trading Commission",
+      "acronym": "CFTC",
+      "source_url": "https://www.usa.gov/agency-index/u",
+      "source_line": 390
+    },
+    {
+      "name": "Central Intelligence Agency",
+      "acronym": "CIA",
+      "source_url": "https://www.usa.gov/agency-index/c",
+      "source_line": 198
+    },
+    {
+      "name": "Council of the Inspectors General on Integrity and Efficiency",
+      "acronym": "CIGIE",
+      "source_url": "https://www.usa.gov/agency-index/c",
+      "source_line": 748
+    },
+    {
+      "name": "Office of Critical Minerals and Energy Innovation",
+      "acronym": "CMEI",
+      "source_url": "https://www.usa.gov/agency-index/o",
+      "source_line": 205
+    },
+    {
+      "name": "Center for Nutrition Policy and Promotion",
+      "acronym": "CNPP",
+      "source_url": "https://www.usa.gov/agency-index/c",
+      "source_line": 123
+    },
+    {
+      "name": "Community Oriented Policing Services",
+      "acronym": "COPS",
+      "source_url": "https://www.usa.gov/agency-index/c",
+      "source_line": 507
+    },
+    {
+      "name": "Office of Community Planning and Development",
+      "acronym": "CPD",
+      "source_url": "https://www.usa.gov/agency-index/o",
+      "source_line": 168
+    },
+    {
+      "name": "Consumer Product Safety Commission",
+      "acronym": "CPSC",
+      "source_url": "https://www.usa.gov/agency-index/c",
+      "source_line": 670
+    },
+    {
+      "name": "Congressional Research Service",
+      "acronym": "CRS",
+      "source_url": "https://www.usa.gov/agency-index/c",
+      "source_line": 608
+    },
+    {
+      "name": "Citizens' Stamp Advisory Committee",
+      "acronym": "CSAC",
+      "source_url": "https://www.usa.gov/agency-index/c",
+      "source_line": 296
+    },
+    {
+      "name": "U.S. Chemical Safety Board",
+      "acronym": "CSB",
+      "source_url": "https://www.usa.gov/agency-index/u",
+      "source_line": 306
+    },
+    {
+      "name": "Defense Advanced Research Projects Agency",
+      "acronym": "DARPA",
+      "source_url": "https://www.usa.gov/agency-index/d",
+      "source_line": 69
+    },
+    {
+      "name": "Defense Contract Audit Agency",
+      "acronym": "DCAA",
+      "source_url": "https://www.usa.gov/agency-index/d",
+      "source_line": 103
+    },
+    {
+      "name": "Defense Contract Management Agency",
+      "acronym": "DCMA",
+      "source_url": "https://www.usa.gov/agency-index/d",
+      "source_line": 120
+    },
+    {
+      "name": "Defense Counterintelligence and Security Agency",
+      "acronym": "DCSA",
+      "source_url": "https://www.usa.gov/agency-index/d",
+      "source_line": 132
+    },
+    {
+      "name": "Drug Enforcement Administration",
+      "acronym": "DEA",
+      "source_url": "https://www.usa.gov/agency-index/d",
+      "source_line": 670
+    },
+    {
+      "name": "Defense Finance and Accounting Service",
+      "acronym": "DFAS",
+      "source_url": "https://www.usa.gov/agency-index/d",
+      "source_line": 165
+    },
+    {
+      "name": "International Development Finance Corporation",
+      "acronym": "DFC",
+      "source_url": "https://www.usa.gov/agency-index/i",
+      "source_line": 320
+    },
+    {
+      "name": "Defense Health Agency",
+      "acronym": "DHA",
+      "source_url": "https://www.usa.gov/agency-index/d",
+      "source_line": 189
+    },
+    {
+      "name": "Defense Intelligence Agency",
+      "acronym": "DIA",
+      "source_url": "https://www.usa.gov/agency-index/d",
+      "source_line": 215
+    },
+    {
+      "name": "Defense Information Systems Agency",
+      "acronym": "DISA",
+      "source_url": "https://www.usa.gov/agency-index/d",
+      "source_line": 202
+    },
+    {
+      "name": "Defense Logistics Agency",
+      "acronym": "DLA",
+      "source_url": "https://www.usa.gov/agency-index/d",
+      "source_line": 232
+    },
+    {
+      "name": "Defense Nuclear Facilities Safety Board",
+      "acronym": "DNFSB",
+      "source_url": "https://www.usa.gov/agency-index/d",
+      "source_line": 245
+    },
+    {
+      "name": "Defense POW/MIA Accounting Agency",
+      "acronym": "DPAA",
+      "source_url": "https://www.usa.gov/agency-index/d",
+      "source_line": 261
+    },
+    {
+      "name": "Delta Regional Authority",
+      "acronym": "DRA",
+      "source_url": "https://www.usa.gov/agency-index/d",
+      "source_line": 337
+    },
+    {
+      "name": "Delaware River Basin Commission",
+      "acronym": "DRBC",
+      "source_url": "https://www.usa.gov/agency-index/d",
+      "source_line": 317
+    },
+    {
+      "name": "Defense Security Cooperation Agency",
+      "acronym": "DSCA",
+      "source_url": "https://www.usa.gov/agency-index/d",
+      "source_line": 274
+    },
+    {
+      "name": "Defense Technical Information Center",
+      "acronym": "DTIC",
+      "source_url": "https://www.usa.gov/agency-index/d",
+      "source_line": 287
+    },
+    {
+      "name": "Defense Threat Reduction Agency",
+      "acronym": "DTRA",
+      "source_url": "https://www.usa.gov/agency-index/d",
+      "source_line": 300
+    },
+    {
+      "name": "U.S. Election Assistance Commission",
+      "acronym": "EAC",
+      "source_url": "https://www.usa.gov/agency-index/u",
+      "source_line": 723
+    },
+    {
+      "name": "Employee Benefits Security Administration",
+      "acronym": "EBSA",
+      "source_url": "https://www.usa.gov/agency-index/e",
+      "source_line": 176
+    },
+    {
+      "name": "Economic Development Administration",
+      "acronym": "EDA",
+      "source_url": "https://www.usa.gov/agency-index/e",
+      "source_line": 73
+    },
+    {
+      "name": "Equal Employment Opportunity Commission",
+      "acronym": "EEOC",
+      "source_url": "https://www.usa.gov/agency-index/e",
+      "source_line": 289
+    },
+    {
+      "name": "Energy Information Administration",
+      "acronym": "EIA",
+      "source_url": "https://www.usa.gov/agency-index/e",
+      "source_line": 222
+    },
+    {
+      "name": "Executive Office for Immigration Review",
+      "acronym": "EOIR",
+      "source_url": "https://www.usa.gov/agency-index/e",
+      "source_line": 314
+    },
+    {
+      "name": "Economic Research Service",
+      "acronym": "ERS",
+      "source_url": "https://www.usa.gov/agency-index/e",
+      "source_line": 102
+    },
+    {
+      "name": "Employment and Training Administration",
+      "acronym": "ETA",
+      "source_url": "https://www.usa.gov/agency-index/e",
+      "source_line": 192
+    },
+    {
+      "name": "Export-Import Bank of the United States",
+      "acronym": "EXIM",
+      "source_url": "https://www.usa.gov/agency-index/e",
+      "source_line": 334
+    },
+    {
+      "name": "Federal Accounting Standards Advisory Board",
+      "acronym": "FASAB",
+      "source_url": "https://www.usa.gov/agency-index/f",
+      "source_line": 135
+    },
+    {
+      "name": "Federal Bureau of Investigation",
+      "acronym": "FBI",
+      "source_url": "https://www.usa.gov/agency-index/f",
+      "source_line": 164
+    },
+    {
+      "name": "Federal Bureau of Prisons",
+      "acronym": "FBOP",
+      "source_url": "https://www.usa.gov/agency-index/f",
+      "source_line": 185
+    },
+    {
+      "name": "Farm Credit Administration",
+      "acronym": "FCA",
+      "source_url": "https://www.usa.gov/agency-index/f",
+      "source_line": 89
+    },
+    {
+      "name": "Farm Credit System Insurance Corporation",
+      "acronym": "FCSIC",
+      "source_url": "https://www.usa.gov/agency-index/f",
+      "source_line": 101
+    },
+    {
+      "name": "Federal Election Commission",
+      "acronym": "FEC",
+      "source_url": "https://www.usa.gov/agency-index/f",
+      "source_line": 244
+    },
+    {
+      "name": "Federal Financing Bank",
+      "acronym": "FFB",
+      "source_url": "https://www.usa.gov/agency-index/f",
+      "source_line": 306
+    },
+    {
+      "name": "Federal Financial Institutions Examination Council",
+      "acronym": "FFIEC",
+      "source_url": "https://www.usa.gov/agency-index/f",
+      "source_line": 294
+    },
+    {
+      "name": "Federal Geographic Data Committee",
+      "acronym": "FGDC",
+      "source_url": "https://www.usa.gov/agency-index/f",
+      "source_line": 323
+    },
+    {
+      "name": "Federal Housing Administration",
+      "acronym": "FHA",
+      "source_url": "https://www.usa.gov/agency-index/f",
+      "source_line": 353
+    },
+    {
+      "name": "Office of Fair Housing and Equal Opportunity",
+      "acronym": "FHEO",
+      "source_url": "https://www.usa.gov/agency-index/o",
+      "source_line": 293
+    },
+    {
+      "name": "Federal Housing Finance Agency",
+      "acronym": "FHFA",
+      "source_url": "https://www.usa.gov/agency-index/f",
+      "source_line": 366
+    },
+    {
+      "name": "Federal Laboratory Consortium for Technology Transfer",
+      "acronym": "FLC",
+      "source_url": "https://www.usa.gov/agency-index/f",
+      "source_line": 413
+    },
+    {
+      "name": "Federal Law Enforcement Training Centers",
+      "acronym": "FLETC",
+      "source_url": "https://www.usa.gov/agency-index/f",
+      "source_line": 429
+    },
+    {
+      "name": "Federal Labor Relations Authority",
+      "acronym": "FLRA",
+      "source_url": "https://www.usa.gov/agency-index/f",
+      "source_line": 396
+    },
+    {
+      "name": "Federal Maritime Commission",
+      "acronym": "FMC",
+      "source_url": "https://www.usa.gov/agency-index/f",
+      "source_line": 462
+    },
+    {
+      "name": "Federal Mediation and Conciliation Service",
+      "acronym": "FMCS",
+      "source_url": "https://www.usa.gov/agency-index/f",
+      "source_line": 479
+    },
+    {
+      "name": "Federal Motor Carrier Safety Administration",
+      "acronym": "FMCSA",
+      "source_url": "https://www.usa.gov/agency-index/f",
+      "source_line": 515
+    },
+    {
+      "name": "Federal Protective Service",
+      "acronym": "FPS",
+      "source_url": "https://www.usa.gov/agency-index/f",
+      "source_line": 531
+    },
+    {
+      "name": "Federal Retirement Thrift Investment Board",
+      "acronym": "FRTIB",
+      "source_url": "https://www.usa.gov/agency-index/f",
+      "source_line": 598
+    },
+    {
+      "name": "Farm Service Agency",
+      "acronym": "FSA",
+      "source_url": "https://www.usa.gov/agency-index/f",
+      "source_line": 118
+    },
+    {
+      "name": "Government Accountability Office",
+      "acronym": "GAO",
+      "source_url": "https://www.usa.gov/agency-index/g",
+      "source_line": 120
+    },
+    {
+      "name": "Saint Lawrence Seaway Development Corporation",
+      "acronym": "GLS",
+      "source_url": "https://www.usa.gov/agency-index/s",
+      "source_line": 69
+    },
+    {
+      "name": "Government Publishing Office",
+      "acronym": "GPO",
+      "source_url": "https://www.usa.gov/agency-index/g",
+      "source_line": 154
+    },
+    {
+      "name": "U.S. Department of Housing and Urban Development",
+      "acronym": "HUD",
+      "source_url": "https://www.usa.gov/agency-index/u",
+      "source_line": 580
+    },
+    {
+      "name": "Indian Arts and Crafts Board",
+      "acronym": "IACB",
+      "source_url": "https://www.usa.gov/agency-index/i",
+      "source_line": 128
+    },
+    {
+      "name": "Inter-American Foundation",
+      "acronym": "IAF",
+      "source_url": "https://www.usa.gov/agency-index/i",
+      "source_line": 261
+    },
+    {
+      "name": "Immigration and Customs Enforcement",
+      "acronym": "ICE",
+      "source_url": "https://www.usa.gov/agency-index/i",
+      "source_line": 86
+    },
+    {
+      "name": "Office of Immigrant and Employee Rights",
+      "acronym": "IER",
+      "source_url": "https://www.usa.gov/agency-index/o",
+      "source_line": 361
+    },
+    {
+      "name": "Institute of Education Sciences",
+      "acronym": "IES",
+      "source_url": "https://www.usa.gov/agency-index/i",
+      "source_line": 228
+    },
+    {
+      "name": "Indian Health Service",
+      "acronym": "IHS",
+      "source_url": "https://www.usa.gov/agency-index/i",
+      "source_line": 147
+    },
+    {
+      "name": "Bureau of International Labor Affairs",
+      "acronym": "ILAB",
+      "source_url": "https://www.usa.gov/agency-index/b",
+      "source_line": 261
+    },
+    {
+      "name": "Internal Revenue Service",
+      "acronym": "IRS",
+      "source_url": "https://www.usa.gov/agency-index/i",
+      "source_line": 303
+    },
+    {
+      "name": "Joint Congressional Committee on Inaugural Ceremonies",
+      "acronym": "JCCIC",
+      "source_url": "https://www.usa.gov/agency-index/j",
+      "source_line": 145
+    },
+    {
+      "name": "Joint Forces Staff College",
+      "acronym": "JFSC",
+      "source_url": "https://www.usa.gov/agency-index/j",
+      "source_line": 171
+    },
+    {
+      "name": "Judicial Panel on Multidistrict Litigation",
+      "acronym": "JPML",
+      "source_url": "https://www.usa.gov/agency-index/j",
+      "source_line": 220
+    },
+    {
+      "name": "Japan-United States Friendship Commission",
+      "acronym": "JUSFC",
+      "source_url": "https://www.usa.gov/agency-index/j",
+      "source_line": 69
+    },
+    {
+      "name": "Medicaid and CHIP Payment and Access Commission",
+      "acronym": "MACPAC",
+      "source_url": "https://www.usa.gov/agency-index/m",
+      "source_line": 176
+    },
+    {
+      "name": "Minority Business Development Agency",
+      "acronym": "MBDA",
+      "source_url": "https://www.usa.gov/agency-index/m",
+      "source_line": 311
+    },
+    {
+      "name": "Millennium Challenge Corporation",
+      "acronym": "MCC",
+      "source_url": "https://www.usa.gov/agency-index/m",
+      "source_line": 277
+    },
+    {
+      "name": "Missile Defense Agency",
+      "acronym": "MDA",
+      "source_url": "https://www.usa.gov/agency-index/m",
+      "source_line": 365
+    },
+    {
+      "name": "Office of Multifamily Housing Programs",
+      "acronym": "MFH",
+      "source_url": "https://www.usa.gov/agency-index/o",
+      "source_line": 488
+    },
+    {
+      "name": "Mississippi River Commission",
+      "acronym": "MRC",
+      "source_url": "https://www.usa.gov/agency-index/m",
+      "source_line": 378
+    },
+    {
+      "name": "Merit Systems Protection Board",
+      "acronym": "MSPB",
+      "source_url": "https://www.usa.gov/agency-index/m",
+      "source_line": 225
+    },
+    {
+      "name": "National Agricultural Library",
+      "acronym": "NAL",
+      "source_url": "https://www.usa.gov/agency-index/n",
+      "source_line": 75
+    },
+    {
+      "name": "National Archives and Records Administration",
+      "acronym": "NARA",
+      "source_url": "https://www.usa.gov/agency-index/n",
+      "source_line": 108
+    },
+    {
+      "name": "National Agricultural Statistics Service",
+      "acronym": "NASS",
+      "source_url": "https://www.usa.gov/agency-index/n",
+      "source_line": 92
+    },
+    {
+      "name": "National Cemetery Administration",
+      "acronym": "NCA",
+      "source_url": "https://www.usa.gov/agency-index/n",
+      "source_line": 152
+    },
+    {
+      "name": "National Center for Complementary and Integrative Health",
+      "acronym": "NCCIH",
+      "source_url": "https://www.usa.gov/agency-index/n",
+      "source_line": 169
+    },
+    {
+      "name": "National Council on Disability",
+      "acronym": "NCD",
+      "source_url": "https://www.usa.gov/agency-index/n",
+      "source_line": 198
+    },
+    {
+      "name": "National Cancer Institute",
+      "acronym": "NCI",
+      "source_url": "https://www.usa.gov/agency-index/n",
+      "source_line": 124
+    },
+    {
+      "name": "National Capital Planning Commission",
+      "acronym": "NCPC",
+      "source_url": "https://www.usa.gov/agency-index/n",
+      "source_line": 136
+    },
+    {
+      "name": "National Credit Union Administration",
+      "acronym": "NCUA",
+      "source_url": "https://www.usa.gov/agency-index/n",
+      "source_line": 215
+    },
+    {
+      "name": "National Defense University",
+      "acronym": "NDU",
+      "source_url": "https://www.usa.gov/agency-index/n",
+      "source_line": 231
+    },
+    {
+      "name": "National Endowment for the Arts",
+      "acronym": "NEA",
+      "source_url": "https://www.usa.gov/agency-index/n",
+      "source_line": 248
+    },
+    {
+      "name": "National Endowment for the Humanities",
+      "acronym": "NEH",
+      "source_url": "https://www.usa.gov/agency-index/n",
+      "source_line": 265
+    },
+    {
+      "name": "National Geospatial-Intelligence Agency",
+      "acronym": "NGA",
+      "source_url": "https://www.usa.gov/agency-index/n",
+      "source_line": 311
+    },
+    {
+      "name": "National Highway Traffic Safety Administration",
+      "acronym": "NHTSA",
+      "source_url": "https://www.usa.gov/agency-index/n",
+      "source_line": 372
+    },
+    {
+      "name": "National Institute of Allergy and Infectious Diseases",
+      "acronym": "NIAID",
+      "source_url": "https://www.usa.gov/agency-index/n",
+      "source_line": 424
+    },
+    {
+      "name": "National Institute of Corrections",
+      "acronym": "NIC",
+      "source_url": "https://www.usa.gov/agency-index/n",
+      "source_line": 460
+    },
+    {
+      "name": "National Institute of Deafness and Other Communication Disorders",
+      "acronym": "NIDCD",
+      "source_url": "https://www.usa.gov/agency-index/n",
+      "source_line": 473
+    },
+    {
+      "name": "National Institute of Diabetes and Digestive and Kidney Diseases",
+      "acronym": "NIDDK",
+      "source_url": "https://www.usa.gov/agency-index/n",
+      "source_line": 485
+    },
+    {
+      "name": "National Institute of Food and Agriculture",
+      "acronym": "NIFA",
+      "source_url": "https://www.usa.gov/agency-index/n",
+      "source_line": 497
+    },
+    {
+      "name": "National Institute of Justice",
+      "acronym": "NIJ",
+      "source_url": "https://www.usa.gov/agency-index/n",
+      "source_line": 514
+    },
+    {
+      "name": "National Institute of Mental Health",
+      "acronym": "NIMH",
+      "source_url": "https://www.usa.gov/agency-index/n",
+      "source_line": 531
+    },
+    {
+      "name": "National Institute of Neurological Disorders and Stroke",
+      "acronym": "NINDS",
+      "source_url": "https://www.usa.gov/agency-index/n",
+      "source_line": 547
+    },
+    {
+      "name": "National Institute for Occupational Safety and Health",
+      "acronym": "NIOSH",
+      "source_url": "https://www.usa.gov/agency-index/n",
+      "source_line": 411
+    },
+    {
+      "name": "National Labor Relations Board",
+      "acronym": "NLRB",
+      "source_url": "https://www.usa.gov/agency-index/n",
+      "source_line": 629
+    },
+    {
+      "name": "National Mediation Board",
+      "acronym": "NMB",
+      "source_url": "https://www.usa.gov/agency-index/n",
+      "source_line": 698
+    },
+    {
+      "name": "Office of Child Support Services",
+      "acronym": "OCSS",
+      "source_url": "https://www.usa.gov/agency-index/o",
+      "source_line": 156
+    },
+    {
+      "name": "Office of Congressional Workplace Rights",
+      "acronym": "OCWR",
+      "source_url": "https://www.usa.gov/agency-index/o",
+      "source_line": 188
+    },
+    {
+      "name": "Office of Disability Employment Policy",
+      "acronym": "ODEP",
+      "source_url": "https://www.usa.gov/agency-index/o",
+      "source_line": 230
+    },
+    {
+      "name": "Office of Elementary and Secondary Education",
+      "acronym": "OESE",
+      "source_url": "https://www.usa.gov/agency-index/o",
+      "source_line": 247
+    },
+    {
+      "name": "Office of Government Ethics",
+      "acronym": "OGE",
+      "source_url": "https://www.usa.gov/agency-index/o",
+      "source_line": 327
+    },
+    {
+      "name": "Office of Juvenile Justice and Delinquency Prevention",
+      "acronym": "OJJDP",
+      "source_url": "https://www.usa.gov/agency-index/o",
+      "source_line": 403
+    },
+    {
+      "name": "Office of Justice Programs",
+      "acronym": "OJP",
+      "source_url": "https://www.usa.gov/agency-index/o",
+      "source_line": 387
+    },
+    {
+      "name": "Office of Lead Hazard Control and Healthy Homes",
+      "acronym": "OLHCHH",
+      "source_url": "https://www.usa.gov/agency-index/o",
+      "source_line": 415
+    },
+    {
+      "name": "Office of Minority Health",
+      "acronym": "OMH",
+      "source_url": "https://www.usa.gov/agency-index/o",
+      "source_line": 471
+    },
+    {
+      "name": "Office of Manufactured Housing Programs",
+      "acronym": "OMHP",
+      "source_url": "https://www.usa.gov/agency-index/o",
+      "source_line": 458
+    },
+    {
+      "name": "Office of National Drug Control Policy",
+      "acronym": "ONDCP",
+      "source_url": "https://www.usa.gov/agency-index/o",
+      "source_line": 504
+    },
+    {
+      "name": "Office of Natural Resources Revenue",
+      "acronym": "ONRR",
+      "source_url": "https://www.usa.gov/agency-index/o",
+      "source_line": 517
+    },
+    {
+      "name": "Office of Postsecondary Education",
+      "acronym": "OPE",
+      "source_url": "https://www.usa.gov/agency-index/o",
+      "source_line": 576
+    },
+    {
+      "name": "Oak Ridge National Laboratory",
+      "acronym": "ORNL",
+      "source_url": "https://www.usa.gov/agency-index/o",
+      "source_line": 56
+    },
+    {
+      "name": "Office of Refugee Resettlement",
+      "acronym": "ORR",
+      "source_url": "https://www.usa.gov/agency-index/o",
+      "source_line": 592
+    },
+    {
+      "name": "Office of Special Counsel",
+      "acronym": "OSC",
+      "source_url": "https://www.usa.gov/agency-index/o",
+      "source_line": 654
+    },
+    {
+      "name": "Office of Special Education and Rehabilitative Services",
+      "acronym": "OSERS",
+      "source_url": "https://www.usa.gov/agency-index/o",
+      "source_line": 671
+    },
+    {
+      "name": "Occupational Safety and Health Review Commission",
+      "acronym": "OSHRC",
+      "source_url": "https://www.usa.gov/agency-index/o",
+      "source_line": 89
+    },
+    {
+      "name": "Office of Scientific and Technical Information",
+      "acronym": "OSTI",
+      "source_url": "https://www.usa.gov/agency-index/o",
+      "source_line": 625
+    },
+    {
+      "name": "Office of Science and Technology Policy",
+      "acronym": "OSTP",
+      "source_url": "https://www.usa.gov/agency-index/o",
+      "source_line": 612
+    },
+    {
+      "name": "Office of Textiles and Apparel",
+      "acronym": "OTEXA",
+      "source_url": "https://www.usa.gov/agency-index/o",
+      "source_line": 699
+    },
+    {
+      "name": "Pension Benefit Guaranty Corporation",
+      "acronym": "PBGC",
+      "source_url": "https://www.usa.gov/agency-index/p",
+      "source_line": 154
+    },
+    {
+      "name": "Privacy and Civil Liberties Oversight Board",
+      "acronym": "PCLOB",
+      "source_url": "https://www.usa.gov/agency-index/p",
+      "source_line": 356
+    },
+    {
+      "name": "Pentagon Force Protection Agency",
+      "acronym": "PFPA",
+      "source_url": "https://www.usa.gov/agency-index/p",
+      "source_line": 171
+    },
+    {
+      "name": "Pipeline and Hazardous Materials Safety Administration",
+      "acronym": "PHMSA",
+      "source_url": "https://www.usa.gov/agency-index/p",
+      "source_line": 188
+    },
+    {
+      "name": "Radio Free Asia",
+      "acronym": "RFA",
+      "source_url": "https://www.usa.gov/agency-index/r",
+      "source_line": 69
+    },
+    {
+      "name": "Risk Management Agency",
+      "acronym": "RMA",
+      "source_url": "https://www.usa.gov/agency-index/r",
+      "source_line": 186
+    },
+    {
+      "name": "Railroad Retirement Board",
+      "acronym": "RRB",
+      "source_url": "https://www.usa.gov/agency-index/r",
+      "source_line": 116
+    },
+    {
+      "name": "Rehabilitation Services Administration",
+      "acronym": "RSA",
+      "source_url": "https://www.usa.gov/agency-index/r",
+      "source_line": 170
+    },
+    {
+      "name": "Rural Utilities Service",
+      "acronym": "RUS",
+      "source_url": "https://www.usa.gov/agency-index/r",
+      "source_line": 264
+    },
+    {
+      "name": "Substance Abuse and Mental Health Services Administration",
+      "acronym": "SAMHSA",
+      "source_url": "https://www.usa.gov/agency-index/s",
+      "source_line": 445
+    },
+    {
+      "name": "State Justice Institute",
+      "acronym": "SJI",
+      "source_url": "https://www.usa.gov/agency-index/s",
+      "source_line": 402
+    },
+    {
+      "name": "Southern Command",
+      "acronym": "SOUTHCOM",
+      "source_url": "https://www.usa.gov/agency-index/s",
+      "source_line": 291
+    },
+    {
+      "name": "Susquehanna River Basin Commission",
+      "acronym": "SRBC",
+      "source_url": "https://www.usa.gov/agency-index/s",
+      "source_line": 506
+    },
+    {
+      "name": "Social Security Advisory Board",
+      "acronym": "SSAB",
+      "source_url": "https://www.usa.gov/agency-index/s",
+      "source_line": 265
+    },
+    {
+      "name": "Selective Service System",
+      "acronym": "SSS",
+      "source_url": "https://www.usa.gov/agency-index/s",
+      "source_line": 147
+    },
+    {
+      "name": "Surface Transportation Board",
+      "acronym": "STB",
+      "source_url": "https://www.usa.gov/agency-index/s",
+      "source_line": 489
+    },
+    {
+      "name": "Alcohol and Tobacco Tax and Trade Bureau",
+      "acronym": "TTB",
+      "source_url": "https://www.usa.gov/agency-index",
+      "source_line": 402
+    },
+    {
+      "name": "African Development Foundation",
+      "acronym": "USADF",
+      "source_url": "https://www.usa.gov/agency-index",
+      "source_line": 207
+    },
+    {
+      "name": "Agency for International Development",
+      "acronym": "USAID",
+      "source_url": "https://www.usa.gov/agency-index",
+      "source_line": 257
+    },
+    {
+      "name": "U.S. Arctic Research Commission",
+      "acronym": "USARC",
+      "source_url": "https://www.usa.gov/agency-index/u",
+      "source_line": 162
+    },
+    {
+      "name": "Commission on Civil Rights",
+      "acronym": "USCCR",
+      "source_url": "https://www.usa.gov/agency-index/c",
+      "source_line": 410
+    },
+    {
+      "name": "U.S. Commission on International Religious Freedom",
+      "acronym": "USCIRF",
+      "source_url": "https://www.usa.gov/agency-index/u",
+      "source_line": 374
+    },
+    {
+      "name": "U.S. Citizenship and Immigration Services",
+      "acronym": "USCIS",
+      "source_url": "https://www.usa.gov/agency-index/u",
+      "source_line": 323
+    },
+    {
+      "name": "U.S. European Command",
+      "acronym": "USEUCOM",
+      "source_url": "https://www.usa.gov/agency-index/u",
+      "source_line": 738
+    },
+    {
+      "name": "U.S. Fire Administration",
+      "acronym": "USFA",
+      "source_url": "https://www.usa.gov/agency-index/u",
+      "source_line": 751
+    },
+    {
+      "name": "Fleet Forces Command",
+      "acronym": "USFFC",
+      "source_url": "https://www.usa.gov/agency-index/f",
+      "source_line": 744
+    },
+    {
+      "name": "Indo-Pacific Command",
+      "acronym": "USINDOPACOM",
+      "source_url": "https://www.usa.gov/agency-index/i",
+      "source_line": 164
+    },
+    {
+      "name": "Marshals Service",
+      "acronym": "USMS",
+      "source_url": "https://www.usa.gov/agency-index/m",
+      "source_line": 120
+    },
+    {
+      "name": "Patent and Trademark Office",
+      "acronym": "USPTO",
+      "source_url": "https://www.usa.gov/agency-index/p",
+      "source_line": 120
+    },
+    {
+      "name": "Strategic Command",
+      "acronym": "USSTRATCOM",
+      "source_url": "https://www.usa.gov/agency-index/s",
+      "source_line": 428
+    },
+    {
+      "name": "Trade and Development Agency",
+      "acronym": "USTDA",
+      "source_url": "https://www.usa.gov/agency-index/t",
+      "source_line": 90
+    },
+    {
+      "name": "Veterans Benefits Administration",
+      "acronym": "VBA",
+      "source_url": "https://www.usa.gov/agency-index/v",
+      "source_line": 71
+    },
+    {
+      "name": "Veterans' Employment and Training Service",
+      "acronym": "VETS",
+      "source_url": "https://www.usa.gov/agency-index/v",
+      "source_line": 105
+    },
+    {
+      "name": "Veterans Health Administration",
+      "acronym": "VHA",
+      "source_url": "https://www.usa.gov/agency-index/v",
+      "source_line": 88
+    },
+    {
+      "name": "Voice of America",
+      "acronym": "VOA",
+      "source_url": "https://www.usa.gov/agency-index/v",
+      "source_line": 146
+    },
+    {
+      "name": "Western Area Power Administration",
+      "acronym": "WAPA",
+      "source_url": "https://www.usa.gov/agency-index/w",
+      "source_line": 110
+    },
+    {
+      "name": "Wage and Hour Division",
+      "acronym": "WHD",
+      "source_url": "https://www.usa.gov/agency-index/w",
+      "source_line": 55
+    },
+    {
+      "name": "Washington Headquarters Services",
+      "acronym": "WHS",
+      "source_url": "https://www.usa.gov/agency-index/w",
+      "source_line": 68
+    },
+    {
+      "name": "Wireless Telecommunications Bureau",
+      "acronym": "WTB",
+      "source_url": "https://www.usa.gov/agency-index/w",
+      "source_line": 140
+    }
+  ]
+}

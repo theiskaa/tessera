@@ -1,20 +1,60 @@
 //! US organization names and units used by the synthetic document generator.
-//! Public body names remain held until the US roster and evaluation overlap are checked.
+//! Public bodies come from a reviewed USAGov index snapshot.
 
 use std::collections::HashSet;
+use std::sync::OnceLock;
 
+use anyhow::Context;
 use rand::Rng;
 use rand::seq::IndexedRandom;
 use rand_chacha::ChaCha8Rng;
+use serde::Deserialize;
 use tessera::internal::fnv1a;
 
 use crate::data::Split;
 
-/// A public body and its acronym, when a reviewed roster becomes available.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// A public body and its acronym.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct Body {
     pub name: String,
     pub acronym: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct BodyRoster {
+    bodies: Vec<Body>,
+}
+
+fn public_bodies() -> anyhow::Result<&'static [Body]> {
+    static ROSTER: OnceLock<anyhow::Result<Vec<Body>>> = OnceLock::new();
+    let result = ROSTER.get_or_init(|| {
+        let roster: BodyRoster =
+            serde_json::from_str(include_str!("../data/us-public-bodies.json"))
+                .context("parsing reviewed US public-body roster")?;
+        anyhow::ensure!(!roster.bodies.is_empty(), "empty US public-body roster");
+        let mut names = HashSet::new();
+        let mut acronyms = HashSet::new();
+        for body in &roster.bodies {
+            anyhow::ensure!(!body.name.trim().is_empty(), "empty public-body name");
+            anyhow::ensure!(
+                names.insert(body.name.to_lowercase()),
+                "duplicate public-body name"
+            );
+            let acronym = body
+                .acronym
+                .as_deref()
+                .context("public body lacks acronym")?;
+            anyhow::ensure!(
+                acronyms.insert(acronym.to_string()),
+                "duplicate public-body acronym"
+            );
+        }
+        Ok(roster.bodies)
+    });
+    result
+        .as_ref()
+        .map(Vec::as_slice)
+        .map_err(|error| anyhow::anyhow!("{error}"))
 }
 
 const TOPICS: &[&str] = &[
@@ -154,9 +194,12 @@ fn pick(items: &[&str], rng: &mut ChaCha8Rng) -> String {
     items.choose(rng).copied().unwrap_or("").to_string()
 }
 
-/// Split-owned foreign public-body names are absent from the US generator.
-pub(crate) fn reserved_listed_surfaces() -> HashSet<&'static str> {
-    HashSet::new()
+/// Names reserved for the curated US public-body pool.
+pub(crate) fn reserved_listed_surfaces() -> anyhow::Result<HashSet<&'static str>> {
+    Ok(public_bodies()?
+        .iter()
+        .map(|body| body.name.as_str())
+        .collect())
 }
 
 /// US organization vocabulary for one synthetic data split.
@@ -180,9 +223,19 @@ impl Bodies {
         Bodies { split }
     }
 
-    /// Public body names require a reviewed roster before use in synthetic training data.
-    pub fn body(&self, _acronym: bool, _rng: &mut ChaCha8Rng) -> anyhow::Result<Body> {
-        anyhow::bail!("no approved US public-body roster")
+    /// Draws a public body owned by this split.
+    pub fn body(&self, acronym: bool, rng: &mut ChaCha8Rng) -> anyhow::Result<Body> {
+        let owned = public_bodies()?
+            .iter()
+            .filter(|body| {
+                (!acronym || body.acronym.is_some())
+                    && in_split(body.acronym.as_deref().unwrap_or(&body.name), self.split)
+            })
+            .collect::<Vec<_>>();
+        owned
+            .choose(rng)
+            .map(|body| (*body).clone())
+            .with_context(|| format!("no US public bodies for {:?}", self.split))
     }
 
     /// Georgian local office headings are outside the US generator.
@@ -258,12 +311,14 @@ mod tests {
     use rand::SeedableRng;
 
     #[test]
-    fn public_body_draws_stay_held() {
+    fn public_body_draws_are_split_owned() {
         let mut rng = ChaCha8Rng::seed_from_u64(1);
         for split in Split::ALL {
             let bodies = Bodies::new("US", split);
-            assert!(bodies.body(false, &mut rng).is_err());
-            assert!(bodies.body(true, &mut rng).is_err());
+            for _ in 0..100 {
+                let body = bodies.body(true, &mut rng).unwrap();
+                assert!(in_split(body.acronym.as_deref().unwrap(), split));
+            }
         }
     }
 
