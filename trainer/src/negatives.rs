@@ -89,7 +89,7 @@ pub const HOURS: &[(&str, &[&str])] = &[(
         "Monday to Friday, 9am to 5pm",
         "Mon–Fri 08:30–17:00",
         "Open weekdays 8am to 6pm, Saturday 9am to 1pm",
-        "Lines are open Monday to Thursday, 8.30am to 5pm, Friday 8.30am to 4.30pm",
+        "Phone lines are open Monday through Friday, 8:30 a.m. to 5:00 p.m.",
         "Closed on federal holidays",
         "24 hours a day, 7 days a week",
     ],
@@ -106,7 +106,7 @@ pub const TITLE_CASE_SENTENCES: &[&str] = &[
     "Send the signed NDA before the kickoff call.",
     "The SLA covers response times, not resolution times.",
     "Attach the PDF and the CSV export to the ticket.",
-    "Your VAT receipt shows the net and gross amounts.",
+    "Your sales tax receipt shows the subtotal and total.",
     "The FAQ and the API reference were updated last week.",
     "Check the ETA on the tracking page.",
     "The Board Meeting Minutes are in the shared folder.",
@@ -114,7 +114,7 @@ pub const TITLE_CASE_SENTENCES: &[&str] = &[
     "The Service Level Agreement renews each April.",
     "The Risk Assessment and the Method Statement are both approved.",
     "A FOIA request may take up to twenty working days.",
-    "Your PAYE reference is on the payslip.",
+    "Your payroll reference is on the pay stub.",
     "The KPI dashboard refreshes every morning.",
 ];
 

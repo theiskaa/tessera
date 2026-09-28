@@ -8,7 +8,7 @@ train_per_country = 30000
 valid_per_country = 3000
 test_per_country = 3000
 manifests = "data/manifests"
-processed = "data/processed/detector"
+processed = "data/processed/detector-us-v1"
 
 [features]
 ngram_sizes = [2, 3, 4]
@@ -40,7 +40,7 @@ people_per_country = 20000
 orgs_per_country = 20000
 raw = "data/raw"
 interim = "data/interim"
-out = "data/processed/names"
+out = "data/processed/names-us-v1"
 sample_seed = 42
 birth_years = [1930, 2005]
 
@@ -50,5 +50,6 @@ valid = 10000
 test_seen = 10000
 test_heldout_templates = 5000
 test_heldout_families = 5000
-addresses = "data/processed/parser"
+addresses = "data/processed/parser-us-v1"
+exclude_gold = "data/interim/review/us-eval-exclusions-v1.jsonl"
 max_tokens = 900

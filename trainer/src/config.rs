@@ -169,6 +169,8 @@ pub struct GenerateConfig {
     pub test_heldout_families: usize,
     /// Directory of the parser shards the addresses come from.
     pub addresses: String,
+    /// Reviewed evaluation cases whose entity surfaces are excluded from generated documents.
+    pub exclude_gold: String,
     /// Longest document kept, in non-whitespace tokens, so training never needs chunking.
     pub max_tokens: usize,
 }

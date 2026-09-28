@@ -3,7 +3,7 @@
 //!
 //! Every email uses a reserved domain and every phone number comes from a per-country
 //! generator; only the generators marked `fixture_safe` draw from ranges reserved for
-//! fiction. Names and organizations are real (Wikidata and GLEIF), so generated text is
+//! fiction. Names and organizations are real (Wikidata, GLEIF, and USAGov), so generated text is
 //! training data only and never enters a versioned fixture.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -15,7 +15,8 @@ use polars::prelude::{Column, DataFrame, ParquetReader, ParquetWriter, SerReader
 use rand::seq::IndexedRandom;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use tessera::Kind;
 use tessera::internal::{is_content, tokenize};
 use unicode_normalization::UnicodeNormalization;
@@ -111,6 +112,17 @@ impl Category {
             Category::NoPersonWithAddress => "no_person_with_address",
             Category::NoAddressWithPerson => "no_address_with_person",
             Category::Both => "both",
+        }
+    }
+
+    fn matches(self, entities: &[Gold]) -> bool {
+        let person = entities.iter().any(|span| span.kind == "person");
+        let address = entities.iter().any(|span| span.kind == "address");
+        match self {
+            Category::Nothing => !person && !address,
+            Category::NoPersonWithAddress => !person && address,
+            Category::NoAddressWithPerson => person && !address,
+            Category::Both => person && address,
         }
     }
 }
@@ -398,7 +410,112 @@ pub struct Pools {
     pub people: Vec<PoolPerson>,
     pub orgs: Vec<PoolOrg>,
     pub addresses: Vec<PoolAddress>,
+    multiline_addresses: Vec<usize>,
+    complete_multiline_addresses: Vec<usize>,
     pub bodies: Bodies,
+}
+
+#[derive(Default)]
+struct GoldExclusions {
+    texts: HashSet<String>,
+    people: HashSet<String>,
+    orgs: HashSet<String>,
+    addresses: HashSet<String>,
+    sha256: String,
+}
+
+#[derive(Deserialize)]
+struct GoldExclusionCase {
+    country: String,
+    input: String,
+    expected: Vec<GoldExclusionSpan>,
+}
+
+#[derive(Deserialize)]
+struct GoldExclusionSpan {
+    kind: String,
+    text: String,
+}
+
+impl GoldExclusions {
+    fn load(path: &Path) -> anyhow::Result<Self> {
+        let bytes = std::fs::read(path)
+            .with_context(|| format!("reading evaluation exclusions {}", path.display()))?;
+        let mut exclusions = Self {
+            sha256: format!("{:x}", Sha256::digest(&bytes)),
+            ..Self::default()
+        };
+        for (index, line) in String::from_utf8(bytes)?.lines().enumerate() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            let case: GoldExclusionCase = serde_json::from_str(line)
+                .with_context(|| format!("{}:{}", path.display(), index + 1))?;
+            anyhow::ensure!(
+                case.country == "US",
+                "{}:{} has non-US evaluation data",
+                path.display(),
+                index + 1
+            );
+            exclusions.texts.insert(case.input);
+            for span in case.expected {
+                let surface = normalize_surface(&span.text);
+                match span.kind.as_str() {
+                    "person" => {
+                        exclusions.people.insert(surface);
+                    }
+                    "org" => {
+                        exclusions.orgs.insert(surface);
+                    }
+                    "address" => {
+                        exclusions.addresses.insert(surface);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        anyhow::ensure!(
+            !exclusions.people.is_empty() && !exclusions.addresses.is_empty(),
+            "{} has no US person or address exclusions",
+            path.display()
+        );
+        Ok(exclusions)
+    }
+
+    fn check(&self, doc: &Doc) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            !self.texts.contains(&doc.text),
+            "generated document duplicates held-out evaluation text"
+        );
+        let bytes = doc.text.as_bytes();
+        for span in &doc.entities {
+            let excluded = match span.kind {
+                "person" => &self.people,
+                "org" => &self.orgs,
+                "address" => &self.addresses,
+                _ => continue,
+            };
+            let surface =
+                std::str::from_utf8(bytes.get(span.start..span.end).with_context(|| {
+                    format!("generated {} span has invalid offsets", span.kind)
+                })?)?;
+            anyhow::ensure!(
+                !excluded.contains(&normalize_surface(surface)),
+                "generated {} span overlaps held-out evaluation: {surface}",
+                span.kind
+            );
+        }
+        Ok(())
+    }
+}
+
+fn normalize_surface(text: &str) -> String {
+    text.nfc()
+        .collect::<String>()
+        .to_lowercase()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// Per-document fill state: the pools of the document's split and country, and the values
@@ -803,15 +920,21 @@ impl<'a> Ctx<'a> {
 
     fn address(&self, multiline: bool, rng: &mut ChaCha8Rng) -> anyhow::Result<&'a PoolAddress> {
         let pool = &self.pools.addresses;
-        let candidates: Vec<&PoolAddress> = if multiline {
-            pool.iter().filter(|a| a.multiline()).collect()
+        if !multiline {
+            return pool
+                .choose(rng)
+                .with_context(|| format!("no addresses for {}", self.country));
+        }
+        let indices = if !self.pools.complete_multiline_addresses.is_empty() && rng.random_bool(0.8)
+        {
+            &self.pools.complete_multiline_addresses
         } else {
-            pool.iter().collect()
+            &self.pools.multiline_addresses
         };
-        candidates
+        let index = indices
             .choose(rng)
-            .copied()
-            .with_context(|| format!("no addresses for {}", self.country))
+            .with_context(|| format!("no multiline addresses for {}", self.country))?;
+        Ok(&pool[*index])
     }
 
     /// A local part from the linked person when their name is Latin, else a generic one;
@@ -1196,13 +1319,13 @@ fn expand_lists(text: &str, country: &str, rng: &mut ChaCha8Rng) -> String {
 fn wrapped(doc: Doc, ctx: &Ctx, max_tokens: usize, rng: &mut ChaCha8Rng) -> anyhow::Result<Doc> {
     let author = ctx.person(rng)?.name;
     let mut padding = filler::Wrap::draw(ctx.country, &author, rng);
-    // These contact snippets are deliberately person-free. A generic named reply
-    // header would silently add a person despite their Nothing categories.
-    if matches!(doc.template_id, 386..=388)
-        && padding
-            .quote
-            .as_ref()
-            .is_some_and(|(_, name)| name.is_some())
+    if matches!(
+        doc.category,
+        Category::Nothing | Category::NoPersonWithAddress
+    ) && padding
+        .quote
+        .as_ref()
+        .is_some_and(|(_, name)| name.is_some())
     {
         padding.quote = None;
     }
@@ -1222,6 +1345,8 @@ pub enum Drop {
     TooLong,
     EmptyEntity,
     Duplicate,
+    CategoryMismatch,
+    EvaluationOverlap,
 }
 
 impl Drop {
@@ -1232,6 +1357,8 @@ impl Drop {
             Drop::TooLong => "too_long",
             Drop::EmptyEntity => "empty_entity",
             Drop::Duplicate => "duplicate",
+            Drop::CategoryMismatch => "category_mismatch",
+            Drop::EvaluationOverlap => "evaluation_overlap",
         }
     }
 }
@@ -1239,6 +1366,9 @@ impl Drop {
 /// The post-render checks: every span starts and ends on a token boundary, spans do not
 /// overlap or come out empty, and the document fits the model without chunking.
 pub fn check(doc: &Doc, max_tokens: usize) -> Result<(), Drop> {
+    if !doc.category.matches(&doc.entities) {
+        return Err(Drop::CategoryMismatch);
+    }
     let tokens = tokenize(&doc.text);
     if tokens.iter().filter(|t| is_content(t)).count() > max_tokens {
         return Err(Drop::TooLong);
@@ -1293,14 +1423,9 @@ fn supported_template(template: &Template, country: &str) -> bool {
     let Ok(slots) = template.slots() else {
         return false;
     };
-    let unit = slots.iter().any(|item| item.slot == Slot::OrgUnit);
     let local_office = slots.iter().any(|item| item.slot == Slot::OrgLocalOffice);
-    let chain = slots.iter().any(|item| item.slot == Slot::OrgChain);
     let registry = slots.iter().any(|item| item.slot == Slot::OrgRegistry);
-    let public_body = slots
-        .iter()
-        .any(|item| matches!(item.slot, Slot::OrgGov | Slot::OrgAcronym));
-    if country != "US" || unit || local_office || chain || public_body {
+    if country != "US" || local_office {
         return false;
     }
     let other_than_registry = slots
@@ -1322,10 +1447,12 @@ pub fn run(config_path: &Path, sample: Option<usize>, family: Option<&str>) -> a
         .as_ref()
         .with_context(|| format!("{} has no [names] section", config_path.display()))?;
     let countries = static_countries(&cfg.data.countries)?;
+    let exclusions = GoldExclusions::load(Path::new(&gen_cfg.exclude_gold))?;
     let pools = load_pools(
         Path::new(&names.out),
         Path::new(&gen_cfg.addresses),
         &countries,
+        &exclusions,
     )?;
     let all = templates::all()?;
     let mut rng = ChaCha8Rng::seed_from_u64(cfg.seed);
@@ -1353,6 +1480,7 @@ pub fn run(config_path: &Path, sample: Option<usize>, family: Option<&str>) -> a
             let mut ctx = Ctx::new(country, &pools[&(Split::Train, country)]);
             let doc = render(template, &mut ctx, &mut rng)?;
             let doc = wrapped(doc, &ctx, usize::MAX, &mut rng)?;
+            exclusions.check(&doc)?;
             println!(
                 "--- {} #{} {}",
                 template.family.name(),
@@ -1364,14 +1492,17 @@ pub fn run(config_path: &Path, sample: Option<usize>, family: Option<&str>) -> a
         return Ok(());
     }
 
-    let (rows, dropped) = generate(gen_cfg, &countries, &pools, &all, &mut rng)?;
+    let (rows, dropped) = generate(gen_cfg, &countries, &pools, &all, &exclusions, &mut rng)?;
+    for row in &rows {
+        exclusions.check(&row.doc)?;
+    }
     let out = PathBuf::from(&cfg.data.processed);
     std::fs::create_dir_all(&out).with_context(|| format!("creating {}", out.display()))?;
     for split in Split::ALL {
         let subset: Vec<&Row> = rows.iter().filter(|r| r.split == split).collect();
         write_split(&out.join(format!("{}.parquet", split.name())), &subset)?;
     }
-    write_manifest(&cfg, gen_cfg, &rows, &dropped, &pools, &all)?;
+    write_manifest(&cfg, gen_cfg, &rows, &dropped, &pools, &all, &exclusions)?;
     print_summary(&rows, &dropped);
     Ok(())
 }
@@ -1460,6 +1591,7 @@ fn generate(
     countries: &[&'static str],
     pools: &HashMap<(Split, &'static str), Pools>,
     all: &[Template],
+    exclusions: &GoldExclusions,
     rng: &mut ChaCha8Rng,
 ) -> anyhow::Result<(Vec<Row>, Dropped)> {
     let mut rows = Vec::new();
@@ -1484,6 +1616,9 @@ fn generate(
                 let mut ctx = Ctx::new(country, &pools[&(split, country)]);
                 let doc = wrapped(render(template, &mut ctx, rng)?, &ctx, cfg.max_tokens, rng)?;
                 match check(&doc, cfg.max_tokens) {
+                    Ok(()) if exclusions.check(&doc).is_err() => {
+                        *dropped.entry(Drop::EvaluationOverlap.name()).or_default() += 1;
+                    }
                     Ok(()) if seen_text.insert(doc.text.clone()) => break doc,
                     Ok(()) => *dropped.entry(Drop::Duplicate.name()).or_default() += 1,
                     Err(d) => *dropped.entry(d.name()).or_default() += 1,
@@ -1505,8 +1640,9 @@ fn load_pools(
     names: &Path,
     addresses: &Path,
     countries: &[&'static str],
+    exclusions: &GoldExclusions,
 ) -> anyhow::Result<HashMap<(Split, &'static str), Pools>> {
-    let reserved_listed = crate::bodies::reserved_listed_surfaces();
+    let reserved_listed = crate::bodies::reserved_listed_surfaces()?;
     let mut pools: HashMap<(Split, &'static str), Pools> = HashMap::new();
     for &c in countries {
         for split in Split::ALL {
@@ -1533,7 +1669,7 @@ fn load_pools(
         .iter()
         .any(|p| row[0].to_lowercase().starts_with(p))
             || row[0].contains(['@', '$']);
-        if not_a_person {
+        if not_a_person || exclusions.people.contains(&normalize_surface(&row[0])) {
             continue;
         }
         if let Some(p) = pool_mut(&mut pools, &row[1], &row[3]) {
@@ -1554,6 +1690,9 @@ fn load_pools(
             row[0].clone()
         };
         let name = pool_filter::without_article(&name).to_string();
+        if exclusions.orgs.contains(&normalize_surface(&name)) {
+            continue;
+        }
         if imported_org_collides_with_listed(&name, &row[2], &reserved_listed) {
             continue;
         }
@@ -1587,8 +1726,31 @@ fn load_pools(
             if !pool_filter::postal(&e) {
                 continue;
             }
+            let address = PoolAddress::from_example(&e);
+            let complete = e
+                .spans
+                .iter()
+                .any(|span| span.label == tessera::AddressLabel::City)
+                && e.spans
+                    .iter()
+                    .any(|span| span.label == tessera::AddressLabel::Postcode);
+            if exclusions
+                .addresses
+                .contains(&normalize_surface(&address.text))
+                || exclusions
+                    .addresses
+                    .contains(&normalize_surface(&address.one_line()))
+            {
+                continue;
+            }
             if let Some(p) = pool_mut(&mut pools, &e.country, split.name()) {
-                p.addresses.push(PoolAddress::from_example(&e));
+                if address.multiline() {
+                    p.multiline_addresses.push(p.addresses.len());
+                    if complete {
+                        p.complete_multiline_addresses.push(p.addresses.len());
+                    }
+                }
+                p.addresses.push(address);
             }
         }
     }
@@ -1689,6 +1851,7 @@ fn write_manifest(
     dropped: &Dropped,
     pools: &HashMap<(Split, &'static str), Pools>,
     all: &[Template],
+    exclusions: &GoldExclusions,
 ) -> anyhow::Result<()> {
     let count_by = |f: &dyn Fn(&Row) -> String| -> BTreeMap<String, BTreeMap<&'static str, usize>> {
         let mut out: BTreeMap<String, BTreeMap<&'static str, usize>> = BTreeMap::new();
@@ -1717,6 +1880,8 @@ fn write_manifest(
                 "orgs": p.orgs.len(),
                 "borrowed_orgs": 0,
                 "addresses": p.addresses.len(),
+                "multiline_addresses": p.multiline_addresses.len(),
+                "complete_multiline_addresses": p.complete_multiline_addresses.len(),
             }),
         );
     }
@@ -1729,7 +1894,11 @@ fn write_manifest(
         "max_tokens": gen_cfg.max_tokens,
         "names": cfg.names.as_ref().map(|n| n.out.clone()),
         "addresses": gen_cfg.addresses,
-        "use": "detector training data only: documents contain real Wikidata and GLEIF names and never enter versioned fixtures",
+        "public_bodies": "trainer/data/us-public-bodies.json",
+        "public_bodies_sha256": format!("{:x}", Sha256::digest(include_bytes!("../data/us-public-bodies.json"))),
+        "exclude_gold": gen_cfg.exclude_gold,
+        "exclude_gold_sha256": exclusions.sha256,
+        "use": "detector training data only: documents contain real Wikidata, GLEIF, and USAGov names and never enter versioned fixtures",
         "counts": {
             "split": count_by(&|r| r.split.name().to_string()),
             "subset": count_by(&|r| r.subset.name().to_string()),
@@ -1768,6 +1937,93 @@ fn print_summary(rows: &[Row], dropped: &Dropped) {
 mod tests {
     use super::*;
 
+    #[test]
+    fn wrapping_keeps_person_free_categories_person_free() {
+        let pools = stub_pools(&[("Maya Johnson", "Latin")]);
+        let ctx = Ctx::new("US", &pools);
+        for category in [Category::Nothing, Category::NoPersonWithAddress] {
+            let (text, entities) = if category == Category::Nothing {
+                ("Office Hours".to_string(), Vec::new())
+            } else {
+                (
+                    "Mail to 10 Main St".to_string(),
+                    vec![Gold {
+                        kind: "address",
+                        start: 8,
+                        end: 18,
+                    }],
+                )
+            };
+            let doc = Doc {
+                text,
+                entities,
+                links: Vec::new(),
+                family: Family::Prose,
+                template_id: 0,
+                category,
+                country: "US",
+                phones_fixture_safe: true,
+            };
+            for seed in 0..200 {
+                let mut rng = ChaCha8Rng::seed_from_u64(seed);
+                let wrapped = wrapped(doc.clone(), &ctx, 900, &mut rng).unwrap();
+                assert!(category.matches(&wrapped.entities), "seed {seed}");
+            }
+        }
+    }
+
+    #[test]
+    fn gold_exclusions_normalize_us_entity_surfaces() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("gold.jsonl");
+        std::fs::write(
+            &path,
+            "{\"country\":\"US\",\"input\":\"source text\",\"expected\":[{\"kind\":\"person\",\"text\":\"Maya  Johnson\"},{\"kind\":\"org\",\"text\":\"Example Corp\"},{\"kind\":\"address\",\"text\":\"10 Main St\"}]}\n",
+        )
+        .unwrap();
+        let exclusions = GoldExclusions::load(&path).unwrap();
+        assert!(
+            exclusions
+                .people
+                .contains(&normalize_surface("maya johnson"))
+        );
+        assert!(exclusions.orgs.contains(&normalize_surface("EXAMPLE CORP")));
+        assert!(
+            exclusions
+                .addresses
+                .contains(&normalize_surface("10 Main St"))
+        );
+        let make_doc = |text: &str, kind: &'static str, end: usize| Doc {
+            text: text.to_string(),
+            entities: vec![Gold {
+                kind,
+                start: 0,
+                end,
+            }],
+            links: Vec::new(),
+            family: Family::Prose,
+            template_id: 0,
+            category: Category::Both,
+            country: "US",
+            phones_fixture_safe: true,
+        };
+        assert!(
+            exclusions
+                .check(&make_doc("source text", "person", 6))
+                .is_err()
+        );
+        assert!(
+            exclusions
+                .check(&make_doc("Maya Johnson", "person", 12))
+                .is_err()
+        );
+        assert!(
+            exclusions
+                .check(&make_doc("other name", "person", 10))
+                .is_ok()
+        );
+    }
+
     fn stub_pools(people: &[(&str, &str)]) -> Pools {
         Pools {
             people: people
@@ -1789,8 +2045,25 @@ mod tests {
                     text: "4 Misty Wood Circle, Austin, TX 78701".into(),
                 },
             ],
+            multiline_addresses: vec![0],
+            complete_multiline_addresses: vec![0],
             bodies: Bodies::new("US", Split::Train),
         }
+    }
+
+    #[test]
+    fn multiline_contact_addresses_prefer_complete_postal_blocks() {
+        let mut pools = stub_pools(&[("Maya Johnson", "latin")]);
+        pools.addresses.push(PoolAddress {
+            text: "1200 Market Street\nSuite 2".into(),
+        });
+        pools.multiline_addresses.push(2);
+        let ctx = Ctx::new("US", &pools);
+        let mut rng = ChaCha8Rng::seed_from_u64(17);
+        let complete = (0..1000)
+            .filter(|_| ctx.address(true, &mut rng).unwrap().text.contains("19107"))
+            .count();
+        assert!((700..950).contains(&complete), "{complete}");
     }
 
     fn template(text: &'static str) -> Template {
@@ -1812,7 +2085,7 @@ mod tests {
         let mut ctx = Ctx::new("US", &pools);
         ctx.plain = true;
         let mut rng = ChaCha8Rng::seed_from_u64(0);
-        let doc = render(
+        let mut doc = render(
             &template("Hi {person#1}, mail {email#1}."),
             &mut ctx,
             &mut rng,
@@ -1832,6 +2105,7 @@ mod tests {
         assert_eq!(doc.entities[1].start, 22);
         assert_eq!(doc.entities[1].end, doc.text.len() - 1);
         assert_eq!(&doc.text[3..15], "Maya Johnson");
+        doc.category = Category::NoAddressWithPerson;
         assert_eq!(check(&doc, 900), Ok(()));
     }
 
@@ -1840,7 +2114,7 @@ mod tests {
         let pools = stub_pools(&[("Maya Johnson", "latin")]);
         let mut ctx = Ctx::new("US", &pools);
         let mut rng = ChaCha8Rng::seed_from_u64(1);
-        let doc = render(
+        let mut doc = render(
             &template("Ship to:\n{address_ml}\nThanks"),
             &mut ctx,
             &mut rng,
@@ -1851,6 +2125,7 @@ mod tests {
             &doc.text[e.start..e.end],
             "1200 Market Street\nPhiladelphia, PA 19107"
         );
+        doc.category = Category::NoPersonWithAddress;
         assert_eq!(check(&doc, 900), Ok(()));
     }
 
@@ -1895,21 +2170,25 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_unit_relationship_templates_are_not_selected() {
+    fn public_body_templates_are_selected() {
         let all = templates::all().unwrap();
         let supported: Vec<_> = all.iter().filter(|t| supported_template(t, "US")).collect();
         assert!(!supported.is_empty());
-        for template in supported {
-            let slots = template.slots().unwrap();
-            assert!(
-                !slots.iter().any(|item| matches!(
-                    item.slot,
-                    Slot::OrgUnit | Slot::OrgLocalOffice | Slot::OrgChain
-                )),
-                "{}",
-                template.id
-            );
-        }
+        assert!(supported.iter().any(|template| template.id == 230));
+        assert!(supported.iter().any(|template| {
+            template
+                .slots()
+                .unwrap()
+                .iter()
+                .any(|item| matches!(item.slot, Slot::OrgGov | Slot::OrgAcronym))
+        }));
+        assert!(supported.iter().all(|template| {
+            template
+                .slots()
+                .unwrap()
+                .iter()
+                .all(|item| item.slot != Slot::OrgLocalOffice)
+        }));
     }
 
     #[test]
@@ -2043,11 +2322,20 @@ mod tests {
             test_heldout_templates: 15,
             test_heldout_families: 15,
             addresses: String::new(),
+            exclude_gold: String::new(),
             max_tokens: 900,
         };
         let all = templates::all().unwrap();
         let mut rng = ChaCha8Rng::seed_from_u64(5);
-        let (rows, _) = generate(&cfg, &["US"], &pools, &all, &mut rng).unwrap();
+        let (rows, _) = generate(
+            &cfg,
+            &["US"],
+            &pools,
+            &all,
+            &GoldExclusions::default(),
+            &mut rng,
+        )
+        .unwrap();
         assert_eq!(rows.len(), 300);
         assert_eq!(
             rows.iter()

@@ -1,0 +1,151 @@
+{
+  "source": "tessera-generator",
+  "version": 1,
+  "seed": 42,
+  "templates": 185,
+  "max_tokens": 900,
+  "names": "data/processed/names-us-v1",
+  "addresses": "data/processed/parser-us-v1",
+  "exclude_gold": "data/interim/review/us-eval-exclusions-v1.jsonl",
+  "exclude_gold_sha256": "685898c5dbd4d200ad4205933046e3afa99e0e3fd294c0bf0a9a1d38f14de095",
+  "use": "detector training data only: documents contain real Wikidata, GLEIF, and USAGov names and never enter versioned fixtures",
+  "counts": {
+    "split": {
+      "test": {
+        "test": 20000
+      },
+      "train": {
+        "train": 170000
+      },
+      "valid": {
+        "valid": 10000
+      }
+    },
+    "subset": {
+      "heldout_families": {
+        "test": 5000
+      },
+      "heldout_templates": {
+        "test": 5000
+      },
+      "seen_templates": {
+        "test": 10000,
+        "train": 170000,
+        "valid": 10000
+      }
+    },
+    "family": {
+      "email_body": {
+        "test": 2135,
+        "train": 24245,
+        "valid": 1470
+      },
+      "invoice": {
+        "test": 1445,
+        "train": 16362,
+        "valid": 906
+      },
+      "letterhead": {
+        "test": 2271,
+        "train": 25638,
+        "valid": 1490
+      },
+      "markdown": {
+        "test": 5000
+      },
+      "prose": {
+        "test": 2735,
+        "train": 31032,
+        "valid": 1865
+      },
+      "signature": {
+        "test": 2163,
+        "train": 25008,
+        "valid": 1467
+      },
+      "support": {
+        "test": 1602,
+        "train": 19532,
+        "valid": 1173
+      },
+      "table": {
+        "test": 2080,
+        "train": 22449,
+        "valid": 1290
+      },
+      "technical": {
+        "test": 569,
+        "train": 5734,
+        "valid": 339
+      }
+    },
+    "category": {
+      "both": {
+        "test": 11299,
+        "train": 85094,
+        "valid": 4991
+      },
+      "no_address_with_person": {
+        "test": 3700,
+        "train": 28623,
+        "valid": 1699
+      },
+      "no_person_with_address": {
+        "test": 2526,
+        "train": 28324,
+        "valid": 1658
+      },
+      "nothing": {
+        "test": 2475,
+        "train": 27959,
+        "valid": 1652
+      }
+    },
+    "country": {
+      "US": {
+        "test": 20000,
+        "train": 170000,
+        "valid": 10000
+      }
+    }
+  },
+  "train_category_share": {
+    "both": 0.5005529411764705,
+    "no_address_with_person": 0.1683705882352941,
+    "no_person_with_address": 0.16661176470588235,
+    "nothing": 0.16446470588235293
+  },
+  "dropped": {
+    "duplicate": 355,
+    "evaluation_overlap": 95
+  },
+  "pools": {
+    "US/test": {
+      "people": 1006,
+      "orgs": 940,
+      "borrowed_orgs": 0,
+      "addresses": 2385,
+      "multiline_addresses": 2069,
+      "complete_multiline_addresses": 1063
+    },
+    "US/train": {
+      "people": 17964,
+      "orgs": 16989,
+      "borrowed_orgs": 0,
+      "addresses": 23912,
+      "multiline_addresses": 20588,
+      "complete_multiline_addresses": 10465
+    },
+    "US/valid": {
+      "people": 1024,
+      "orgs": 929,
+      "borrowed_orgs": 0,
+      "addresses": 2396,
+      "multiline_addresses": 2078,
+      "complete_multiline_addresses": 1073
+    }
+  },
+  "phones_fixture_safe_ratio": 1.0,
+  "public_bodies": "trainer/data/us-public-bodies.json",
+  "public_bodies_sha256": "d3aeca8d1710d4c18b8df038495b57d60043843c37a96bc600ebd8bdd7d64c88"
+}

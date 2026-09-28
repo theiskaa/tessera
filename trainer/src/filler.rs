@@ -50,12 +50,12 @@ const LINES: &[(&str, &[&str])] = &[(
         "Subject: Re: delivery for order 5162",
         "Description          Qty   Price     Amount",
         "Page 2 of 3",
-        "VAT reg. no. 999 9999 73",
+        "Tax ID 00-0000000",
         "Our ref: KB/2026/118",
         "Sent: Monday 15 September 2026 09:12",
         "Confidential: for the addressee only.",
         "Subtotal 1,540.00 · Shipping 86.40 · Total 1,626.40",
-        "Account no. 31926819 · Sort code 60-16-13",
+        "Account no. 00000000 · Routing no. 000000000",
     ],
 )];
 
