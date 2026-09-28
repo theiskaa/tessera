@@ -617,7 +617,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let config_name = match task {
             Task::Parser => "parser-small.toml",
-            Task::Detector => "detector-silver.toml",
+            Task::Detector => "detector-shared.toml",
         };
         let mut cfg = crate::config::load(
             &Path::new(env!("CARGO_MANIFEST_DIR"))

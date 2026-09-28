@@ -118,6 +118,7 @@ fn train<B: AutodiffBackend>(args: &TrainArgs<'_>, device: &B::Device) -> anyhow
         cfg.train.epochs = e;
     }
     validate_ngram_source(&cfg)?;
+    validate_training_scope(&cfg)?;
     let run_dir = PathBuf::from("runs").join(&cfg.name);
     initialize_run(&run_dir, &cfg)?;
     capture_input_snapshot(&cfg, &run_dir)?;
@@ -128,6 +129,35 @@ fn train<B: AutodiffBackend>(args: &TrainArgs<'_>, device: &B::Device) -> anyhow
     };
     result?;
     verify_input_snapshot(&run_dir)
+}
+
+fn validate_training_scope(cfg: &Config) -> anyhow::Result<()> {
+    use polars::prelude::{ParquetReader, SerReader};
+
+    anyhow::ensure!(
+        cfg.data.countries.len() == 1 && cfg.data.countries[0] == "US",
+        "training config must declare only US data"
+    );
+    for split in ["train", "valid", "test"] {
+        let path = Path::new(&cfg.data.processed).join(format!("{split}.parquet"));
+        let file = File::open(&path).with_context(|| format!("opening {}", path.display()))?;
+        let frame = ParquetReader::new(file)
+            .with_columns(Some(vec!["country".to_string()]))
+            .finish()
+            .with_context(|| format!("reading countries from {}", path.display()))?;
+        let countries = frame.column("country")?.str()?;
+        anyhow::ensure!(!countries.is_empty(), "{} has no rows", path.display());
+        for (index, country) in countries.iter().enumerate() {
+            anyhow::ensure!(
+                country == Some("US"),
+                "{} row {} has country {:?}; prepare US-only data before training",
+                path.display(),
+                index + 1,
+                country
+            );
+        }
+    }
+    Ok(())
 }
 
 const INPUT_SNAPSHOT_VERSION: u64 = 2;
@@ -752,6 +782,30 @@ mod tests {
     use super::*;
 
     #[test]
+    fn training_scope_rejects_a_foreign_test_row_before_run_setup() {
+        use polars::prelude::{Column, DataFrame, ParquetWriter};
+
+        let dir = tempfile::tempdir().unwrap();
+        let mut cfg = crate::config::load(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../configs/parser-small.toml"),
+        )
+        .unwrap();
+        cfg.data.processed = dir.path().display().to_string();
+        for (split, country) in [("train", "US"), ("valid", "US"), ("test", "GB")] {
+            let path = dir.path().join(format!("{split}.parquet"));
+            let mut frame =
+                DataFrame::new_infer_height(vec![Column::new("country".into(), vec![country])])
+                    .unwrap();
+            ParquetWriter::new(File::create(path).unwrap())
+                .finish(&mut frame)
+                .unwrap();
+        }
+        let error = validate_training_scope(&cfg).unwrap_err().to_string();
+        assert!(error.contains("test.parquet row 1"), "{error}");
+        assert!(error.contains("country Some(\"GB\")"), "{error}");
+    }
+
+    #[test]
     fn changed_training_file_after_snapshot_invalidates_run() {
         let dir = tempfile::tempdir().unwrap();
         let mut cfg = crate::config::load(
@@ -812,7 +866,7 @@ mod tests {
         std::fs::write(parser_run.join("best.mpk"), b"parser checkpoint").unwrap();
 
         let mut detector = crate::config::load(
-            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../configs/detector-silver.toml"),
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../configs/detector-shared.toml"),
         )
         .unwrap();
         detector.net.ngram_from = Some(parser_run.display().to_string());
@@ -871,11 +925,16 @@ mod tests {
     #[test]
     fn input_snapshot_cannot_omit_configured_silver_sources() {
         let dir = tempfile::tempdir().unwrap();
-        let config = std::fs::read_to_string(
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../configs/detector-silver.toml"),
+        let mut config = crate::config::load(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../configs/detector-shared.toml"),
         )
         .unwrap();
-        std::fs::write(dir.path().join("config.toml"), &config).unwrap();
+        config.detector.as_mut().unwrap().silver = vec!["silver.jsonl".into()];
+        std::fs::write(
+            dir.path().join("config.toml"),
+            toml::to_string(&config).unwrap(),
+        )
+        .unwrap();
         let snapshot = InputSnapshot {
             version: INPUT_SNAPSHOT_VERSION,
             config_sha256: hash_file(&dir.path().join("config.toml")).unwrap(),

@@ -215,6 +215,12 @@ pub fn load_split(
             path.display(),
             i + 1
         );
+        ensure!(
+            row_country == "US",
+            "{} row {} has country {row_country:?}; detector data must be US-only",
+            path.display(),
+            i + 1
+        );
         let declared: Vec<GoldJson> = serde_json::from_str(
             entities
                 .get(i)
@@ -287,6 +293,12 @@ pub fn load_silver(
         {
             let doc: SilverJson = serde_json::from_str(line)
                 .with_context(|| format!("{path}:{} invalid silver JSON", line_no + 1))?;
+            ensure!(
+                doc.country == "US",
+                "{path}:{} has country {:?}; detector silver must be US-only",
+                line_no + 1,
+                doc.country
+            );
             let gold = model_spans(&doc.text, &doc.entities)
                 .with_context(|| format!("{path}:{}", line_no + 1))?;
             let mut sorted_gold = gold.clone();
@@ -737,7 +749,7 @@ mod tests {
         let path = dir.path().join("silver.jsonl");
         std::fs::write(
             &path,
-            "{\"text\":\"Nino\",\"country\":\"GE\",\"entities\":[{\"kind\":\"person\",\"start\":0,\"end\":4}]}\n{\"text\":\"Nino\",\"country\":\"GE\",\"entities\":[{\"kind\":\"bogus\",\"start\":0,\"end\":4}]}\n",
+            "{\"text\":\"Nino\",\"country\":\"US\",\"entities\":[{\"kind\":\"person\",\"start\":0,\"end\":4}]}\n{\"text\":\"Nino\",\"country\":\"US\",\"entities\":[{\"kind\":\"bogus\",\"start\":0,\"end\":4}]}\n",
         )
         .unwrap();
         let error = format!(
@@ -754,11 +766,33 @@ mod tests {
     }
 
     #[test]
+    fn silver_loader_rejects_non_us_document() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("silver.jsonl");
+        std::fs::write(
+            &path,
+            "{\"text\":\"London\",\"country\":\"GB\",\"entities\":[]}\n",
+        )
+        .unwrap();
+        let error = load_silver(
+            &[path.display().to_string()],
+            &FeatureConfig::default(),
+            900,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            error.contains("silver.jsonl:1 has country \"GB\""),
+            "{error}"
+        );
+    }
+
+    #[test]
     fn silver_loader_skips_identical_copies_and_rejects_conflicting_labels() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("silver.jsonl");
         let person = serde_json::json!({
-            "text": "Nino", "country": "GE",
+            "text": "Nino", "country": "US",
             "entities": [{"kind": "person", "start": 0, "end": 4}]
         });
         std::fs::write(&path, format!("{person}\n{person}\n")).unwrap();
@@ -771,11 +805,11 @@ mod tests {
         assert_eq!(docs.len(), 1);
         assert_eq!(counts.documents, 1);
         assert_eq!(counts.duplicate_documents, 1);
-        assert_eq!(counts.by_country["GE"].documents, 1);
-        assert_eq!(counts.by_country["GE"].person, 1);
+        assert_eq!(counts.by_country["US"].documents, 1);
+        assert_eq!(counts.by_country["US"].person, 1);
 
         let unlabeled = serde_json::json!({
-            "text": "Nino", "country": "GE", "entities": []
+            "text": "Nino", "country": "US", "entities": []
         });
         let other = dir.path().join("other.jsonl");
         std::fs::write(&other, format!("{unlabeled}\n")).unwrap();
@@ -886,7 +920,7 @@ mod tests {
                 "entities_json".into(),
                 vec!["[{\"kind\":\"bogus\",\"start\":0,\"end\":4}]"],
             ),
-            Column::new("country".into(), vec!["GE"]),
+            Column::new("country".into(), vec!["US"]),
         ])
         .unwrap();
         ParquetWriter::new(std::fs::File::create(&path).unwrap())
@@ -910,7 +944,7 @@ mod tests {
                 "entities_json".into(),
                 vec!["[{\"kind\":\"person\",\"start\":1,\"end\":4}]"],
             ),
-            Column::new("country".into(), vec!["GE"]),
+            Column::new("country".into(), vec!["US"]),
         ])
         .unwrap();
         ParquetWriter::new(std::fs::File::create(&path).unwrap())
@@ -943,6 +977,25 @@ mod tests {
         );
         assert!(error.contains("train.parquet row 1"), "{error}");
         assert!(error.contains("invalid country"), "{error}");
+    }
+
+    #[test]
+    fn synthetic_loader_rejects_non_us_document() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("train.parquet");
+        let mut df = DataFrame::new_infer_height(vec![
+            Column::new("text".into(), vec!["London"]),
+            Column::new("entities_json".into(), vec!["[]"]),
+            Column::new("country".into(), vec!["GB"]),
+        ])
+        .unwrap();
+        ParquetWriter::new(std::fs::File::create(&path).unwrap())
+            .finish(&mut df)
+            .unwrap();
+        let error = load_split(dir.path(), Split::Train, &FeatureConfig::default())
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("detector data must be US-only"), "{error}");
     }
 
     #[test]
