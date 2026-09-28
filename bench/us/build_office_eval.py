@@ -12,7 +12,7 @@ SOURCE = ROOT / "data/raw/us-offices"
 OUTPUT = ROOT / "data/interim/review/us-office-eval-v1.jsonl"
 MANIFEST = ROOT / "data/interim/review/us-office-eval-v1.manifest.json"
 DEV = ROOT / "data/interim/review/us-dev-v1.jsonl"
-EXCLUSIONS = ROOT / "data/interim/review/us-eval-exclusions-v1.jsonl"
+EXCLUSIONS = ROOT / "data/interim/review/us-dev-office-exclusions-v1.jsonl"
 PHONE = re.compile(r"\([0-9]{3}\) [0-9]{3}-[0-9]{4}")
 
 # Each tuple gives the inclusive source line range and the first and last address lines.
