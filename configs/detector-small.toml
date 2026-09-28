@@ -33,6 +33,8 @@ patience = 2
 
 [detector]
 class_weights = [1.0, 3.0, 2.0, 3.0, 2.0, 2.0, 1.5]
+silver = ["data/interim/silver/us-reviewed-strict-v1.jsonl", "data/interim/silver/us-house-staff-v1.jsonl"]
+silver_repeat = 1
 
 [names]
 countries = ["US"]

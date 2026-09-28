@@ -2,7 +2,7 @@
   "source": "libpostal-osm-addresses",
   "kind": "address",
   "use": "candidate US parser source; sample must be prepared and audited before training",
-  "status": "downloaded",
+  "status": "us_sample_prepared_and_audited",
   "url": "https://archive.org/download/libpostal-parser-training-data-20170304/formatted_addresses_tagged.random.tsv.gz",
   "index_url": "https://github.com/openvenues/libpostal/blob/master/README.md",
   "upstream": "OpenStreetMap",

@@ -6,8 +6,10 @@
   "max_tokens": 900,
   "names": "data/processed/names-us-v1",
   "addresses": "data/processed/parser-us-v1",
+  "public_bodies": "trainer/data/us-public-bodies.json",
+  "public_bodies_sha256": "d2b8fa0aba85725160c043533c3d15a2fa2d09ab4bd597def762d24676697650",
   "exclude_gold": "data/interim/review/us-eval-exclusions-v1.jsonl",
-  "exclude_gold_sha256": "685898c5dbd4d200ad4205933046e3afa99e0e3fd294c0bf0a9a1d38f14de095",
+  "exclude_gold_sha256": "996bb9009b0ee5ceb2a3d149bde973ad7c2fe090d02222b54402ef0e5fc4095f",
   "use": "detector training data only: documents contain real Wikidata, GLEIF, and USAGov names and never enter versioned fixtures",
   "counts": {
     "split": {
@@ -145,7 +147,5 @@
       "complete_multiline_addresses": 1073
     }
   },
-  "phones_fixture_safe_ratio": 1.0,
-  "public_bodies": "trainer/data/us-public-bodies.json",
-  "public_bodies_sha256": "d3aeca8d1710d4c18b8df038495b57d60043843c37a96bc600ebd8bdd7d64c88"
+  "phones_fixture_safe_ratio": 1.0
 }
