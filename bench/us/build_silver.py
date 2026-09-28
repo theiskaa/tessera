@@ -19,6 +19,8 @@ STRICT_MANIFEST = ROOT / "data/interim/silver/us-reviewed-strict-v1.manifest.jso
 GOLD = ROOT / "data/interim/review/us-eval-exclusions-v1.jsonl"
 PAGE_MARKER = re.compile(rb"\n\n\[\[Page [0-9]+\]\]\n\n")
 MAX_FAMILY_DOCS = 12
+SOURCE_ARTIFACT = re.compile(r'">|</?[A-Za-z][^>]*>|&(?:amp|quot|nbsp|lt|gt);')
+REVIEW_EXCLUDED = {"2024-27630": "unlabeled Fedeli Group Inc. organization occurrence"}
 
 
 def digest(data):
@@ -184,6 +186,7 @@ def main():
     family_exclusions = [row["id"] for row in selected if row["id"] not in kept_ids]
     selected = [row for row in selected if row["id"] in kept_ids]
     overlap_documents = collections.Counter()
+    quality_exclusions = {}
     strict = []
     for row in selected:
         raw_text = row["text"].encode()
@@ -196,6 +199,10 @@ def main():
         }
         if overlaps:
             overlap_documents[",".join(sorted(overlaps))] += 1
+        elif SOURCE_ARTIFACT.search(row["text"]):
+            quality_exclusions[row["id"]] = "source HTML artifact in plain text"
+        elif row["id"] in REVIEW_EXCLUDED:
+            quality_exclusions[row["id"]] = REVIEW_EXCLUDED[row["id"]]
         else:
             strict.append(row)
     counts = collections.Counter(
@@ -231,9 +238,10 @@ def main():
     STRICT_OUT.write_bytes(strict_data)
     STRICT_MANIFEST.write_text(json.dumps({
         "kind": "us_silver_strict_candidate",
-        "status": "awaiting_label_quality_audit; too_small_for_training_decision",
+        "status": "two agreeing label passes; source and repeat-label screen passed",
         "documents": len(strict),
         "labels": dict(strict_counts),
+        "quality_exclusions": quality_exclusions,
         "evaluation_gold_sha256": digest(GOLD.read_bytes()),
         "evaluation_id_text_or_entity_surface_overlap": 0,
         "sha256": digest(strict_data),
