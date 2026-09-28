@@ -1855,7 +1855,7 @@ fn write_manifest(
         "filters": {
             "countries": cfg.data.countries,
             "label_map": "data/manifests/label-map.json",
-            "rules": "GE postcodes four digits, DE postcodes five digits, US ZIP or ZIP+4, JP 〒nnn-nnnn; no DE Postfach with a street; JP island, regional-grouping, placeholder and PO box pieces dropped, Japanese-script rows reordered large to small, kana readings rejected; GB statistical regions dropped, postcode before country; NYC boroughs as cities; truncated GB and US road types rejected; GE rows marked AB rejected; rows whose spans cut a token or are invalid rejected; place-only rows capped at 15% of each quota; no rows without an address component; no search queries",
+            "rules": "US ZIP or ZIP+4; NYC boroughs as cities; truncated road types rejected; rows whose spans cut a token or are invalid rejected; place-only rows capped at 15% of each quota; no rows without an address component; no search queries",
         },
         "counts": per_country,
         "split_seed": cfg.seed,

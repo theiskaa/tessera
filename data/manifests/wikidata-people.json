@@ -1,0 +1,60 @@
+{
+  "use": "training",
+  "status": "downloaded",
+  "format": "SPARQL CSV results, one file per country, label language, and birth year; a year that reaches the 5000-row limit is replaced by one file per month",
+  "sha256": "438223425d5798cbea8c37a92d4375bce1b29ed45161f81a70d1951ee7f83b1b",
+  "sha256_rule": "over the cached files concatenated in sorted file-name order",
+  "filters": {
+    "properties": [
+      "P31=Q5",
+      "P27",
+      "P569",
+      "P1559",
+      "rdfs:label"
+    ],
+    "birth_years": [
+      1930,
+      2005
+    ],
+    "label_langs": {
+      "US": [
+        "en"
+      ]
+    },
+    "query_limit": 5000,
+    "rules": "native name (P1559) used when in the label language's script; names NFC with whitespace collapsed; dropped: parentheses, commas, slashes, or ASCII digits; over 60 bytes; dominant script not the language's; fewer than two alphabetic tokens in Latin or Georgian; duplicates by (country, lowercase name)",
+    "people_per_country": 20000
+  },
+  "files": 164,
+  "counts": {
+    "train": 17970,
+    "valid": 1024,
+    "test": 1006,
+    "per_country": {
+      "US": {
+        "test": 1006,
+        "total": 20000,
+        "train": 17970,
+        "valid": 1024
+      }
+    },
+    "per_script": {
+      "latin": {
+        "test": 1006,
+        "total": 20000,
+        "train": 17970,
+        "valid": 1024
+      }
+    }
+  },
+  "sample_seed": 42,
+  "split_rule": "fnv1a64(0, lowercase normalized name) % 100: 0-89 train, 90-94 valid, 95-99 test; names are NFC with whitespace runs collapsed to one space",
+  "dropped": {
+    "duplicate": 22871,
+    "one_token": 2514,
+    "punctuation_or_digit": 2080,
+    "wrong_script": 1
+  },
+  "warnings": [],
+  "prepared": "2026-09-28"
+}

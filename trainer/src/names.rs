@@ -1191,7 +1191,7 @@ fn write_people_manifest(
             "format": format!("SPARQL CSV results, one file per country, label language, and birth year; a year that reaches the {PEOPLE_QUERY_LIMIT}-row limit is replaced by one file per month"),
             "sha256": sha256_files(&sample.files)?,
             "sha256_rule": "over the cached files concatenated in sorted file-name order",
-            "downloaded": date,
+            "prepared": date,
             "filters": {
                 "properties": ["P31=Q5", "P27", "P569", "P1559", "rdfs:label"],
                 "birth_years": [names.birth_years.0, names.birth_years.1],
@@ -1247,7 +1247,7 @@ fn write_gleif_manifest(
             "url": sample.gleif.url,
             "format": "Level 1 golden copy CSV (LEI-CDF 3.1), streamed from its zip; columns used: LEI, Entity.LegalName, Entity.LegalName.xmllang, Entity.LegalJurisdiction, Entity.LegalForm.EntityLegalFormCode, Entity.EntityStatus, Entity.EntityCategory",
             "sha256": sha256_files(std::slice::from_ref(&sample.gleif.path))?,
-            "downloaded": date,
+            "prepared": date,
             "filters": {
                 "status": "ACTIVE",
                 "categories_dropped": DROPPED_CATEGORIES,
@@ -1293,7 +1293,7 @@ fn write_wikidata_orgs_manifest(
             "format": "SPARQL CSV results, one file per country, label language, and class",
             "sha256": sha256_files(&sample.wikidata_files)?,
             "sha256_rule": "over the cached files concatenated in sorted file-name order",
-            "downloaded": date,
+            "prepared": date,
             "filters": {
                 "properties": ["P31 in classes", "P17 country", "rdfs:label"],
                 "classes": ORG_CLASSES,
@@ -1327,7 +1327,7 @@ fn write_elf_manifest(manifests: &Path, elf: &Elf, date: &str) -> anyhow::Result
                 "the code list states no license of its own and the LEI Data Terms of Use do not name it (internal licensing review, 4.4); the list itself is never committed or shipped, and legal-form abbreviations are facts about company law",
             ],
             "sha256": sha256_files(std::slice::from_ref(&elf.download.path))?,
-            "downloaded": date,
+            "prepared": date,
             "counts": { "codes_with_abbreviations": elf.abbreviations.len() },
         }),
         &[],

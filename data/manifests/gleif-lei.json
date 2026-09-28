@@ -1,0 +1,47 @@
+{
+  "use": "training",
+  "status": "downloaded",
+  "url": "https://goldencopy.gleif.org/storage/golden-copy-files/2026/09/23/1279865/20260923-0800-gleif-goldencopy-lei2-golden-copy.csv.zip",
+  "format": "Level 1 golden copy CSV (LEI-CDF 3.1), streamed from its zip; columns used: LEI, Entity.LegalName, Entity.LegalName.xmllang, Entity.LegalJurisdiction, Entity.LegalForm.EntityLegalFormCode, Entity.EntityStatus, Entity.EntityCategory",
+  "sha256": "cba671622f472dd218bfd2ad55ff4e6ff393cc1a40eac04128e91261cf9f72c0",
+  "filters": {
+    "status": "ACTIVE",
+    "categories_dropped": [
+      "FUND",
+      "BRANCH",
+      "SOLE_PROPRIETOR"
+    ],
+    "jurisdictions": {
+      "US": [
+        "US"
+      ]
+    },
+    "rules": "names NFC with whitespace collapsed; dropped: shorter than 3 bytes, the word LEI, duplicates by (country, lowercase name)",
+    "orgs_per_country": 20000
+  },
+  "counts": {
+    "train": 18024,
+    "valid": 992,
+    "test": 984,
+    "per_country": {
+      "US": {
+        "test": 984,
+        "total": 20000,
+        "train": 18024,
+        "valid": 992
+      }
+    },
+    "available": {
+      "US": 300313
+    }
+  },
+  "sample_seed": 42,
+  "split_rule": "fnv1a64(0, lowercase normalized name) % 100: 0-89 train, 90-94 valid, 95-99 test; names are NFC with whitespace runs collapsed to one space",
+  "dropped": {
+    "category": 39602,
+    "contains_lei": 14,
+    "duplicate": 709,
+    "too_short": 11
+  },
+  "prepared": "2026-09-28"
+}

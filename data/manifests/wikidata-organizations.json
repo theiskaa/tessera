@@ -1,0 +1,43 @@
+{
+  "use": "top-up for countries where GLEIF has fewer usable names than the quota",
+  "status": "downloaded",
+  "format": "SPARQL CSV results, one file per country, label language, and class",
+  "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "sha256_rule": "over the cached files concatenated in sorted file-name order",
+  "filters": {
+    "properties": [
+      "P31 in classes",
+      "P17 country",
+      "rdfs:label"
+    ],
+    "classes": [
+      "Q4830453",
+      "Q783794",
+      "Q6881511",
+      "Q891723",
+      "Q3918",
+      "Q327333",
+      "Q31855",
+      "Q163740",
+      "Q79913",
+      "Q22687",
+      "Q7278",
+      "Q2085381"
+    ],
+    "query_limit": 50000,
+    "rules": "names NFC with whitespace collapsed; the label's dominant script must match its language; dropped: shorter than 3 bytes, the word LEI, duplicates of GLEIF names and of each other"
+  },
+  "files": 0,
+  "counts": {
+    "train": 0,
+    "valid": 0,
+    "test": 0,
+    "per_country": {},
+    "shortfall": {}
+  },
+  "sample_seed": 42,
+  "split_rule": "fnv1a64(0, lowercase normalized name) % 100: 0-89 train, 90-94 valid, 95-99 test; names are NFC with whitespace runs collapsed to one space",
+  "dropped": {},
+  "warnings": [],
+  "prepared": "2026-09-28"
+}
