@@ -69,6 +69,9 @@ pub fn scan(text: &str) -> Vec<Entity> {
             end -= 1;
         }
         i = end.max(at + 1);
+        if (start > 0 && bytes[start - 1] == b'@') || (end < bytes.len() && bytes[end] == b'@') {
+            continue;
+        }
         let Some(confidence) = validate(&bytes[start..at], &bytes[at + 1..end]) else {
             continue;
         };
@@ -196,6 +199,7 @@ mod tests {
         assert!(found(".a@x.example").is_empty());
         assert!(found("a@-x.example").is_empty());
         assert!(found("see /path@x.example").is_empty());
+        assert!(found("suggs.anjanette@dol.gov@dol.gov").is_empty());
     }
 
     #[test]

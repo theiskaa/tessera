@@ -53,13 +53,12 @@ impl Tessera {
             for s in model::bio::decode_detector(&probs, &masked[range.clone()], &breaks[range]) {
                 let (first, last) = (w.tok_start + s.first, w.tok_start + s.last);
                 if chunk::trusted(&w, first, last) && s.confidence >= policy::detect_min(s.kind) {
-                    candidates.push(span_entity(
-                        &tokens,
-                        &retained,
-                        s.kind,
-                        (first, last),
-                        s.confidence,
-                    ));
+                    let mut entity =
+                        span_entity(&tokens, &retained, s.kind, (first, last), s.confidence);
+                    if s.kind == Kind::Address {
+                        entity.end = normalized_us_address_end(text, entity.start, entity.end);
+                    }
+                    candidates.push(entity);
                 }
             }
         }
@@ -217,12 +216,77 @@ fn span_entity(
     }
 }
 
+pub(crate) fn normalized_us_address_end(text: &str, start: usize, end: usize) -> usize {
+    let bytes = text.as_bytes();
+    let zip5 = |at: usize| {
+        at >= start + 5
+            && bytes[at - 5..at].iter().all(u8::is_ascii_digit)
+            && (at == start + 5 || !bytes[at - 6].is_ascii_digit())
+    };
+    let zip4 = |at: usize| {
+        at >= start + 10
+            && bytes[at - 5] == b'-'
+            && zip5(at - 5)
+            && bytes[at - 4..at].iter().all(u8::is_ascii_digit)
+    };
+    let mut end = end;
+    if end > start && matches!(bytes[end - 1], b',' | b'.' | b';') {
+        let before_punctuation = end - 1;
+        if zip5(before_punctuation) || zip4(before_punctuation) {
+            end = before_punctuation;
+        }
+    }
+    let suffix_len = if zip5(end)
+        && bytes.get(end) == Some(&b'-')
+        && bytes
+            .get(end + 1..end + 5)
+            .is_some_and(|part| part.iter().all(u8::is_ascii_digit))
+    {
+        5
+    } else if end > start
+        && bytes[end - 1] == b'-'
+        && zip5(end - 1)
+        && bytes
+            .get(end..end + 4)
+            .is_some_and(|part| part.iter().all(u8::is_ascii_digit))
+    {
+        4
+    } else {
+        0
+    };
+    if suffix_len > 0
+        && bytes
+            .get(end + suffix_len)
+            .is_none_or(|next| !next.is_ascii_alphanumeric() && *next != b'-')
+    {
+        end += suffix_len;
+    }
+    end
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::Config;
 
     const SIGNATURE: &str = "Thanks, see you on Monday.\n\nNino Beridze\nKavkaz Freight LLC\n14 Rustaveli Avenue, Tbilisi 0108, Georgia\n+995 32 212 3456\nnino@kavkaz-freight.example";
+
+    #[test]
+    fn address_end_completes_zip4_and_trims_postcode_punctuation() {
+        let text = "550 17th Street NW, Washington, DC 20429-0146, next";
+        let zip_end = text.find("-0146").unwrap();
+        assert_eq!(normalized_us_address_end(text, 0, zip_end), zip_end + 5);
+        assert_eq!(normalized_us_address_end(text, 0, zip_end + 1), zip_end + 5);
+        assert_eq!(normalized_us_address_end(text, 0, zip_end + 6), zip_end + 5);
+    }
+
+    #[test]
+    fn address_end_does_not_extend_a_partial_number_or_word() {
+        let text = "Road 123456-7890A";
+        assert_eq!(normalized_us_address_end(text, 0, 11), 11);
+        let text = "Road 12345-7890A";
+        assert_eq!(normalized_us_address_end(text, 0, 10), 10);
+    }
 
     fn load_all(bundle: &[u8]) -> Result<Tessera, Error> {
         Tessera::load(

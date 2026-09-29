@@ -11,12 +11,12 @@ pub(crate) const MEDIUM: f32 = 0.50;
 
 /// Lowest mean label probability a detected person keeps. Person and org are precision-first:
 /// nothing downstream can reject a wrong name.
-pub const DETECT_MIN_PERSON: f32 = 0.80;
+pub const DETECT_MIN_PERSON: f32 = 0.85;
 /// Lowest mean label probability a detected org keeps.
 pub const DETECT_MIN_ORG: f32 = 0.80;
-/// Lowest mean label probability a detected address keeps. Address is recall-first; parser
-/// components annotate the detected span without vetoing it.
-pub const DETECT_MIN_ADDRESS: f32 = 0.50;
+/// Lowest mean label probability a detected address keeps. Parser components annotate the
+/// detected span without vetoing it.
+pub const DETECT_MIN_ADDRESS: f32 = 0.85;
 
 /// The detection threshold for a model kind; rule kinds are never thresholded here.
 pub(crate) fn detect_min(kind: Kind) -> f32 {

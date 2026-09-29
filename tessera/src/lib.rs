@@ -51,6 +51,11 @@ pub mod wasm;
 /// Internals shared with the trainer and the integration tests. Not a stable API.
 #[doc(hidden)]
 pub mod internal {
+    /// Applies the runtime detector's US postcode boundary adjustment to an address span.
+    pub fn normalized_us_address_end(text: &str, start: usize, end: usize) -> usize {
+        crate::detect::normalized_us_address_end(text, start, end)
+    }
+
     pub use crate::chunk::{MAX_ENTITY_TOKENS, Mask, paragraph_breaks};
     pub use crate::features::{
         FeatureConfig, MAX_NGRAMS_PER_TOKEN, TokenFeatures, featurize, flag, fnv1a, is_content,

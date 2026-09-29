@@ -984,17 +984,36 @@ fn labelled_as_another_number(chars: &[(usize, char)], first_i: usize) -> bool {
     match labels_before(chars, first_i) {
         [Label::NotPhone, _] => true,
         [Label::Marker, Label::Phone] => false,
-        [Label::Marker, _] => true,
+        [Label::Marker, _] => !dial_in_number_field(chars, first_i),
         _ => false,
     }
 }
 
 /// Whether the word right before `first_i` labels the number as a phone.
 fn labelled_as_phone(chars: &[(usize, char)], first_i: usize) -> bool {
-    matches!(
-        labels_before(chars, first_i),
-        [Label::Phone, _] | [Label::Marker, Label::Phone]
-    )
+    match labels_before(chars, first_i) {
+        [Label::Phone, _] | [Label::Marker, Label::Phone] => true,
+        [Label::Marker, _] => dial_in_number_field(chars, first_i),
+        _ => false,
+    }
+}
+
+fn dial_in_number_field(chars: &[(usize, char)], first_i: usize) -> bool {
+    let start = first_i.saturating_sub(96);
+    let before: String = chars[start..first_i]
+        .iter()
+        .map(|&(_, c)| c.to_ascii_lowercase())
+        .collect();
+    let before = before.trim_end_matches([' ', '\t']);
+    if !before.ends_with("number:") {
+        return false;
+    }
+    let Some(dial_in) = before.rfind("dial-in") else {
+        return false;
+    };
+    !before[dial_in + "dial-in".len()..]
+        .chars()
+        .any(|c| matches!(c, '\n' | ';' | '.'))
 }
 
 #[cfg(feature = "phone-metadata")]
@@ -1051,7 +1070,9 @@ fn scan_numbers(text: &str, chars: &[(usize, char)], hints: &[&'static Region]) 
         };
         for (part, v) in parts {
             let (part, v) = without_short_tail(text, chars, part, v, hints);
-            out.push(entity(&part, v));
+            let mut found = entity(&part, v);
+            expand_us_phone_span(text, &mut found);
+            out.push(found);
         }
         i = resume.unwrap_or(next_i);
         carried = resume.map(|at| (at, labelled));
@@ -1077,7 +1098,8 @@ const SERVICE_NUMBERS: &[(&str, &[&str])] = &[
 
 /// Words right before a service number that make it one to call.
 const CALL_WORDS: &[&str] = &[
-    "dial", "call", "calling", "ring", "phone", "text", "tel", "wählen", "anrufen", "notruf",
+    "dial", "dialing", "dialling", "call", "calling", "ring", "phone", "text", "tel", "wählen",
+    "anrufen", "notruf",
 ];
 
 /// A text relay prefix dialled before a whole number, which stays part of it.
@@ -1276,6 +1298,58 @@ fn entity(c: &Candidate, (confidence, normalized, region): Validated) -> Entity 
         normalized: Some(normalized),
         region,
     }
+}
+
+fn expand_us_phone_span(text: &str, entity: &mut Entity) {
+    if entity.region.as_deref() != Some("US") {
+        return;
+    }
+    let bytes = text.as_bytes();
+    if entity.start > 0
+        && bytes.get(entity.start - 1) == Some(&b'(')
+        && bytes.get(entity.end) == Some(&b')')
+    {
+        entity.start -= 1;
+        entity.end += 1;
+    }
+    let tail = &text[entity.end..];
+    let spaces = tail.bytes().take_while(|&b| b == b' ').count();
+    if spaces == 0 || spaces > 2 {
+        return;
+    }
+    let rest = &tail[spaces..];
+    let label = ["extension", "ext"].into_iter().find(|label| {
+        rest.get(..label.len())
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case(label))
+    });
+    let Some(label) = label else {
+        return;
+    };
+    let mut consumed = label.len();
+    if rest.as_bytes().get(consumed) == Some(&b'.') {
+        consumed += 1;
+    }
+    let gap = rest[consumed..].bytes().take_while(|&b| b == b' ').count();
+    if gap == 0 || gap > 2 {
+        return;
+    }
+    consumed += gap;
+    let digits = rest[consumed..]
+        .bytes()
+        .take_while(u8::is_ascii_digit)
+        .count();
+    if !(1..=5).contains(&digits) {
+        return;
+    }
+    consumed += digits;
+    if rest[consumed..]
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_alphanumeric() || c == '-')
+    {
+        return;
+    }
+    entity.end += spaces + consumed;
 }
 
 /// Groups `first..past_last` of `c`, read and checked on their own, or `None` when that read
@@ -2205,6 +2279,12 @@ mod tests {
             read("please dial 7-1-1 to reach", &["US"]),
             vec![("7-1-1".into(), "711".into())]
         );
+        assert_eq!(
+            read("access relay by dialing 7-1-1", &["US"]),
+            vec![("7-1-1".into(), "711".into())]
+        );
+        assert!(scan("access relay by dialing 7-1-1", &[]).is_empty());
+        assert!(scan("access relay by dialing 7-1-12", &["US"]).is_empty());
         assert_eq!(
             read("on the coast, call 999 and ask", &["GB"]),
             vec![("999".into(), "999".into())]
@@ -3167,6 +3247,44 @@ mod tests {
             spans("+44 20 7946 0958 ext. 12"),
             vec![("+44 20 7946 0958", "+442079460958".into())]
         );
+    }
+
+    #[cfg(feature = "phone-metadata")]
+    #[test]
+    fn us_phone_spans_include_outer_brackets_and_joined_extensions() {
+        assert_eq!(
+            read("Contact (202-555-0143) today", &["US"]),
+            vec![("(202-555-0143)".into(), "+12025550143".into())]
+        );
+        assert_eq!(
+            read("Tel (202) 555-0199 Ext. 32, email us", &["US"]),
+            vec![("(202) 555-0199 Ext. 32".into(), "+12025550199".into())]
+        );
+        assert_eq!(
+            read("Tel (202) 555-0199 (Ext. 32)", &["US"]),
+            vec![("(202) 555-0199".into(), "+12025550199".into())]
+        );
+        assert_eq!(
+            read("Tel (202) 555-0199 Ext. 123456", &["US"]),
+            vec![("(202) 555-0199".into(), "+12025550199".into())]
+        );
+        assert!(scan("Ext. 32", &["US"]).is_empty());
+        assert!(scan("File (2026-09-23)", &["US"]).is_empty());
+    }
+
+    #[cfg(feature = "phone-metadata")]
+    #[test]
+    fn dial_in_number_field_accepts_phone_but_not_other_number_fields() {
+        assert_eq!(
+            read(
+                "Telephonic. Dial-in (listen only) information: Number: 1-202-555-0143, Code: 402 943 617#",
+                &["US"]
+            ),
+            vec![("1-202-555-0143".into(), "+12025550143".into())]
+        );
+        assert!(scan("Number: 1-202-555-0143", &["US"]).is_empty());
+        assert!(scan("Dial-in information; Number: 1-202-555-0143", &["US"]).is_empty());
+        assert!(scan("Dial-in information: Code: 1-202-555-0143", &["US"]).is_empty());
     }
 
     #[cfg(feature = "phone-metadata")]
