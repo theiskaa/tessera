@@ -25,7 +25,8 @@ struct BodyRoster {
     bodies: Vec<Body>,
 }
 
-fn public_bodies() -> anyhow::Result<&'static [Body]> {
+/// Returns the validated public-body names and their official acronyms.
+pub(crate) fn public_bodies() -> anyhow::Result<&'static [Body]> {
     static ROSTER: OnceLock<anyhow::Result<Vec<Body>>> = OnceLock::new();
     let result = ROSTER.get_or_init(|| {
         let roster: BodyRoster =

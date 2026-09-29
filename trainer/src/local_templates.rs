@@ -3,7 +3,7 @@
 //! US public notices and English news repeat surnames and acronyms without their definition.
 
 use crate::generate::{Category, Family};
-use Category::{NoAddressWithPerson as NoAddr, NoPersonWithAddress as NoPers};
+use Category::{Both, NoAddressWithPerson as NoAddr, NoPersonWithAddress as NoPers};
 use Family::*;
 
 type Local = (Family, u32, Category, &'static [&'static str], &'static str);
@@ -97,5 +97,82 @@ pub const TEMPLATES: &[Local] = &[
         NoAddr,
         US,
         "{org_acr#1} initiated the review on {date}. {person#2}, {title}, {org_unit#3}, can be reached at {phone#2}. {org_acr#1} Control Number {neg_digits}.",
+    ),
+    (
+        Prose,
+        72,
+        NoAddr,
+        US,
+        "FOR FURTHER INFORMATION CONTACT:\n{person#1}, {title}, {org_unit#2}, {org_gov#3}; telephone {phone#1} or email {email#1}.",
+    ),
+    (
+        Prose,
+        73,
+        Both,
+        US,
+        "FOR FURTHER INFORMATION CONTACT:\n{person#1}, {title}, {org_gov#2}, {address#3}; telephone {phone#1}.",
+    ),
+    (
+        Prose,
+        74,
+        NoAddr,
+        US,
+        "FOR FURTHER INFORMATION CONTACT:\nTo request additional information, contact {person#1}, {org_unit#2}, at {email#1} or {phone#1}.",
+    ),
+    (
+        Prose,
+        75,
+        Both,
+        US,
+        "ADDRESSES:\nSend written comments to {org_gov#1}, {org_unit#2}, {address#3}; Attention: {person#4}, {title}.",
+    ),
+    (
+        Prose,
+        76,
+        Both,
+        US,
+        "FOR FURTHER INFORMATION CONTACT:\nPlease write to {org_gov#1}, {address#2}, ATTN: {person#3}, {title}; telephone {phone#3}.",
+    ),
+    (
+        Prose,
+        77,
+        Both,
+        US,
+        "ADDRESSES: Mail comments to {person#1}, {org_unit#2}, {org_gov#3}, {address_prefixed#4}. The {org_acr#3} docket will remain open until {date}.",
+    ),
+    (
+        Prose,
+        78,
+        NoPers,
+        US,
+        "ADDRESSES: Written comments may be sent to {org_unit#1}, {org_gov#2}, {address_prefixed#3}. Include {neg_order} in the subject line; {org_acr#2} will post the responses.",
+    ),
+    (
+        Prose,
+        80,
+        Both,
+        US,
+        "FOR FURTHER INFORMATION CONTACT: {person#1}, {title}, {org_acr#2}, {address_prefixed#3}; telephone {phone#1}, email {email#1}.",
+    ),
+    (
+        Prose,
+        81,
+        NoAddr,
+        US,
+        "The {org_acr#1} requested comments by {date}. {person#2}, {title}, said the {org_acr#1} would publish a response. Refer to {neg_order} when writing.",
+    ),
+    (
+        Prose,
+        82,
+        NoPers,
+        US,
+        "FOR FURTHER INFORMATION CONTACT: {org_unit#1}, {org_acr#2}; telephone {phone#3}. Mail requests to {org_gov#2}, {address_prefixed#4}.",
+    ),
+    (
+        Prose,
+        83,
+        Both,
+        US,
+        "Mail: {org_gov#1}, Attention: {person#2}, {address_prefixed#3}. The {org_acr#1} will acknowledge requests sent before {date}.",
     ),
 ];

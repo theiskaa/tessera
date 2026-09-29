@@ -1102,6 +1102,138 @@ const TEMPLATES: &[(Family, u32, Category, &str)] = &[
         NoPers,
         "Office Locations\n\n{neg_place} Office\n{address_ml#1}\nPhone: {phone#1}\nFax: {phone#2}",
     ),
+    (
+        Letterhead,
+        331,
+        Both,
+        "{org#1}\nSuperintendent: {person#1}\nAddress: {address_ml#1}\nPhone: {phone#1}",
+    ),
+    (
+        Signature,
+        231,
+        Both,
+        "Director: {person#1}\nOffice: {org#1}\nMailing address: {address_ml#1}\nTelephone: {phone#1}",
+    ),
+    (
+        Table,
+        634,
+        Both,
+        "District: {org#1}\nSuperintendent: {person#1}\nAddress: {address_ml#1}\nPhone: {phone#1}",
+    ),
+    (
+        Table,
+        635,
+        Both,
+        "Manager: {person#1}\nOrganization: {org#1}\nStreet address: {address_ml#1}\nCall: {phone#1}",
+    ),
+    (
+        Table,
+        636,
+        NoPers,
+        "Superintendent's Office\nAddress: {address_ml#1}\nPhone: {phone#1}",
+    ),
+    (
+        Table,
+        637,
+        Both,
+        "Superintendent: {person#1}\nAddress: {address_ml#1}\nPhone: {phone#1}",
+    ),
+    (
+        Table,
+        638,
+        Both,
+        "District: {org_district#1}\nSuperintendent: {person#1}\nAddress: {address_ml#1}\nPhone: {phone#1}",
+    ),
+    (
+        Letterhead,
+        332,
+        Both,
+        "{org_district#1}\nSuperintendent: {person#1}\nAddress: {address_ml#1}\nPhone: {phone#1}",
+    ),
+    (
+        Table,
+        640,
+        Both,
+        "School district: {org_district#1}\nDirector: {person#1}\nMailing address: {address_ml#1}\nTelephone: {phone#1}",
+    ),
+    (
+        Table,
+        641,
+        Both,
+        "County: {neg_district}\nSuperintendent: {person#1}\nAddress: {address_ml#1}\nPhone: {phone#1}",
+    ),
+    (
+        Signature,
+        232,
+        Both,
+        "{person#1}\n{title}\n{org#1}\n{address_prefixed#1}\n{phone#1}",
+    ),
+    (
+        Letterhead,
+        333,
+        NoPers,
+        "Office contact\n{org#1}\nMailing address:\n{address_prefixed#1}\nTelephone: {phone#1}",
+    ),
+    (
+        Table,
+        642,
+        Both,
+        "Contact: {person#1}\nAgency: {org#1}\nMailing address: {address_prefixed#1}\nPhone: {phone#1}",
+    ),
+    (
+        Table,
+        643,
+        NoPers,
+        "Location: {address_prefixed#1}\nEmail: {email#1}\nPhone: {phone#1}",
+    ),
+    (
+        Prose,
+        44,
+        NoPers,
+        "Send the signed form to {address_prefixed#1}. Questions go to {email#1}.",
+    ),
+    (
+        Table,
+        644,
+        Nothing,
+        "Position\tDepartment\n{title}\t{neg_department}\n{title}\t{neg_department}\nApply by {date}.",
+    ),
+    (
+        Table,
+        645,
+        NoAddr,
+        "Staff contact\nTitle: {title}\nName: {person#1}\nPhone: {phone#1}\nEmail: {email#1}",
+    ),
+    (
+        Table,
+        646,
+        Nothing,
+        "Open positions\n{title}\n{title}\n{title}\n{neg_heading}",
+    ),
+    (
+        Prose,
+        45,
+        NoAddr,
+        "The {title}, {person#1}, handles questions for {org#1}. Call {phone#1} for details.",
+    ),
+    (
+        Prose,
+        46,
+        Nothing,
+        "The {org_acr#1} received the comments on {date}. Questions for {org_acr#1} may be sent to {email#2}.",
+    ),
+    (
+        Table,
+        647,
+        NoAddr,
+        "Agency: {org_acr#1}\nContact: {person#2}\nPhone: {phone#2}\nEmail: {email#2}",
+    ),
+    (
+        Letterhead,
+        334,
+        NoPers,
+        "{org_acr#1}\nPublic notices and information\n{address_ml#2}\nCall {phone#2} for assistance.",
+    ),
 ];
 
 impl Template {
@@ -1219,6 +1351,54 @@ pub const PERSON_NAMED_INSTITUTIONS: &[&str] = &[
     "Stanford University",
     "Rockefeller Foundation",
     "Carnegie Hall",
+];
+
+/// Place stems used in synthetic district organizations and geographic negatives.
+pub const DISTRICT_PLACE_NAMES: &[&str] = &[
+    "Benton",
+    "Boone",
+    "Carter",
+    "Cedar Valley",
+    "Clark",
+    "Crawford",
+    "Fulton",
+    "Grant",
+    "Harrison",
+    "Jefferson",
+    "Lake",
+    "Lincoln",
+    "Marshall",
+    "Monroe",
+    "Morgan",
+    "North Fork",
+    "Oak Ridge",
+    "Orange",
+    "Perry",
+    "Pine Valley",
+    "Polk",
+    "Red River",
+    "Riverside",
+    "Summit",
+    "Sullivan",
+    "Union",
+    "Warren",
+    "Washington",
+    "Wayne",
+    "Westbrook",
+];
+
+/// District forms in public US school directories; the preceding field determines whether
+/// the same place-like surface refers to an organization or a location.
+pub const DISTRICT_FORMS: &[&str] = &[
+    "County",
+    "Independent",
+    "Unified",
+    "Elementary",
+    "City Schools",
+    "County Schools",
+    "School District",
+    "Area School District",
+    "County Office of Education",
 ];
 
 pub const NEG_HANDLES: &[&str] = &[
@@ -1381,6 +1561,7 @@ pub const NEG_HEADINGS: &[(&str, &[&str])] = &[(
         "Shipping schedule",
         "Project roles",
         "Key contacts",
+        "Hand Delivery",
     ],
 )];
 
@@ -1452,6 +1633,8 @@ pub const TITLES: &[(&str, &[&str])] = &[(
         "Assistant General Counsel",
         "Deputy Director",
         "Assistant Director",
+        "Support Specialist",
+        "Information Officer",
         "Branch Chief",
         "Team Leader",
         "Head of Unit",
