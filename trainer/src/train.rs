@@ -1,11 +1,12 @@
 //! `trainer train`: one manual training loop for the parser and the detector, with masked,
 //! class-weighted cross-entropy, AdamW, warmup then cosine decay, early stopping on a
-//! validation score (component F1 for the parser, macro exact span F1 for the detector),
+//! validation score (component F1 for the parser, minimum real-development exact F1 for the detector),
 //! checkpoints, and a `metrics.jsonl` log.
 //!
 //! A manual loop rather than Burn's `Learner`: the loop is short and it validates on decoded
 //! spans instead of loss.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
@@ -14,7 +15,7 @@ use anyhow::Context;
 use burn::backend::{Autodiff, NdArray, Wgpu};
 use burn::data::dataloader::batcher::Batcher;
 use burn::module::AutodiffModule;
-use burn::optim::{AdamWConfig, GradientsParams, Optimizer};
+use burn::optim::{AdamWConfig, GradientsParams, Optimizer, grad_clipping::GradientClippingConfig};
 use burn::prelude::*;
 use burn::record::{FullPrecisionSettings, NamedMpkFileRecorder};
 use burn::tensor::TensorData;
@@ -119,6 +120,9 @@ fn train<B: AutodiffBackend>(args: &TrainArgs<'_>, device: &B::Device) -> anyhow
     }
     validate_ngram_source(&cfg)?;
     validate_training_scope(&cfg)?;
+    if matches!(cfg.task, crate::config::Task::Detector) {
+        verify_real_development_gold()?;
+    }
     let run_dir = PathBuf::from("runs").join(&cfg.name);
     initialize_run(&run_dir, &cfg)?;
     capture_input_snapshot(&cfg, &run_dir)?;
@@ -161,6 +165,117 @@ fn validate_training_scope(cfg: &Config) -> anyhow::Result<()> {
 }
 
 const INPUT_SNAPSHOT_VERSION: u64 = 2;
+const REAL_DEV_GOLD: &str = "data/interim/review/us-development-gold-v2.jsonl";
+const REAL_DEV_GOLD_SHA256: &str =
+    "d7fd7166a5a40cc1d199eed1cfda234639f9737a16bf92fa9130ba06fe65c2f5";
+const REAL_DEV_MANIFEST: &str = "data/interim/review/us-development-gold-v2.manifest.json";
+const REAL_DEV_ERRATA: &str = "bench/us/fixtures/us-development-gold-errata-v2.json";
+const REAL_DEV_EXCLUSIONS: &str = "data/interim/review/us-eval-exclusions-v1.jsonl";
+const REAL_DEV_SOURCES: [&str; 4] = [
+    "data/interim/review/us-dev-v1.jsonl",
+    "data/interim/review/us-office-eval-v1.jsonl",
+    "data/interim/review/us-staff-challenge-v1.jsonl",
+    "data/interim/review/us-park-address-challenge-v1.jsonl",
+];
+
+fn repo_path(relative: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("trainer lives inside the repository")
+        .join(relative)
+}
+
+#[derive(Deserialize)]
+struct RealDevManifest {
+    kind: String,
+    cases: usize,
+    sha256: String,
+    base_sha256: String,
+    errata_sha256: String,
+    sources_sha256: BTreeMap<String, String>,
+}
+
+fn verify_real_development_gold() -> anyhow::Result<()> {
+    let manifest: RealDevManifest =
+        serde_json::from_slice(&std::fs::read(repo_path(REAL_DEV_MANIFEST))?)?;
+    anyhow::ensure!(
+        manifest.kind == "us_development_gold_corrected"
+            && manifest.cases == 196
+            && manifest.sha256 == REAL_DEV_GOLD_SHA256
+            && hash_file(&repo_path(REAL_DEV_GOLD))? == REAL_DEV_GOLD_SHA256,
+        "pinned real development gold changed"
+    );
+    anyhow::ensure!(
+        hash_file(&repo_path(REAL_DEV_ERRATA))? == manifest.errata_sha256,
+        "reviewed real development errata changed"
+    );
+    let mut base = Vec::new();
+    let mut source_names = BTreeSet::new();
+    for source in REAL_DEV_SOURCES {
+        let source_path = repo_path(source);
+        let path = source_path.as_path();
+        let name = path
+            .file_name()
+            .context("development source has no file name")?
+            .to_string_lossy()
+            .into_owned();
+        anyhow::ensure!(
+            manifest.sources_sha256.get(&name) == Some(&hash_file(path)?),
+            "real development source {name} changed"
+        );
+        source_names.insert(name);
+        base.extend(std::fs::read(path)?);
+    }
+    anyhow::ensure!(
+        manifest
+            .sources_sha256
+            .keys()
+            .cloned()
+            .collect::<BTreeSet<_>>()
+            == source_names
+            && crate::export::sha256_hex(&base) == manifest.base_sha256,
+        "real development source set changed"
+    );
+    let exclusions = std::fs::read_to_string(repo_path(REAL_DEV_EXCLUSIONS))?;
+    let excluded: BTreeMap<String, String> = exclusions
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| {
+            let row: serde_json::Value = serde_json::from_str(line)?;
+            Ok((
+                row["name"]
+                    .as_str()
+                    .context("evaluation exclusion has no name")?
+                    .to_string(),
+                row["input"]
+                    .as_str()
+                    .context("evaluation exclusion has no input")?
+                    .to_string(),
+            ))
+        })
+        .collect::<anyhow::Result<_>>()?;
+    let gold = std::fs::read_to_string(repo_path(REAL_DEV_GOLD))?;
+    let mut count = 0;
+    for line in gold.lines().filter(|line| !line.trim().is_empty()) {
+        let row: serde_json::Value = serde_json::from_str(line)?;
+        let name = row["name"]
+            .as_str()
+            .context("real development case has no name")?;
+        let input = row["input"]
+            .as_str()
+            .context("real development case has no input")?;
+        anyhow::ensure!(
+            excluded.get(name).is_some_and(|original| original == input),
+            "real development case {name} is absent from training exclusions"
+        );
+        count += 1;
+    }
+    anyhow::ensure!(
+        count == manifest.cases,
+        "real development case count changed"
+    );
+    Ok(())
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct InputFile {
@@ -219,6 +334,24 @@ pub(crate) fn input_paths(cfg: &Config) -> Vec<(String, PathBuf)> {
             PathBuf::from(&cfg.data.sample_manifest),
         )),
         crate::config::Task::Detector => {
+            paths.extend([
+                ("real_dev_gold".to_string(), repo_path(REAL_DEV_GOLD)),
+                (
+                    "real_dev_manifest".to_string(),
+                    repo_path(REAL_DEV_MANIFEST),
+                ),
+                ("real_dev_errata".to_string(), repo_path(REAL_DEV_ERRATA)),
+                (
+                    "real_dev_exclusions".to_string(),
+                    repo_path(REAL_DEV_EXCLUSIONS),
+                ),
+            ]);
+            paths.extend(
+                REAL_DEV_SOURCES
+                    .iter()
+                    .enumerate()
+                    .map(|(i, source)| (format!("real_dev_source_{i}"), repo_path(source))),
+            );
             if let Some(detector) = &cfg.detector {
                 paths.extend(
                     detector
@@ -438,13 +571,14 @@ fn train_parser<B: AutodiffBackend>(
         TrainingData {
             items: &train_ds.items,
             draws: (0..train_ds.items.len()).collect(),
+            detector_epoch: None,
         },
         &weights,
         device,
         |model| {
             let valid = quick_score(model, &valid_kept, &valid_items, batch_size, device);
             (
-                valid.component_f1,
+                CheckpointScore::new(valid.component_f1, 0.0),
                 serde_json::json!({
                     "valid_component_f1": valid.component_f1,
                     "valid_exact": valid.exact,
@@ -516,8 +650,59 @@ fn detector_draw_indices(
     Ok(draws)
 }
 
-/// Trains the detector on the synthetic corpus of phase 4.2 with the configured class
-/// weights, validating on exact span F1 macro-averaged over person, org, and address.
+struct DetectorEpochDraws {
+    synthetic_count: usize,
+    synthetic_per_epoch: usize,
+    source_pieces: Vec<usize>,
+    source_repeats: Vec<usize>,
+    seed: u64,
+}
+
+impl DetectorEpochDraws {
+    fn len(&self) -> anyhow::Result<usize> {
+        anyhow::ensure!(
+            self.synthetic_per_epoch > 0 && self.synthetic_per_epoch <= self.synthetic_count,
+            "detector synthetic_per_epoch exceeds the prepared train shard"
+        );
+        anyhow::ensure!(
+            self.source_pieces.len() == self.source_repeats.len(),
+            "detector silver source counts and repeats differ"
+        );
+        self.source_pieces
+            .iter()
+            .zip(&self.source_repeats)
+            .try_fold(self.synthetic_per_epoch, |total, (&pieces, &repeat)| {
+                pieces
+                    .checked_mul(repeat)
+                    .and_then(|count| total.checked_add(count))
+                    .context("detector draw count overflow")
+            })
+    }
+
+    fn indices(&self, epoch: usize) -> anyhow::Result<Vec<usize>> {
+        let mut draws = Vec::with_capacity(self.len()?);
+        let mut synthetic: Vec<usize> = (0..self.synthetic_count).collect();
+        if self.synthetic_per_epoch < self.synthetic_count {
+            synthetic.shuffle(&mut ChaCha8Rng::seed_from_u64(
+                self.seed ^ epoch as u64 ^ 0x9e37_79b9_7f4a_7c15,
+            ));
+            synthetic.truncate(self.synthetic_per_epoch);
+        }
+        draws.extend(synthetic);
+        let mut offset = self.synthetic_count;
+        for (&pieces, &repeat) in self.source_pieces.iter().zip(&self.source_repeats) {
+            for _ in 0..repeat {
+                draws.extend(offset..offset + pieces);
+            }
+            offset += pieces;
+        }
+        Ok(draws)
+    }
+}
+
+/// Trains the detector on synthetic and reviewed real documents. The lowest exact F1 among
+/// person, org, and address on pinned real development cases selects the checkpoint. Tied
+/// minimum scores use real development macro F1 so an early zero does not stall selection.
 fn train_detector<B: AutodiffBackend>(
     cfg: &Config,
     run_dir: &Path,
@@ -535,32 +720,64 @@ fn train_detector<B: AutodiffBackend>(
     let dir = PathBuf::from(&cfg.data.processed);
     let (train_docs, train_counts) = detector::load_split(&dir, Split::Train, &fc)?;
     let (valid_docs, valid_counts) = detector::load_split(&dir, Split::Valid, &fc)?;
+    let real_dev_docs = detector::load_development_gold(&repo_path(REAL_DEV_GOLD), &fc)?;
     anyhow::ensure!(
         !valid_docs.is_empty(),
         "detector validation has no encoded documents"
+    );
+    anyhow::ensure!(
+        real_dev_docs.len() == 196,
+        "pinned real development set must have 196 cases"
     );
     eprintln!("train {train_counts:?}, valid {valid_counts:?}");
     let mut train_items: Vec<Encoded> = train_docs.into_iter().map(|d| d.enc).collect();
     let (silver_docs, silver_counts) =
         detector::load_silver(&detector_cfg.silver, &fc, SILVER_MAX_TOKENS)?;
-    let draws = detector_draw_indices(
-        train_items.len(),
-        silver_docs.len(),
-        detector_cfg.silver_repeat,
-    )?;
+    let synthetic_count = train_items.len();
+    let source_repeats = if detector_cfg.silver_repeats.is_empty() {
+        vec![detector_cfg.silver_repeat; detector_cfg.silver.len()]
+    } else {
+        detector_cfg.silver_repeats.clone()
+    };
+    let synthetic_per_epoch = detector_cfg.synthetic_per_epoch.unwrap_or(synthetic_count);
+    let epoch_plan =
+        if detector_cfg.synthetic_per_epoch.is_some() || !detector_cfg.silver_repeats.is_empty() {
+            let plan = DetectorEpochDraws {
+                synthetic_count,
+                synthetic_per_epoch,
+                source_pieces: silver_counts.source_pieces.clone(),
+                source_repeats: source_repeats.clone(),
+                seed: cfg.seed,
+            };
+            anyhow::ensure!(
+                plan.source_pieces.iter().sum::<usize>() == silver_docs.len(),
+                "detector silver source pieces do not match encoded pieces"
+            );
+            plan.len()?;
+            Some(plan)
+        } else {
+            None
+        };
+    let draws = if epoch_plan.is_some() {
+        Vec::new()
+    } else {
+        detector_draw_indices(
+            synthetic_count,
+            silver_docs.len(),
+            detector_cfg.silver_repeat,
+        )?
+    };
     if !silver_docs.is_empty() {
         eprintln!(
-            "silver {silver_counts:?}, each piece repeated {} times",
-            detector_cfg.silver_repeat
+            "silver {silver_counts:?}, source repeats {source_repeats:?}, synthetic per epoch {synthetic_per_epoch}"
         );
-        if detector_cfg.silver_repeat > 0 {
-            train_items.extend(silver_docs.into_iter().map(|d| d.enc));
-        }
+        train_items.extend(silver_docs.into_iter().map(|d| d.enc));
     }
     let valid_gold: Vec<Vec<KindSpan>> = valid_docs.iter().map(|d| d.gold.clone()).collect();
+    let real_dev_gold: Vec<Vec<KindSpan>> = real_dev_docs.iter().map(|d| d.gold.clone()).collect();
     let mut model = cfg.detector_net_config().init::<B>(device);
     if let Some(run) = &cfg.net.ngram_from {
-        model.ngram = frozen_ngram::<B>(cfg, Path::new(run), device)?;
+        model.ngram = pretrained_ngram::<B>(cfg, Path::new(run), device)?;
     }
     let batch_size = cfg.train.batch_size.max(1);
     let fit = fit::<B>(
@@ -570,34 +787,48 @@ fn train_detector<B: AutodiffBackend>(
         TrainingData {
             items: &train_items,
             draws,
+            detector_epoch: epoch_plan,
         },
         &detector_cfg.class_weights,
         device,
         |model| {
-            let pred = detector::predict(model, &valid_docs, batch_size, device);
-            let scores = detector::score(&valid_gold, &pred);
-            let f1 = |k: &str| scores.per_kind.get(k).map_or(0.0, |s| s.exact.f1);
+            let valid_pred = detector::predict(model, &valid_docs, batch_size, device);
+            let valid_scores = detector::score(&valid_gold, &valid_pred);
+            let real_dev_pred = detector::predict(model, &real_dev_docs, batch_size, device);
+            let real_dev_scores = detector::score(&real_dev_gold, &real_dev_pred);
+            let min_f1 = minimum_model_exact_f1(&real_dev_scores);
             eprintln!(
-                "valid exact F1: person {:.4}, org {:.4}, address {:.4}",
-                f1("person"),
-                f1("org"),
-                f1("address")
+                "real dev exact F1: person {:.4}, org {:.4}, address {:.4}; minimum {:.4}; synthetic valid macro {:.4}",
+                real_dev_scores.per_kind["person"].exact.f1,
+                real_dev_scores.per_kind["org"].exact.f1,
+                real_dev_scores.per_kind["address"].exact.f1,
+                min_f1,
+                valid_scores.macro_exact_f1,
             );
             (
-                scores.macro_exact_f1,
-                serde_json::json!({ "valid": scores }),
+                CheckpointScore::new(min_f1, real_dev_scores.macro_exact_f1),
+                serde_json::json!({
+                    "real_dev": real_dev_scores,
+                    "real_dev_min_exact_f1": min_f1,
+                    "valid": valid_scores,
+                }),
             )
         },
     )?;
     let summary = serde_json::json!({
         "best_epoch": fit.best_epoch,
-        "best_valid_macro_exact_f1": fit.best_score,
+        "best_real_dev_min_exact_f1": fit.best_score,
+        "best_real_dev": fit.best_metrics["real_dev"],
         "best_valid": fit.best_metrics["valid"],
+        "real_dev_cases": real_dev_docs.len(),
+        "real_dev_gold_sha256": REAL_DEV_GOLD_SHA256,
         "wall_clock_seconds": fit.seconds,
         "train": train_counts,
         "valid": valid_counts,
         "silver": silver_counts,
         "silver_repeat": detector_cfg.silver_repeat,
+        "silver_repeats": source_repeats,
+        "synthetic_per_epoch": synthetic_per_epoch,
         "epochs": cfg.train.epochs,
         "steps": fit.steps,
         "dense_parameters": fit.dense,
@@ -611,9 +842,16 @@ fn train_detector<B: AutodiffBackend>(
     Ok(())
 }
 
-/// The n-gram table of the parser run in `run`, with gradients off so training leaves it as
-/// it is. Its features must be this config's, or the same ids would mean different n-grams.
-fn frozen_ngram<B: AutodiffBackend>(
+fn minimum_model_exact_f1(scores: &detector::SpanScores) -> f64 {
+    ["person", "org", "address"]
+        .iter()
+        .map(|kind| scores.per_kind[*kind].exact.f1)
+        .fold(f64::INFINITY, f64::min)
+}
+
+/// Initialize the detector from the parser's n-gram table. Its features must match, or the
+/// same ids would mean different n-grams. The default freezes it to allow bundle sharing.
+fn pretrained_ngram<B: AutodiffBackend>(
     cfg: &Config,
     run: &Path,
     device: &B::Device,
@@ -630,8 +868,13 @@ fn frozen_ngram<B: AutodiffBackend>(
         .init::<B>(device)
         .load_file(run.join("best"), &recorder, device)
         .with_context(|| format!("loading {}", run.join("best.mpk").display()))?;
-    eprintln!("n-gram table from {}, frozen", run.display());
-    Ok(parser.ngram.no_grad())
+    if cfg.net.finetune_ngram {
+        eprintln!("n-gram table from {}, trainable", run.display());
+        Ok(parser.ngram)
+    } else {
+        eprintln!("n-gram table from {}, frozen", run.display());
+        Ok(parser.ngram.no_grad())
+    }
 }
 
 /// What a finished `fit` reports.
@@ -645,9 +888,43 @@ struct FitSummary {
     embedding: usize,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
+struct CheckpointScore {
+    primary: f64,
+    secondary: f64,
+}
+
+impl CheckpointScore {
+    fn new(primary: f64, secondary: f64) -> Self {
+        Self { primary, secondary }
+    }
+
+    fn is_finite(self) -> bool {
+        self.primary.is_finite() && self.secondary.is_finite()
+    }
+}
+
 struct TrainingData<'a> {
     items: &'a [Encoded],
     draws: Vec<usize>,
+    detector_epoch: Option<DetectorEpochDraws>,
+}
+
+fn length_bucket_batches(
+    order: &[usize],
+    lengths: &[usize],
+    batch_size: usize,
+    seed: u64,
+) -> Vec<Vec<usize>> {
+    let pool_size = batch_size.saturating_mul(64).max(batch_size);
+    let mut batches = Vec::with_capacity(order.len().div_ceil(batch_size));
+    for pool in order.chunks(pool_size) {
+        let mut sorted = pool.to_vec();
+        sorted.sort_by_key(|&index| lengths[index]);
+        batches.extend(sorted.chunks(batch_size).map(<[usize]>::to_vec));
+    }
+    batches.shuffle(&mut ChaCha8Rng::seed_from_u64(seed));
+    batches
 }
 
 /// The shared training loop: AdamW with warmup then cosine decay, masked class-weighted
@@ -661,14 +938,19 @@ fn fit<B: AutodiffBackend>(
     data: TrainingData<'_>,
     weights: &[f32],
     device: &B::Device,
-    mut validate: impl FnMut(&TaggerNet<B::InnerBackend>) -> (f64, serde_json::Value),
+    mut validate: impl FnMut(&TaggerNet<B::InnerBackend>) -> (CheckpointScore, serde_json::Value),
 ) -> anyhow::Result<FitSummary> {
     let TrainingData {
         items,
         draws: mut order,
+        detector_epoch,
     } = data;
     anyhow::ensure!(cfg.train.epochs > 0, "training requires at least one epoch");
-    anyhow::ensure!(!order.is_empty(), "training has no examples");
+    let epoch_draw_count = match &detector_epoch {
+        Some(plan) => plan.len()?,
+        None => order.len(),
+    };
+    anyhow::ensure!(epoch_draw_count > 0, "training has no examples");
     anyhow::ensure!(
         order.iter().all(|&index| index < items.len()),
         "training draw index is outside the encoded examples"
@@ -682,21 +964,46 @@ fn fit<B: AutodiffBackend>(
     eprintln!("parameters: {dense} dense, {embedding} in the n-gram table");
     let class_weights =
         Tensor::<B, 1>::from_data(TensorData::new(weights.to_vec(), [weights.len()]), device);
-    let mut optim = AdamWConfig::new()
-        .with_weight_decay(0.01)
-        .init::<B, TaggerNet<B>>();
+    let mut optim_config = AdamWConfig::new().with_weight_decay(0.01);
+    if let Some(norm) = cfg.train.gradient_clip_norm {
+        optim_config = optim_config.with_grad_clipping(Some(GradientClippingConfig::Norm(norm)));
+    }
+    let mut optim = optim_config.init::<B, TaggerNet<B>>();
     let recorder = NamedMpkFileRecorder::<FullPrecisionSettings>::new();
     let batch_size = cfg.train.batch_size.max(1);
-    let total_steps = cfg.train.epochs * order.len().div_ceil(batch_size);
+    let total_steps = cfg.train.epochs * epoch_draw_count.div_ceil(batch_size);
     let mut metrics = File::create(run_dir.join("metrics.jsonl"))?;
-    let mut best = (f64::MIN, 0usize, serde_json::Value::Null);
+    let mut best = (
+        CheckpointScore::new(f64::MIN, f64::MIN),
+        0usize,
+        serde_json::Value::Null,
+    );
     let (mut since_best, mut step) = (0usize, 0usize);
     let started = std::time::Instant::now();
+    let detector_lengths = detector_epoch.as_ref().map(|_| {
+        items
+            .iter()
+            .map(|item| item.token_spans.len())
+            .collect::<Vec<_>>()
+    });
 
     for epoch in 1..=cfg.train.epochs {
+        if let Some(plan) = &detector_epoch {
+            order = plan.indices(epoch)?;
+            anyhow::ensure!(
+                order.iter().all(|&index| index < items.len()),
+                "detector epoch draw index is outside the encoded examples"
+            );
+        }
         order.shuffle(&mut ChaCha8Rng::seed_from_u64(cfg.seed ^ epoch as u64));
+        let epoch_batches = match &detector_lengths {
+            Some(lengths) => {
+                length_bucket_batches(&order, lengths, batch_size, cfg.seed ^ epoch as u64)
+            }
+            None => order.chunks(batch_size).map(<[usize]>::to_vec).collect(),
+        };
         let (mut epoch_loss, mut batches) = (0f64, 0usize);
-        for chunk in order.chunks(batch_size) {
+        for chunk in epoch_batches {
             let batch_items: Vec<Encoded> = chunk.iter().map(|&i| items[i].clone()).collect();
             let batch: ParserBatch<B> = ParserBatcher.batch(batch_items, device);
             let logits = model.forward(
@@ -708,6 +1015,10 @@ fn fit<B: AutodiffBackend>(
             );
             let loss = masked_loss(logits, batch.labels, batch.mask, class_weights.clone());
             let value: f64 = loss.clone().into_scalar().elem();
+            anyhow::ensure!(
+                value.is_finite() && value < 100.0,
+                "epoch {epoch} step {step}: loss {value} is non-finite or runaway"
+            );
             let grads = GradientsParams::from_grads(loss.backward(), &model);
             let lr = lr_at(
                 step,
@@ -746,7 +1057,10 @@ fn fit<B: AutodiffBackend>(
             line.extend(fields.clone());
         }
         writeln!(metrics, "{line}")?;
-        eprintln!("epoch {epoch}: loss {train_loss:.4}, validation score {score:.4}");
+        eprintln!(
+            "epoch {epoch}: loss {train_loss:.4}, validation score {:.4}, tie break {:.4}",
+            score.primary, score.secondary
+        );
         model.clone().save_file(
             run_dir.join(format!("checkpoints/epoch-{epoch}")),
             &recorder,
@@ -760,7 +1074,7 @@ fn fit<B: AutodiffBackend>(
             if since_best >= cfg.train.patience {
                 eprintln!(
                     "early stop at epoch {epoch}; best epoch {}, score {:.4}",
-                    best.1, best.0
+                    best.1, best.0.primary
                 );
                 break;
             }
@@ -768,7 +1082,7 @@ fn fit<B: AutodiffBackend>(
     }
     Ok(FitSummary {
         best_epoch: best.1,
-        best_score: best.0,
+        best_score: best.0.primary,
         best_metrics: best.2,
         steps: step,
         seconds: started.elapsed().as_secs(),
@@ -780,6 +1094,77 @@ fn fit<B: AutodiffBackend>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pinned_real_development_set_is_source_backed_and_encodable() {
+        verify_real_development_gold().unwrap();
+        let docs = detector::load_development_gold(
+            &repo_path(REAL_DEV_GOLD),
+            &crate::config::load(&repo_path("configs/detector-shared.toml"))
+                .unwrap()
+                .features
+                .to_tessera(),
+        )
+        .unwrap();
+        assert_eq!(docs.len(), 196);
+        for kind in 0..3 {
+            assert!(
+                docs.iter()
+                    .any(|doc| doc.gold.iter().any(|span| span.kind == kind))
+            );
+        }
+    }
+
+    #[test]
+    fn detector_checkpoint_score_follows_weakest_real_field() {
+        let scores = |person: f64, org: f64, address: f64| detector::SpanScores {
+            per_kind: BTreeMap::from([
+                (
+                    "person",
+                    detector::KindScores {
+                        exact: detector::Prf {
+                            f1: person,
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    },
+                ),
+                (
+                    "org",
+                    detector::KindScores {
+                        exact: detector::Prf {
+                            f1: org,
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    },
+                ),
+                (
+                    "address",
+                    detector::KindScores {
+                        exact: detector::Prf {
+                            f1: address,
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    },
+                ),
+            ]),
+            macro_exact_f1: (person + org + address) / 3.0,
+        };
+        let high_macro_weak_org = scores(0.95, 0.25, 0.95);
+        let balanced = scores(0.70, 0.70, 0.70);
+        assert!(high_macro_weak_org.macro_exact_f1 > balanced.macro_exact_f1);
+        assert!(minimum_model_exact_f1(&balanced) > minimum_model_exact_f1(&high_macro_weak_org));
+        assert!(
+            CheckpointScore::new(minimum_model_exact_f1(&balanced), balanced.macro_exact_f1)
+                > CheckpointScore::new(
+                    minimum_model_exact_f1(&high_macro_weak_org),
+                    high_macro_weak_org.macro_exact_f1,
+                )
+        );
+        assert!(CheckpointScore::new(0.0, 0.6) > CheckpointScore::new(0.0, 0.5));
+    }
 
     #[test]
     fn training_scope_rejects_a_foreign_test_row_before_run_setup() {
@@ -873,6 +1258,7 @@ mod tests {
         detector.data.processed = dir.path().join("detector_processed").display().to_string();
         detector.detector.as_mut().unwrap().silver =
             vec![dir.path().join("silver.jsonl").display().to_string()];
+        detector.detector.as_mut().unwrap().silver_repeats.clear();
         assert_eq!(detector.features, parser.features);
         assert!(input_paths(&detector).iter().any(|(role, path)| {
             role == "ngram_source_input_snapshot" && path == &parser_run.join("input_snapshot.json")
@@ -909,7 +1295,7 @@ mod tests {
         )
         .unwrap();
         for (role, path) in input_paths(&detector) {
-            if role.starts_with("ngram_source_") {
+            if role.starts_with("ngram_source_") || role.starts_with("real_dev_") {
                 continue;
             }
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -930,6 +1316,7 @@ mod tests {
         )
         .unwrap();
         config.detector.as_mut().unwrap().silver = vec!["silver.jsonl".into()];
+        config.detector.as_mut().unwrap().silver_repeats.clear();
         std::fs::write(
             dir.path().join("config.toml"),
             toml::to_string(&config).unwrap(),
@@ -1005,6 +1392,72 @@ mod tests {
     fn repeated_silver_draw_count_overflow_is_an_error() {
         assert!(detector_draw_indices(1, usize::MAX, 2).is_err());
         assert!(detector_draw_indices(usize::MAX, 1, 0).is_err());
+    }
+
+    #[test]
+    fn detector_epoch_draws_rotate_synthetic_rows_and_weight_sources() {
+        let plan = DetectorEpochDraws {
+            synthetic_count: 10,
+            synthetic_per_epoch: 4,
+            source_pieces: vec![2, 1],
+            source_repeats: vec![3, 2],
+            seed: 42,
+        };
+        assert_eq!(plan.len().unwrap(), 12);
+        let first = plan.indices(1).unwrap();
+        let second = plan.indices(2).unwrap();
+        assert_eq!(first.len(), 12);
+        assert_eq!(
+            first[..4]
+                .iter()
+                .copied()
+                .collect::<std::collections::HashSet<_>>()
+                .len(),
+            4
+        );
+        assert_ne!(first[..4], second[..4]);
+        assert!(first[..4].iter().all(|&index| index < 10));
+        assert_eq!(first[4..].iter().filter(|&&index| index == 10).count(), 3);
+        assert_eq!(first[4..].iter().filter(|&&index| index == 11).count(), 3);
+        assert_eq!(first[4..].iter().filter(|&&index| index == 12).count(), 2);
+    }
+
+    #[test]
+    fn detector_epoch_draws_reject_invalid_counts() {
+        let mut plan = DetectorEpochDraws {
+            synthetic_count: 10,
+            synthetic_per_epoch: 11,
+            source_pieces: vec![1],
+            source_repeats: vec![2],
+            seed: 42,
+        };
+        assert!(plan.len().is_err());
+        plan.synthetic_per_epoch = 4;
+        plan.source_repeats.clear();
+        assert!(plan.len().is_err());
+        plan.source_repeats = vec![usize::MAX];
+        assert!(plan.len().is_err());
+    }
+
+    #[test]
+    fn length_bucketing_preserves_draws_and_reduces_padding() {
+        let lengths: Vec<usize> = (0..128)
+            .map(|index| if index % 8 == 0 { 300 } else { 20 })
+            .collect();
+        let order: Vec<usize> = (0..128).collect();
+        let batches = length_bucket_batches(&order, &lengths, 4, 42);
+        let mut actual: Vec<usize> = batches.iter().flatten().copied().collect();
+        actual.sort_unstable();
+        assert_eq!(actual, order);
+        let padded = |batches: &[Vec<usize>]| -> usize {
+            batches
+                .iter()
+                .map(|batch| batch.iter().map(|&index| lengths[index]).max().unwrap() * batch.len())
+                .sum()
+        };
+        let unbucketed: Vec<Vec<usize>> = order.chunks(4).map(<[usize]>::to_vec).collect();
+        assert!(padded(&batches) < padded(&unbucketed) / 2);
+        assert_eq!(batches, length_bucket_batches(&order, &lengths, 4, 42));
     }
 
     #[test]

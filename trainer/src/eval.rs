@@ -111,6 +111,10 @@ pub(crate) struct ExternalEntity {
 
 /// `trainer eval`: scores a run, the deterministic baselines, or external predictions.
 pub fn run(args: EvalArgs) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        args.gold.is_some() || args.dump_predictions.is_none(),
+        "--dump-predictions requires --gold"
+    );
     if let Some(dir) = &args.grouper {
         return crate::group_eval::run(&args, dir);
     }

@@ -223,9 +223,8 @@ fn load_run(dir: &Path, task: Task) -> anyhow::Result<ShippedRun> {
     })
 }
 
-/// Whether the detector was trained on this parser's n-gram table, frozen, in which case the
-/// bundle carries the table once and the library gives it to both networks. The table must be
-/// the same bytes in both runs, which also proves training left it untouched.
+/// Whether the detector still shares this parser's frozen n-gram table. A fine-tuned detector
+/// carries its own table in the bundle.
 fn shares_parser_ngram(parser: &ShippedRun, detector: &ShippedRun) -> anyhow::Result<bool> {
     let Some(from) = &detector.cfg.net.ngram_from else {
         return Ok(false);
@@ -238,6 +237,9 @@ fn shares_parser_ngram(parser: &ShippedRun, detector: &ShippedRun) -> anyhow::Re
         detector.dir.display(),
         parser.dir.display()
     );
+    if detector.cfg.net.finetune_ngram {
+        return Ok(false);
+    }
     let table = |run: &ShippedRun, name: &str| {
         run.q
             .iter()
@@ -613,6 +615,30 @@ fn golden_case(
 mod tests {
     use super::*;
 
+    #[test]
+    fn fine_tuned_detector_keeps_a_separate_ngram_table() {
+        let parser_dir = tempfile::tempdir().unwrap();
+        let detector_dir = tempfile::tempdir().unwrap();
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../configs");
+        let parser_cfg = crate::config::load(&root.join("parser-small.toml")).unwrap();
+        let mut detector_cfg = crate::config::load(&root.join("detector-shared.toml")).unwrap();
+        detector_cfg.net.ngram_from = Some(parser_dir.path().display().to_string());
+        detector_cfg.net.finetune_ngram = true;
+        let parser = ShippedRun {
+            dir: parser_dir.path().to_path_buf(),
+            cfg: parser_cfg,
+            q: Vec::new(),
+            biases: Vec::new(),
+        };
+        let detector = ShippedRun {
+            dir: detector_dir.path().to_path_buf(),
+            cfg: detector_cfg,
+            q: Vec::new(),
+            biases: Vec::new(),
+        };
+        assert!(!shares_parser_ngram(&parser, &detector).unwrap());
+    }
+
     fn gated_run(task: Task) -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
         let config_name = match task {
@@ -629,12 +655,16 @@ mod tests {
         cfg.data.sample_manifest = dir.path().join("sample.json").display().to_string();
         if let Some(detector) = cfg.detector.as_mut() {
             detector.silver = vec![dir.path().join("silver.jsonl").display().to_string()];
+            detector.silver_repeats.clear();
             cfg.net.ngram_from = None;
         }
         let config = toml::to_string(&cfg).unwrap();
         std::fs::write(dir.path().join("config.toml"), &config).unwrap();
         std::fs::write(dir.path().join("best.mpk"), b"checkpoint").unwrap();
-        for (_, path) in crate::train::input_paths(&cfg) {
+        for (role, path) in crate::train::input_paths(&cfg) {
+            if role.starts_with("real_dev_") {
+                continue;
+            }
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(path, b"training data").unwrap();
         }

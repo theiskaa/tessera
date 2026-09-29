@@ -99,10 +99,14 @@ pub struct NetConfig {
     /// Budget for the n-gram table, in int8 bytes.
     #[serde(default = "default_max_embedding_bytes")]
     pub max_embedding_bytes: usize,
-    /// A parser run whose n-gram table this network uses, frozen, so the bundle carries the
-    /// table once. The run's feature settings must equal this config's.
+    /// A parser run whose n-gram table initializes this network. The run's feature settings
+    /// must equal this config's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ngram_from: Option<String>,
+    /// Update the parser-initialized n-gram table during detector training. This makes the
+    /// detector keep a separate table in the exported bundle.
+    #[serde(default)]
+    pub finetune_ngram: bool,
 }
 
 fn default_max_embedding_bytes() -> usize {
@@ -123,6 +127,12 @@ pub struct DetectorConfig {
     /// How many times each silver document is repeated in an epoch.
     #[serde(default = "default_silver_repeat")]
     pub silver_repeat: usize,
+    /// Optional repeat count for each silver source, in `silver` order.
+    #[serde(default)]
+    pub silver_repeats: Vec<usize>,
+    /// Number of distinct synthetic documents sampled each epoch from the full train shard.
+    #[serde(default)]
+    pub synthetic_per_epoch: Option<usize>,
 }
 
 fn default_silver_repeat() -> usize {
@@ -194,6 +204,9 @@ pub struct TrainConfig {
     pub epochs: usize,
     pub batch_size: usize,
     pub learning_rate: f64,
+    /// Maximum per-parameter-tensor gradient norm before each optimizer step.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gradient_clip_norm: Option<f32>,
     #[serde(default = "default_warmup_steps")]
     pub warmup_steps: usize,
     /// Epochs without a better validation F1 before stopping.
@@ -280,11 +293,22 @@ impl Config {
             "net.dropout must be finite and in [0, 1)"
         );
         ensure!(
+            !self.net.finetune_ngram
+                || (self.task == Task::Detector && self.net.ngram_from.is_some()),
+            "net.finetune_ngram requires a detector with net.ngram_from"
+        );
+        ensure!(
             self.train.epochs > 0
                 && self.train.batch_size > 0
                 && self.train.learning_rate.is_finite()
                 && self.train.learning_rate > 0.0,
             "training epochs, batch_size, and learning_rate must be positive"
+        );
+        ensure!(
+            self.train
+                .gradient_clip_norm
+                .is_none_or(|norm| norm.is_finite() && norm > 0.0),
+            "train.gradient_clip_norm must be finite and positive"
         );
         if self.task == Task::Detector {
             let detector = self
@@ -302,6 +326,16 @@ impl Config {
             ensure!(
                 detector.silver_repeat > 0,
                 "detector.silver_repeat must be positive"
+            );
+            ensure!(
+                detector.silver_repeats.is_empty()
+                    || (detector.silver_repeats.len() == detector.silver.len()
+                        && detector.silver_repeats.iter().all(|&repeat| repeat > 0)),
+                "detector.silver_repeats must give one positive count per silver source"
+            );
+            ensure!(
+                detector.synthetic_per_epoch.is_none_or(|count| count > 0),
+                "detector.synthetic_per_epoch must be positive"
             );
         }
         Ok(())
@@ -387,6 +421,22 @@ mod tests {
         let back: Config = toml::from_str(&written).unwrap();
         assert_eq!(back.train.epochs, 3);
         assert_eq!(toml::to_string(&back).unwrap(), written);
+    }
+
+    #[test]
+    fn ngram_finetuning_requires_a_detector_source() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let mut detector = load(&root.join("configs/detector-small.toml")).unwrap();
+        detector.net.finetune_ngram = true;
+        detector.net.ngram_from = None;
+        assert!(detector.validate().is_err());
+        detector.net.ngram_from = Some("runs/parser-us-v1".into());
+        assert!(detector.validate().is_ok());
+
+        let mut parser = load(&root.join("configs/parser-small.toml")).unwrap();
+        parser.net.finetune_ngram = true;
+        parser.net.ngram_from = Some("runs/parser-us-v1".into());
+        assert!(parser.validate().is_err());
     }
 
     #[test]

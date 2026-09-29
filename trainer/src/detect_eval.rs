@@ -833,6 +833,25 @@ pub fn run_gold(args: &EvalArgs) -> anyhow::Result<()> {
         "evaluator_sha256": evaluator_sha256()?,
     });
     let (tessera, timings) = predict_library(&bundle, &cases, args.country_hint_mode)?;
+    if let Some(path) = &args.dump_predictions {
+        let predictions: Vec<_> = cases
+            .iter()
+            .zip(&tessera.spans)
+            .map(|(case, spans)| {
+                json!({
+                    "name": case.name,
+                    "entities": spans.iter().map(|span| json!({
+                        "kind": span.kind, "start": span.start, "end": span.end,
+                    })).collect::<Vec<_>>(),
+                })
+            })
+            .collect();
+        write_json(
+            path,
+            &json!({ "system": "tessera", "provenance": provenance.clone(),
+                                  "predictions": predictions }),
+        )?;
+    }
     let mut systems = vec![score(&cases, &tessera)];
     if args.baseline {
         systems.push(score(&cases, &predict_baseline(&cases)));

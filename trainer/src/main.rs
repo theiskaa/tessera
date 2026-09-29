@@ -161,6 +161,9 @@ struct EvalArgs {
     /// With `--gold`: an external system's predictions by case name (repeatable).
     #[arg(long)]
     predictions: Vec<PathBuf>,
+    /// With `--gold`: save the shipped detector's spans for error analysis.
+    #[arg(long)]
+    dump_predictions: Option<PathBuf>,
     /// The bundle `detect` loads for `--gold` and for a detector run's split.
     #[arg(long, default_value = "models/tessera-v1.safetensors")]
     bundle: PathBuf,

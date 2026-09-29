@@ -16,7 +16,8 @@ use sha2::{Digest, Sha256};
 use tessera::Kind;
 use tessera::internal::{
     DETECT_MIN_ADDRESS, DETECT_MIN_ORG, DETECT_MIN_PERSON, FeatureConfig, MAX_ENTITY_TOKENS,
-    decode_detector, featurize, flag, is_content, paragraph_breaks, scan_rules, tokenize,
+    decode_detector, featurize, flag, is_content, normalized_us_address_end, paragraph_breaks,
+    scan_rules, tokenize,
 };
 
 use crate::data::Split;
@@ -50,6 +51,8 @@ pub struct KindSpan {
 /// whether a paragraph break comes before it (where the decoder closes every span).
 #[derive(Debug, Clone)]
 pub struct DetectorDoc {
+    /// Original source text for the runtime's address boundary adjustment.
+    pub text: String,
     pub enc: Encoded,
     pub gold: Vec<KindSpan>,
     pub breaks: Vec<bool>,
@@ -133,6 +136,91 @@ struct GoldJson {
     kind: String,
     start: u32,
     end: u32,
+}
+
+#[derive(Deserialize)]
+struct DevelopmentGoldLine {
+    name: String,
+    input: String,
+    expected: Vec<DevelopmentGoldSpan>,
+    country: String,
+}
+
+#[derive(Deserialize)]
+struct DevelopmentGoldSpan {
+    kind: String,
+    start: u32,
+    end: u32,
+    text: String,
+}
+
+/// Encodes reviewed real development cases for detector checkpoint selection. Gold remains
+/// separate from the input features, so an unreachable span counts as a miss during scoring.
+pub fn load_development_gold(path: &Path, fc: &FeatureConfig) -> anyhow::Result<Vec<DetectorDoc>> {
+    let data =
+        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    let mut docs = Vec::new();
+    let mut names = std::collections::BTreeSet::new();
+    for (index, line) in data
+        .lines()
+        .enumerate()
+        .filter(|(_, line)| !line.trim().is_empty())
+    {
+        let row: DevelopmentGoldLine = serde_json::from_str(line).with_context(|| {
+            format!("{}:{} invalid development gold", path.display(), index + 1)
+        })?;
+        ensure!(
+            row.country == "US",
+            "{}:{} is not a US development case",
+            path.display(),
+            index + 1
+        );
+        ensure!(
+            names.insert(row.name.clone()),
+            "{}:{} duplicates development case {}",
+            path.display(),
+            index + 1,
+            row.name
+        );
+        let mut declared = Vec::with_capacity(row.expected.len());
+        for span in row.expected {
+            ensure!(
+                row.input.get(span.start as usize..span.end as usize) == Some(span.text.as_str())
+                    && span.start < span.end,
+                "{}:{} has a gold span that differs from the source text",
+                path.display(),
+                index + 1
+            );
+            declared.push(GoldJson {
+                kind: span.kind,
+                start: span.start,
+                end: span.end,
+            });
+        }
+        let gold = model_spans(&row.input, &declared)
+            .with_context(|| format!("{}:{}", path.display(), index + 1))?;
+        let mut enc = encode_document(&row.input, &[], fc)
+            .with_context(|| format!("{}:{}", path.display(), index + 1))?;
+        ensure!(
+            !enc.token_spans.is_empty(),
+            "{}:{} has no retained tokens",
+            path.display(),
+            index + 1
+        );
+        enc.country = row.country;
+        docs.push(DetectorDoc {
+            text: row.input.clone(),
+            enc,
+            gold,
+            breaks: breaks_of(&row.input),
+        });
+    }
+    ensure!(
+        !docs.is_empty(),
+        "{} has no development cases",
+        path.display()
+    );
+    Ok(docs)
 }
 
 /// Validates every declared span before dropping the rule-layer kinds from BIO targets.
@@ -233,6 +321,7 @@ pub fn load_split(
             .with_context(|| format!("{} row {}", path.display(), i + 1))?;
         enc.country = row_country.to_string();
         docs.push(DetectorDoc {
+            text: row_text.to_owned(),
             enc,
             gold,
             breaks: breaks_of(row_text),
@@ -261,6 +350,8 @@ pub struct SilverCounts {
     pub unreachable_spans: usize,
     /// Actual distinct training supervision after deduplication, by country and kind.
     pub by_country: BTreeMap<String, SilverCountryCounts>,
+    /// Encoded pieces from each input path, in the same order as `paths`.
+    pub source_pieces: Vec<usize>,
 }
 
 #[derive(Debug, Default, Clone, Serialize)]
@@ -285,6 +376,7 @@ pub fn load_silver(
     let mut seen: HashMap<[u8; 32], (Vec<KindSpan>, String)> = HashMap::new();
     let mut unreachable_details = Vec::new();
     for path in paths {
+        let pieces_before = docs.len();
         let text = std::fs::read_to_string(path).with_context(|| format!("reading {path}"))?;
         for (line_no, line) in text
             .lines()
@@ -363,6 +455,7 @@ pub fn load_silver(
                     .map_err(|e| anyhow::anyhow!("{path}: {e}"))?;
                 enc.country = doc.country.clone();
                 docs.push(DetectorDoc {
+                    text: piece.to_owned(),
                     enc,
                     gold: reachable,
                     breaks: breaks_of(piece),
@@ -370,6 +463,7 @@ pub fn load_silver(
                 counts.pieces += 1;
             }
         }
+        counts.source_pieces.push(docs.len() - pieces_before);
     }
     ensure!(
         unreachable_details.is_empty(),
@@ -510,6 +604,15 @@ pub fn breaks_of(text: &str) -> Vec<bool> {
     paragraph_breaks(&tokens, &retained)
 }
 
+fn predicted_span(text: &str, kind: usize, start: u32, raw_end: u32) -> KindSpan {
+    let end = if KINDS[kind] == Kind::Address {
+        normalized_us_address_end(text, start as usize, raw_end as usize) as u32
+    } else {
+        raw_end
+    };
+    KindSpan { kind, start, end }
+}
+
 /// Predicted spans per document in byte offsets, thresholded by `DETECT_MIN`.
 pub fn predict<B: Backend>(
     model: &TaggerNet<B>,
@@ -544,10 +647,13 @@ pub fn predict<B: Backend>(
                     .into_iter()
                     .filter_map(|s| {
                         let kind = kind_index(s.kind)?;
-                        (s.confidence >= DETECT_MIN[kind]).then(|| KindSpan {
-                            kind,
-                            start: d.enc.token_spans[s.first].0,
-                            end: d.enc.token_spans[s.last].1,
+                        (s.confidence >= DETECT_MIN[kind]).then(|| {
+                            predicted_span(
+                                &d.text,
+                                kind,
+                                d.enc.token_spans[s.first].0,
+                                d.enc.token_spans[s.last].1,
+                            )
                         })
                     })
                     .collect(),
@@ -1143,6 +1249,28 @@ mod tests {
         assert_eq!(org.lenient.f1, 1.0);
         assert_eq!(org.boundary_accuracy, 0.0);
         assert_eq!(s.per_kind["address"].exact.precision, 0.0);
+    }
+
+    #[test]
+    fn checkpoint_prediction_uses_runtime_zip4_boundary() {
+        let text = "550 17th Street NW, Washington, DC 20429-0146, next";
+        let zip_start = text.find("-0146").unwrap() as u32;
+        let gold = KindSpan {
+            kind: 2,
+            start: 0,
+            end: zip_start + 5,
+        };
+        for raw_end in [zip_start, zip_start + 1, zip_start + 6] {
+            let pred = predicted_span(text, 2, 0, raw_end);
+            assert_eq!(pred, gold);
+            assert_eq!(
+                score(&[vec![gold]], &[vec![pred]]).per_kind["address"]
+                    .exact
+                    .f1,
+                1.0
+            );
+        }
+        assert_eq!(predicted_span(text, 0, 0, zip_start).end, zip_start);
     }
 
     #[test]
