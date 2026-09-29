@@ -1,0 +1,52 @@
+{
+  "base_sha256": "5e177fd45aca0e87aec843345c303cb8078e60d3f8fc23777ae0768b0a425830",
+  "corrections": [
+    {
+      "name": "2026-10136",
+      "reason": "OMB names the agency in an information collection number",
+      "add": [{"kind": "org", "start": 1426, "end": 1429, "text": "OMB"}]
+    },
+    {
+      "name": "2026-01383",
+      "reason": "slash and hyphen joined agencies are separate organizations",
+      "remove": [{"kind": "org", "start": 373, "end": 381, "text": "DOL-MSHA"}],
+      "add": [
+        {"kind": "org", "start": 373, "end": 376, "text": "DOL"},
+        {"kind": "org", "start": 377, "end": 381, "text": "MSHA"}
+      ]
+    },
+    {
+      "name": "2026-19185",
+      "reason": "AP repeats the named advisory panel acronym",
+      "add": [
+        {"kind": "org", "start": 1367, "end": 1369, "text": "AP"},
+        {"kind": "org", "start": 1466, "end": 1468, "text": "AP"},
+        {"kind": "org", "start": 1572, "end": 1574, "text": "AP"}
+      ]
+    },
+    {
+      "name": "2026-12502",
+      "reason": "English parent agency and named bureau have separate spans",
+      "remove": [{"kind": "org", "start": 1116, "end": 1160, "text": "Federal Trade Commission Bureau of Economics"}],
+      "add": [
+        {"kind": "org", "start": 1116, "end": 1140, "text": "Federal Trade Commission"},
+        {"kind": "org", "start": 1141, "end": 1160, "text": "Bureau of Economics"}
+      ]
+    },
+    {
+      "name": "2026-01318",
+      "reason": "an investment fund is outside the organization label definition",
+      "remove": [{"kind": "org", "start": 184, "end": 230, "text": "Loomis Sayles Credit Income Opportunities Fund"}]
+    },
+    {
+      "name": "2026-19204",
+      "reason": "Information Technology is a generic function in this mailing line",
+      "remove": [{"kind": "org", "start": 95, "end": 117, "text": "Information Technology"}]
+    },
+    {
+      "name": "2026-05498",
+      "reason": "two adjacent at signs make the printed address malformed",
+      "remove": [{"kind": "email", "start": 1517, "end": 1540, "text": "suggs.anjanette@dol.gov"}]
+    }
+  ]
+}

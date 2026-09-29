@@ -1,0 +1,33 @@
+{
+  "corrections": [
+    {
+      "id": "2024-29016",
+      "text_sha256": "c9bfc9e094cda4c3b17ba4d29d3b3a812e3b04ea6f1039eac696292abd282c20",
+      "remove": [
+        {"kind": "org", "start": 2332, "end": 2412, "text": "Office of Asset Management and Portfolio Oversight Program Administration Office"}
+      ],
+      "add": [
+        {"kind": "org", "start": 2332, "end": 2382, "text": "Office of Asset Management and Portfolio Oversight"},
+        {"kind": "org", "start": 2383, "end": 2412, "text": "Program Administration Office"}
+      ]
+    },
+    {
+      "id": "2024-31221",
+      "text_sha256": "452cc1a9c567f6b527db66ccd21b2db6fba479d8c581bc07faabdb7375b61487",
+      "remove": [
+        {"kind": "org", "start": 1354, "end": 1359, "text": "NITRD"}
+      ],
+      "add": []
+    },
+    {
+      "id": "2024-30490",
+      "text_sha256": "84311f5b5805418c16198a5bfee088a0c91cd75fe966d8778303e10a9387ac64",
+      "remove": [],
+      "add": [
+        {"kind": "org", "start": 299, "end": 313, "text": "Privacy Office"},
+        {"kind": "org", "start": 357, "end": 378, "text": "Executive Secretariat"},
+        {"kind": "org", "start": 847, "end": 861, "text": "Privacy Office"}
+      ]
+    }
+  ]
+}

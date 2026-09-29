@@ -1,0 +1,50 @@
+{
+  "packet_sha256": "5cd02e400d00cb9fcc5e34648703f1e96ee0823ad65aeff928df19af227c1dc9",
+  "review_a_sha256": "fbdbea1751b3dbd2a475b74694d13deacd8bba2dc86401fd6926a9eebb2d2333",
+  "review_b_sha256": "942853bfb7b1903783c045f7fe9dd5c80f1beeaa60d1e6ed77503a40dafe40bb",
+  "decisions": [
+    {
+      "name": "full-us-notice-2024-26812",
+      "take": "a",
+      "reason": "The named tribal community remains an organization mention inside the ordinance title."
+    },
+    {
+      "name": "full-us-notice-2024-26849",
+      "take": "a",
+      "reason": "TSI follows Deputy Director and names the listed member's organizational unit."
+    },
+    {
+      "name": "full-us-notice-2024-27538",
+      "take": "a",
+      "remove": [
+        {"kind": "org", "start": 40, "end": 43, "text": "CIE"}
+      ],
+      "reason": "CIE is an unexpanded routing code; the two plain Air Force mentions name the service."
+    },
+    {
+      "name": "full-us-notice-2024-28774",
+      "take": "a",
+      "reason": "Audit Committee identifies a board unit in the meeting agenda; report and policy titles remain unlabeled."
+    },
+    {
+      "name": "full-us-notice-2024-29013",
+      "take": "a",
+      "reason": "Commissioner Magpantay identifies a person by surname and title."
+    },
+    {
+      "name": "full-us-notice-2024-29576",
+      "take": "a",
+      "reason": "PdM FSS names an office; the other short forms name products or documents."
+    },
+    {
+      "name": "full-us-notice-2024-30204",
+      "take": "a",
+      "reason": "LUMCON names the consortium within the venue name; U.S. IOOS Program is a program."
+    },
+    {
+      "name": "full-us-notice-2024-30291",
+      "take": "b",
+      "reason": "Regional Programs Unit names the organization; Office denotes its physical location."
+    }
+  ]
+}

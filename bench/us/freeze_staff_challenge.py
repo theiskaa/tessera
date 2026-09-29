@@ -203,8 +203,8 @@ def main():
         raise ValueError("staff challenge labels changed after freeze")
     OUTPUT.write_bytes(data)
     MANIFEST.write_text(json.dumps({
-        "kind": "us_untouched_staff_challenge",
-        "status": "frozen_before_training; never use for training or model tuning",
+        "kind": "us_staff_challenge",
+        "status": "exposed in us-v1 evaluation; these 11 rows remain excluded from training",
         "representation": "staff fields transcribed into consistent rows; source names and contact values retained",
         "cases": len(cases),
         "labels": dict(counts),

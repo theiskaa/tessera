@@ -9,6 +9,13 @@ ROOT = Path(__file__).resolve().parents[2]
 SOURCES = (
     ROOT / "data/interim/review/us-dev-office-exclusions-v1.jsonl",
     ROOT / "data/interim/review/us-staff-challenge-v1.jsonl",
+    ROOT / "data/interim/review/us-park-address-challenge-v1.jsonl",
+    ROOT / "data/interim/review/us-ky-superintendent-challenge-v1.jsonl",
+    ROOT / "data/interim/review/us-ca-superintendent-challenge-v1.jsonl",
+    ROOT / "data/interim/review/us-or-district-challenge-v1.jsonl",
+    ROOT / "data/interim/review/us-pa-room-challenge-v1.jsonl",
+    ROOT / "data/interim/review/us-pa-acronym-challenge-v1.jsonl",
+    ROOT / "data/interim/review/us-pa-agriculture-staff-challenge-v1.jsonl",
 )
 OUTPUT = ROOT / "data/interim/review/us-eval-exclusions-v1.jsonl"
 MANIFEST = ROOT / "data/interim/review/us-eval-exclusions-v1.manifest.json"
