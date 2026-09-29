@@ -1,4 +1,4 @@
-"""Check that frozen US evaluation and detector inputs still agree."""
+"""Check US input integrity and old evaluation separation before model training."""
 
 import collections
 import hashlib
@@ -7,14 +7,28 @@ import re
 import unicodedata
 from pathlib import Path
 
+from active_sources import ACTIVE_SILVER, SAFE_REPLACEMENTS
+from address_keys import address_keys
+from build_corrected_dev import OUT as CORRECTED_GOLD
+from build_corrected_dev import corrected_rows
+from build_silver import legacy_cutoff
+from freeze_federal_org_packet import FROZEN_SHA256 as RAW_ORG_PACKET_SHA256
+from freeze_park_address_challenge import case_for as park_case_for
+from freeze_r23_org_packet import FROZEN_SHA256 as R23_FIRST_PACKET_SHA256
+from freeze_r23_org_packet_remaining import FROZEN_SHA256 as R23_SECOND_PACKET_SHA256
+from org_aliases import active_aliases
+from silver_dedupe import NearDuplicateIndex, NearTextIndex
+
 
 ROOT = Path(__file__).resolve().parents[2]
 REVIEW = ROOT / "data/interim/review"
 SILVER = ROOT / "data/interim/silver"
-PROCESSED = ROOT / "data/processed/detector-us-v1"
+PROCESSED = ROOT / "data/processed/detector-us-v2"
 PARSER = ROOT / "data/processed/parser-us-v1"
 KIND = {"person", "org", "address"}
 SOURCE_ARTIFACT = re.compile(r'">|</?[A-Za-z][^>]*>|&(?:amp|quot|nbsp|lt|gt);')
+ACRONYM = re.compile(r"[A-Z][A-Z0-9]{1,8}\Z")
+ADDRESS_PREFIX = re.compile(r"\b(?:room|suite|building|floor|mail code)\b|\bms:", re.I)
 
 
 def digest(data):
@@ -63,6 +77,54 @@ def spans(row):
     return result
 
 
+def matches_reviewed_source(candidate, snippet):
+    source = candidate["text"].encode()
+    piece = snippet["text"].encode()
+    offset = source.find(piece)
+    while offset >= 0:
+        end = offset + len(piece)
+        crossing = any(span["start"] < end and offset < span["end"]
+                       and not (offset <= span["start"] and span["end"] <= end)
+                       for span in candidate["entities"])
+        labels = [{"kind": span["kind"], "start": span["start"] - offset,
+                   "end": span["end"] - offset}
+                  for span in candidate["entities"]
+                  if offset <= span["start"] and span["end"] <= end]
+        if not crossing and labels == snippet["entities"]:
+            return True
+        offset = source.find(piece, offset + 1)
+    return False
+
+
+def agreed_blind_rows(packet_path, packet_hash, review_paths, review_hashes):
+    require(digest(packet_path.read_bytes()) == packet_hash,
+            f"blind packet changed: {packet_path.name}")
+    packet_rows = load(packet_path)
+    packet = {row["name"]: row for row in packet_rows}
+    require(len(packet) == len(packet_rows), "duplicate blind case")
+    review_maps = []
+    for path in review_paths:
+        require(digest(path.read_bytes()) == review_hashes[path.name],
+                f"blind review changed: {path.name}")
+        rows = load(path)
+        review = {row["name"]: row for row in rows}
+        require(len(review) == len(rows) and set(review) == set(packet),
+                "blind review is incomplete or has duplicate cases")
+        review_maps.append(review)
+    agreed = {}
+    for name, case in packet.items():
+        text = case["input"]
+        reviews = [review[name] for review in review_maps]
+        labels = [sorted((kind, start, end) for kind, start, end, _ in
+                         spans({"input": text, "expected": review["entities"]}))
+                  for review in reviews]
+        require(all(kind in KIND for group in labels for kind, _, _ in group),
+                f"unknown blind label kind: {name}")
+        if not any(review.get("uncertain") for review in reviews) and labels[0] == labels[1]:
+            agreed[name] = (case, labels[0])
+    return agreed
+
+
 def main():
     try:
         import pyarrow.parquet as parquet
@@ -71,11 +133,26 @@ def main():
 
     exclusion_path = REVIEW / "us-eval-exclusions-v1.jsonl"
     exclusion_hash = digest(exclusion_path.read_bytes())
-    exclusions = load(exclusion_path)
+    contact_split = json.loads((REVIEW / "us-2025-contact-split-v2.manifest.json").read_text())
+    contact_holdout = REVIEW / "us-2025-contact-holdout-v2.jsonl"
+    require(contact_split["holdout_sha256"] == digest(contact_holdout.read_bytes()) and
+            contact_split["gold_sha256"] ==
+            digest((REVIEW / "us-2025-contact-gold-v5.jsonl").read_bytes()),
+            "2025 contact holdout changed")
+    year_holdout = REVIEW / "us-2025-year-contact-holdout-v2.jsonl"
+    year_manifest = json.loads(year_holdout.with_suffix(".manifest.json").read_text())
+    require(year_manifest["sha256"] == digest(year_holdout.read_bytes()) and
+            year_manifest["strict_entity_holdout"] and
+            not year_manifest["training_eligible"] and
+            year_manifest["source_gold_sha256"] ==
+            digest((REVIEW / "us-2025-year-contact-gold-v1.jsonl").read_bytes()),
+            "2025 full-year contact holdout changed")
+    exclusions = load(exclusion_path) + load(contact_holdout) + load(year_holdout)
     names = set()
     texts = set()
     surfaces = collections.defaultdict(set)
     people = set()
+    addresses = set()
     for row in exclusions:
         require(row["country"] == "US", "non-US evaluation case")
         require(row["name"] not in names, "duplicate evaluation name")
@@ -87,18 +164,79 @@ def main():
                 surfaces[kind].add(normalized(value))
                 if kind == "person" and person_key(value):
                     people.add(person_key(value))
+                if kind == "address":
+                    addresses.update(address_keys(value))
+
+    corrected, corrected_base, _ = corrected_rows()
+    corrected_manifest = json.loads(CORRECTED_GOLD.with_suffix(".manifest.json").read_text())
+    require(corrected_manifest["sha256"] == digest(CORRECTED_GOLD.read_bytes()) and
+            corrected_manifest["base_sha256"] == digest(corrected_base) and
+            load(CORRECTED_GOLD) == corrected,
+            "corrected development gold differs from its reviewed errata")
+    development_mix = collections.Counter()
+    for row in corrected:
+        for kind, _, _, value in spans(row):
+            if kind == "org":
+                development_mix["org"] += 1
+                development_mix["acronym"] += bool(ACRONYM.fullmatch(value))
+            if kind == "address":
+                development_mix["address"] += 1
+                development_mix["address_prefix"] += bool(ADDRESS_PREFIX.search(value))
+    excluded_by_name = {row["name"]: row for row in exclusions}
+    for row in corrected:
+        original = excluded_by_name.get(row["name"])
+        require(original is not None and row["input"] == original["input"],
+                "corrected development case is not in the training exclusions")
+        for kind, _, _, value in spans(row):
+            if kind in KIND:
+                surfaces[kind].add(normalized(value))
+                if kind == "person" and person_key(value):
+                    people.add(person_key(value))
+                if kind == "address":
+                    addresses.update(address_keys(value))
+    org_aliases = active_aliases(exclusions + corrected, include_roster=True)
 
     staff_manifest = json.loads((REVIEW / "us-staff-challenge-v1.manifest.json").read_text())
     staff_data = (REVIEW / "us-staff-challenge-v1.jsonl").read_bytes()
     require(digest(staff_data) == staff_manifest["sha256"], "staff challenge changed")
+    park_manifest = json.loads((REVIEW / "us-park-address-challenge-v1.manifest.json").read_text())
+    park_data = (REVIEW / "us-park-address-challenge-v1.jsonl").read_bytes()
+    require(digest(park_data) == park_manifest["sha256"], "park challenge changed")
+    ky_manifest = json.loads((REVIEW / "us-ky-superintendent-challenge-v1.manifest.json").read_text())
+    ky_data = (REVIEW / "us-ky-superintendent-challenge-v1.jsonl").read_bytes()
+    require(digest(ky_data) == ky_manifest["sha256"], "Kentucky challenge changed")
+    ca_manifest = json.loads((REVIEW / "us-ca-superintendent-challenge-v1.manifest.json").read_text())
+    ca_data = (REVIEW / "us-ca-superintendent-challenge-v1.jsonl").read_bytes()
+    require(digest(ca_data) == ca_manifest["sha256"], "California challenge changed")
+    or_manifest = json.loads((REVIEW / "us-or-district-challenge-v1.manifest.json").read_text())
+    or_data = (REVIEW / "us-or-district-challenge-v1.jsonl").read_bytes()
+    require(digest(or_data) == or_manifest["sha256"], "Oregon challenge changed")
+    pa_manifest = json.loads((REVIEW / "us-pa-room-challenge-v1.manifest.json").read_text())
+    pa_data = (REVIEW / "us-pa-room-challenge-v1.jsonl").read_bytes()
+    require(digest(pa_data) == pa_manifest["sha256"] and
+            pa_manifest["status"] in {"unseen", "exposed"},
+            "Pennsylvania room challenge changed")
+    pa_acronym_manifest = json.loads((REVIEW / "us-pa-acronym-challenge-v1.manifest.json").read_text())
+    pa_acronym_data = (REVIEW / "us-pa-acronym-challenge-v1.jsonl").read_bytes()
+    require(digest(pa_acronym_data) == pa_acronym_manifest["sha256"] and
+            pa_acronym_manifest["status"] in {"unseen", "exposed"},
+            "Pennsylvania acronym challenge changed")
+    pa_staff_manifest = json.loads((REVIEW / "us-pa-agriculture-staff-challenge-v1.manifest.json").read_text())
+    pa_staff_data = (REVIEW / "us-pa-agriculture-staff-challenge-v1.jsonl").read_bytes()
+    require(digest(pa_staff_data) == pa_staff_manifest["sha256"] and
+            pa_staff_manifest["status"] in {"unseen", "exposed"},
+            "Pennsylvania staff challenge changed")
     base_data = (REVIEW / "us-dev-office-exclusions-v1.jsonl").read_bytes()
-    require(exclusion_path.read_bytes() == base_data + staff_data,
+    require(exclusion_path.read_bytes() == base_data + staff_data + park_data + ky_data + ca_data + or_data + pa_data + pa_acronym_data + pa_staff_data,
             "evaluation exclusions do not match the frozen evaluation sets")
     require(staff_manifest["existing_evaluation_sha256"] == digest(base_data),
             "staff challenge base changed")
     for slug, expected in staff_manifest["sources_sha256"].items():
         require(digest((ROOT / f"data/raw/us-release-eval/{slug}.html").read_bytes()) == expected,
                 f"staff source changed: {slug}")
+    for filename, expected in park_manifest["source_sha256"].items():
+        require(digest((ROOT / "data/raw/us-release-eval" / filename).read_bytes()) == expected,
+                f"park source changed: {filename}")
 
     parser_sample = json.loads((PARSER / "sample.json").read_text())
     parser_checks = parser_sample["checks"]
@@ -108,70 +246,338 @@ def main():
                 if key != "postcode_and_number_shared"),
             "US parser sample has an unresolved split or label error")
     for split, expected in (("train", 62549), ("valid", 3000), ("test", 3000)):
-        require(parquet.ParquetFile(PARSER / f"{split}.parquet").metadata.num_rows == expected,
+        parser_file = parquet.ParquetFile(PARSER / f"{split}.parquet")
+        require(parser_file.metadata.num_rows == expected,
                 f"wrong US parser {split} size")
+        for batch in parser_file.iter_batches(batch_size=10000, columns=["text"]):
+            for row in batch.to_pylist():
+                require(not address_keys(row["text"]) & addresses,
+                        f"evaluation physical address in parser {split}: {row['text']}")
+                require(normalized(row["text"]) not in surfaces["address"],
+                        f"evaluation address surface in parser {split}: {row['text']}")
 
     seen = set()
+    near = NearDuplicateIndex()
+    near_evaluation = NearTextIndex()
     real_counts = collections.Counter()
-    for filename, key in (("us-reviewed-strict-v1", "evaluation_gold_sha256"),
-                          ("us-house-staff-v1", "evaluation_sha256")):
+    real_surfaces = collections.defaultdict(set)
+    real_people = set()
+    real_addresses = set()
+    reviewed_candidates = {row["id"]: row for row in
+                           load(SILVER / "us-reviewed-candidate-v1.jsonl")}
+    r23_manifest = json.loads((SILVER / "us-r23-reviewed-org-v1.manifest.json").read_text())
+    r23_agreed = {}
+    for version in ("v1", "v2"):
+        packet_path = SILVER / f"r23/us-org-blind-{version}.jsonl"
+        expected_packet = (R23_FIRST_PACKET_SHA256 if version == "v1"
+                           else R23_SECOND_PACKET_SHA256)
+        require(r23_manifest["packet_sha256"][packet_path.name] == expected_packet,
+                f"R23 blind packet {version} is not pinned")
+        review_paths = [SILVER / f"r23/us-org-review-{reviewer}-{version}.jsonl"
+                        for reviewer in ("a", "b")]
+        agreed = agreed_blind_rows(packet_path, r23_manifest["packet_sha256"][packet_path.name],
+                                  review_paths, r23_manifest["review_sha256"])
+        require(not set(r23_agreed) & set(agreed), "duplicate R23 blind case across packets")
+        r23_agreed.update(agreed)
+    raw_manifest = json.loads((SILVER / "us-federal-org-reviewed-v2.manifest.json").read_text())
+    require(raw_manifest["packet_sha256"] == RAW_ORG_PACKET_SHA256,
+            "raw blind packet is not pinned")
+    raw_packet_path = SILVER / "r23/us-raw-org-blind-v1.jsonl"
+    raw_review_paths = [SILVER / f"r23/us-raw-org-review-{reviewer}-v1.jsonl"
+                        for reviewer in ("a", "b")]
+    raw_agreed = agreed_blind_rows(raw_packet_path, RAW_ORG_PACKET_SHA256,
+                                  raw_review_paths, raw_manifest["review_sha256"])
+    sources = ACTIVE_SILVER
+    safe_sources = {replacement: source for source, replacement in SAFE_REPLACEMENTS.items()}
+    for filename, key in sources:
+        origin_name = safe_sources.get(filename, filename)
         path = SILVER / f"{filename}.jsonl"
         manifest = json.loads((SILVER / f"{filename}.manifest.json").read_text())
         require(manifest["sha256"] == digest(path.read_bytes()), f"{filename} changed")
-        require(manifest[key] == exclusion_hash, f"{filename} uses stale evaluation exclusions")
-        if filename == "us-house-staff-v1":
-            require(manifest["source_sha256"] == digest(
-                (ROOT / "data/raw/us-staff/house-phonebook-2023.pdf").read_bytes()),
-                "House directory source changed")
         rows = load(path)
         require(len(rows) == manifest["documents"], f"{filename} document count changed")
+        lineage_manifest = manifest
+        source_rows = rows
+        if origin_name != filename:
+            from build_eval_disjoint_silver import EXCLUDED_IDS, filtered_rows
+            source = SILVER / f"{origin_name}.jsonl"
+            source_manifest = source.with_suffix(".manifest.json")
+            rebuilt, lineage_manifest = filtered_rows(origin_name)
+            source_rows = load(source)
+            require(rows == rebuilt and
+                    manifest["kind"] == "us_silver_eval_disjoint_v1" and
+                    manifest["source_name"] == origin_name and
+                    manifest["source_sha256"] == digest(source.read_bytes()) and
+                    manifest["source_manifest_sha256"] == digest(source_manifest.read_bytes()) and
+                    manifest["filter_evaluation_sha256"] == {
+                        item.name: digest(item.read_bytes()) for item in
+                        (exclusion_path, contact_holdout, year_holdout)} and
+                    manifest["excluded_ids"] == sorted(EXCLUDED_IDS[origin_name]),
+                    f"{filename} differs from its frozen silver source")
+        if origin_name in {"us-2025-year-contacts-v2", "us-2025-year-acronym-prose-v3",
+                           "us-2025-year-contact-expansion-v1",
+                           "us-2025-targeted-contacts-v1"}:
+            require(manifest[key] == {path.name: digest(path.read_bytes()) for path in
+                    (exclusion_path, contact_holdout, year_holdout)},
+                    f"{filename} uses stale evaluation exclusions")
+        else:
+            require(manifest[key] == exclusion_hash,
+                    f"{filename} uses stale evaluation exclusions")
+        if origin_name == "us-reviewed-strict-v1":
+            errata = ROOT / "bench/us/fixtures/us-strict-label-errata-v1.json"
+            require(lineage_manifest["reviewed_errata_sha256"] == digest(errata.read_bytes()),
+                    "strict silver uses stale reviewed label corrections")
+        if origin_name.startswith("us-house-"):
+            require(lineage_manifest["source_sha256"] == digest(
+                (ROOT / "data/raw/us-staff/house-phonebook-2023.pdf").read_bytes()),
+                "House directory source changed")
+        if origin_name in {"us-reviewed-contact-snippets-v1", "us-reviewed-org-paragraphs-v1"}:
+            candidate = SILVER / "us-reviewed-candidate-v1.jsonl"
+            require(lineage_manifest["source_candidate_sha256"] == digest(candidate.read_bytes()),
+                    "reviewed paragraphs use a stale candidate")
+        if origin_name in {"us-2025-year-contacts-v2", "us-2025-year-acronym-prose-v3",
+                           "us-2025-year-contact-expansion-v1",
+                           "us-2025-targeted-contacts-v1"}:
+            if origin_name == "us-2025-year-contacts-v2":
+                from build_2025_year_contacts_silver import silver_rows as rebuild_silver
+                candidate_path = SILVER / "r24/us-2025-year-contact-train-candidate-v6.jsonl"
+                require(lineage_manifest["holdout_sha256"] == digest(year_holdout.read_bytes()),
+                        "year contact silver uses stale holdout")
+            elif origin_name == "us-2025-year-acronym-prose-v3":
+                from build_2025_year_acronym_silver import silver_rows as rebuild_silver
+                candidate_path = SILVER / "r24/us-2025-year-acronym-prose-train-candidate-v3.jsonl"
+            elif origin_name == "us-2025-targeted-contacts-v1":
+                from build_2025_targeted_contact_silver import silver_rows as rebuild_silver
+                candidate_path = SILVER / "r24/us-2025-targeted-contact-train-candidate-v1.jsonl"
+            else:
+                from build_2025_year_contact_expansion_silver import silver_rows as rebuild_silver
+                candidate_path = SILVER / "r24/us-2025-year-contact-expansion-train-candidate-v1.jsonl"
+            rebuilt, prior_hashes, raw_hashes = rebuild_silver()
+            require(source_rows == rebuilt and
+                    lineage_manifest["candidate_sha256"] == digest(candidate_path.read_bytes()) and
+                    lineage_manifest["prior_silver_sha256"] == prior_hashes and
+                    lineage_manifest["raw_sha256"] == raw_hashes,
+                    f"{filename} differs from pinned raw sources or blind reviews")
+        if origin_name == "us-park-contacts-v1":
+            require(lineage_manifest["source_sha256"] == park_manifest["source_sha256"],
+                    "NPS silver uses stale source files")
+            source_rows = json.loads((ROOT / "data/raw/us-release-eval/nps-parks.json").read_text())["DATA"]
+        if origin_name == "us-or-districts-v1":
+            source_path = ROOT / "bench/us/fixtures/or-district-directory-v1.jsonl"
+            require(lineage_manifest["source_sha256"] == digest(source_path.read_bytes()),
+                    "Oregon district source changed")
+            or_source_rows = load(source_path)
         file_counts = collections.Counter()
+        all_counts = collections.Counter()
         for row in rows:
             require(row["country"] == "US", "non-US training document")
+            if origin_name == "us-reviewed-strict-v1":
+                raw = json.loads((ROOT / f"data/raw/silver/federal-register/{row['id']}.json").read_text())
+                require(not legacy_cutoff(raw),
+                        f"legacy source cutoff in strict training document: {row['id']}")
+            if origin_name in {"us-reviewed-contact-snippets-v1", "us-reviewed-org-paragraphs-v1"}:
+                marker = "-contact-" if origin_name == "us-reviewed-contact-snippets-v1" else "-org-paragraph-"
+                source_id = row["id"].split(marker, 1)[0]
+                raw = json.loads((ROOT / f"data/raw/silver/federal-register/{source_id}.json").read_text())
+                require(row["source_url"] == raw["url"] and row["text"] in raw["text"],
+                        f"reviewed paragraph lost source lineage: {row['id']}")
+                require(source_id in reviewed_candidates and
+                        matches_reviewed_source(reviewed_candidates[source_id], row),
+                        f"reviewed paragraph labels differ from two-pass source: {row['id']}")
+            if origin_name == "us-r23-reviewed-org-v1":
+                require(row["id"] in r23_agreed, f"R23 label was not agreed: {row['id']}")
+                case, agreed = r23_agreed[row["id"]]
+                source_id = row["id"].removeprefix("r23-us-org-").rsplit("-", 1)[0]
+                raw = json.loads((ROOT / f"data/raw/silver/federal-register/{source_id}.json").read_text())
+                require(row["text"] == case["input"] and
+                        row["source_url"] == case["source_url"] == raw["url"] and
+                        row["text"] in raw["text"],
+                        f"R23 paragraph lost source lineage: {row['id']}")
+                require(sorted((span["kind"], span["start"], span["end"])
+                               for span in row["entities"]) == agreed,
+                        f"R23 paragraph differs from two blind reviews: {row['id']}")
+            if origin_name == "us-federal-org-reviewed-v2":
+                require(row["id"] in raw_agreed, f"raw label was not agreed: {row['id']}")
+                case, agreed = raw_agreed[row["id"]]
+                source_id = row["id"].removeprefix("raw-us-org-").rsplit("-", 1)[0]
+                raw = json.loads((ROOT / f"data/raw/silver/federal-register/{source_id}.json").read_text())
+                require(row["text"] == case["input"] and
+                        row["source_url"] == case["source_url"] == raw["url"] and
+                        row["text"] in raw["text"] and row["source_group"] == case["group"],
+                        f"raw paragraph lost source lineage: {row['id']}")
+                require(sorted((span["kind"], span["start"], span["end"])
+                               for span in row["entities"]) == agreed,
+                        f"raw paragraph differs from two blind reviews: {row['id']}")
+            if origin_name == "us-park-contacts-v1":
+                index = row["source_json_index"]
+                case = park_case_for(index, source_rows[index])
+                require(case is not None and row["text"] == case["input"],
+                        f"NPS contact lost source lineage: {row['id']}")
+                require(row["source_url"] == case["source_url"],
+                        f"NPS source page mismatch: {row['id']}")
+                require(row["source_data_url"].endswith("aboutus-NPSParkandSuperintendentList2023.csv"),
+                        f"NPS data URL mismatch: {row['id']}")
+                require(row["entities"] == [
+                    {"kind": span["kind"], "start": span["start"], "end": span["end"]}
+                    for span in case["expected"] if span["kind"] in KIND],
+                    f"NPS labels lost source lineage: {row['id']}")
+            if origin_name == "us-or-districts-v1":
+                index = int(row["id"].rsplit("-", 1)[1])
+                source_row = or_source_rows[index]
+                district = source_row["district"]
+                require(row["text"] == f"District: {district}" and
+                        row["source_url"] == lineage_manifest["source_url"] and
+                        row["source_line"] == source_row["source_line"] and
+                        row["entities"] == [{"kind": "org", "start": 10,
+                                             "end": 10 + len(district.encode())}],
+                        f"Oregon district lost source lineage: {row['id']}")
             text_hash = digest(row["text"].encode())
             require(text_hash not in seen and text_hash not in texts,
                     "duplicate or evaluation training text")
             require(not SOURCE_ARTIFACT.search(row["text"]), "HTML artifact in real training text")
+            require(not near.prior(row), f"near-duplicate real training text: {row['id']}")
             seen.add(text_hash)
+            near.add(row)
+            near_evaluation.add(row["id"], row["text"])
             for kind, _, _, value in spans(row):
+                all_counts[kind] += 1
                 if kind not in KIND:
                     continue
                 require(normalized(value) not in surfaces[kind],
                         f"evaluation entity in real training: {value}")
-                if filename == "us-house-staff-v1" and kind == "person":
+                if kind == "address":
+                    require(not address_keys(value) & addresses,
+                            f"evaluation physical address in real training: {value}")
+                if kind == "person":
                     require(person_key(value) not in people,
-                            f"evaluation person alias in House training: {value}")
+                            f"evaluation person alias in real training: {value}")
+                if kind == "org":
+                    require(normalized(value) not in org_aliases,
+                            f"evaluation organization alias in real training: {value}")
                 real_counts[kind] += 1
                 file_counts[kind] += 1
-        if filename == "us-reviewed-strict-v1":
-            require(dict(file_counts) == manifest["labels"], "strict silver label count changed")
-        else:
+                real_surfaces[kind].add(normalized(value))
+                if kind == "person" and person_key(value):
+                    real_people.add(person_key(value))
+                if kind == "address":
+                    real_addresses.update(address_keys(value))
+        if origin_name == "us-house-staff-v1":
             require(file_counts["person"] == manifest["counts"]["person_labels"],
                     "House label count changed")
+        elif filename in {"us-2025-year-contacts-v2", "us-2025-year-contact-expansion-v1",
+                          "us-2025-targeted-contacts-v1"}:
+            require(dict(all_counts) == manifest["labels"] and
+                    dict(file_counts) == manifest["model_labels"] and
+                    {kind: all_counts[kind] for kind in ("email", "phone")} ==
+                    manifest["rule_labels"],
+                    "reviewed year contact label count changed")
+        else:
+            require(dict(file_counts) == manifest["labels"],
+                    f"{filename} label count changed")
+
+    for row in exclusions:
+        prior = near_evaluation.prior(row["input"])
+        require(prior is None,
+                f"evaluation text nearly duplicates real training: {row['name']} / {prior}")
 
     generator = json.loads((ROOT / "data/manifests/detector-synthetic.json").read_text())
+    require(generator.get("version") == 2 and
+            generator.get("template_policy") == "exclude_unverified_us_unit_parent_v1",
+            "synthetic data predates the US organization coherence rule")
+    require(generator.get("synthetic_parquet_sha256") == {
+        split: digest((PROCESSED / f"{split}.parquet").read_bytes())
+        for split in ("train", "valid", "test")
+    }, "synthetic parquet files differ from their manifest")
     require(generator["exclude_gold_sha256"] == exclusion_hash,
             "synthetic data uses stale evaluation exclusions")
     roster = ROOT / "trainer/data/us-public-bodies.json"
     require(generator["public_bodies_sha256"] == digest(roster.read_bytes()),
             "synthetic data uses stale public bodies")
+    expected_real_hashes = {f"data/interim/silver/{name}.jsonl":
+                            digest((SILVER / f"{name}.jsonl").read_bytes())
+                            for name, _ in sources}
+    require(generator["real_silver_sha256"] == expected_real_hashes,
+            "synthetic validation/test uses stale real training exclusions")
+    real_org_aliases = active_aliases([{"expected": [{"kind": "org", "text": value}
+                                                  for value in real_surfaces["org"]]}],
+                                      include_roster=True)
     synthetic_counts = collections.Counter()
+    synthetic_mix = collections.Counter()
+    synthetic_templates = collections.Counter()
     for split, expected in (("train", 170000), ("valid", 10000), ("test", 20000)):
         file = parquet.ParquetFile(PROCESSED / f"{split}.parquet")
         require(file.metadata.num_rows == expected, f"wrong {split} size")
         for batch in file.iter_batches(batch_size=10000,
-                                       columns=["country", "text", "entities_json"]):
+                                       columns=["country", "text", "entities_json", "template_id"]):
             for row in batch.to_pylist():
                 require(row["country"] == "US", "non-US synthetic document")
+                if split == "train":
+                    synthetic_templates[row["template_id"]] += 1
                 labels = json.loads(row["entities_json"])
                 for kind, _, _, value in spans({"text": row["text"], "entities": labels}):
                     if kind in KIND:
+                        if split == "train":
+                            if kind == "org":
+                                synthetic_mix["org"] += 1
+                                synthetic_mix["acronym"] += bool(ACRONYM.fullmatch(value))
+                            if kind == "address":
+                                synthetic_mix["address"] += 1
+                                synthetic_mix["address_prefix"] += bool(
+                                    ADDRESS_PREFIX.search(value))
                         require(normalized(value) not in surfaces[kind],
                                 f"evaluation entity in synthetic {split}: {value}")
+                        if kind == "address":
+                            require(not address_keys(value) & addresses,
+                                    f"evaluation physical address in synthetic {split}: {value}")
+                        if kind == "person":
+                            require(person_key(value) not in people,
+                                    f"evaluation person alias in synthetic {split}: {value}")
+                        if kind == "org":
+                            require(normalized(value) not in org_aliases,
+                                    f"evaluation organization alias in synthetic {split}: {value}")
+                        if split != "train":
+                            require(normalized(value) not in real_surfaces[kind],
+                                    f"real training entity in synthetic {split}: {value}")
+                            if kind == "person":
+                                require(person_key(value) not in real_people,
+                                        f"real training person alias in synthetic {split}: {value}")
+                            if kind == "org":
+                                require(normalized(value) not in real_org_aliases,
+                                        f"real training organization alias in synthetic {split}: {value}")
+                            if kind == "address":
+                                require(not address_keys(value) & real_addresses,
+                                        f"real training physical address in synthetic {split}: {value}")
                         synthetic_counts[kind] += 1
-    print(f"US data gate passed: {len(exclusions)} held cases, {len(seen)} real training documents, "
+    for subset, total in (("acronym", "org"), ("address_prefix", "address")):
+        require(development_mix[total] > 0 and synthetic_mix[total] > 0,
+                f"missing {total} labels for data mix check")
+        reference = development_mix[subset] / development_mix[total]
+        training = synthetic_mix[subset] / synthetic_mix[total]
+        require(abs(reference - training) <= 0.15,
+                f"synthetic {subset} share {training:.3f} differs from real development "
+                f"share {reference:.3f}")
+    top_ten_share = sum(count for _, count in synthetic_templates.most_common(10)) / 170000
+    require(top_ten_share <= 0.30,
+            f"synthetic training repeats ten templates too often: {top_ten_share:.3f}")
+    config = (ROOT / "configs/detector-shared.toml").read_text()
+    detector_section = re.search(r"(?ms)^\[detector\]\s*\n(.*?)(?=^\[|\Z)", config)
+    require(detector_section is not None, "detector config has no detector section")
+    def config_array(name):
+        match = re.search(rf"(?m)^{name}\s*=\s*(\[[^\n]*\])", detector_section.group(1))
+        require(match is not None, f"detector config has no {name} array")
+        return json.loads(match.group(1))
+    expected_silver = [f"data/interim/silver/{filename}.jsonl" for filename, _ in sources]
+    require(config_array("silver") == expected_silver and
+            len(config_array("silver_repeats")) == len(expected_silver),
+            "detector config does not match the gated real training sources")
+    print(f"US input integrity gate passed: {len(exclusions)} evaluation cases "
+          f"({staff_manifest['cases'] + park_manifest['cases'] + ky_manifest['cases'] + ca_manifest['cases'] + or_manifest['cases'] + pa_manifest['cases'] + pa_acronym_manifest['cases'] + pa_staff_manifest['cases'] + len(load(contact_holdout)) + len(load(year_holdout))} frozen), "
+          f"{len(seen)} real training documents, "
           f"{sum(synthetic_counts.values())} synthetic model labels; "
-          f"real labels {dict(real_counts)}")
+          f"real labels {dict(real_counts)}; "
+          f"synthetic acronym {synthetic_mix['acronym']}/{synthetic_mix['org']}, "
+          f"address prefix {synthetic_mix['address_prefix']}/{synthetic_mix['address']}, "
+          f"top ten templates {top_ten_share:.3f}")
 
 
 if __name__ == "__main__":

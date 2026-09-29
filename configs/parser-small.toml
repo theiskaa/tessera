@@ -29,7 +29,7 @@ max_params = 1000000
 [train]
 epochs = 10
 batch_size = 64
-learning_rate = 0.001
+learning_rate = 0.0002
 
 [augment]
 copies = 2

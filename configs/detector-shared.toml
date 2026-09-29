@@ -1,4 +1,4 @@
-name = "detector-us-v1"
+name = "detector-us-v2"
 task = "detector"
 seed = 42
 
@@ -8,7 +8,7 @@ train_per_country = 30000
 valid_per_country = 3000
 test_per_country = 3000
 manifests = "data/manifests"
-processed = "data/processed/detector-us-v1"
+processed = "data/processed/detector-us-v2"
 
 [features]
 ngram_sizes = [2, 3, 4]
@@ -26,16 +26,19 @@ max_params = 1000000
 ngram_from = "runs/parser-us-v1"
 
 [train]
-epochs = 10
+epochs = 3
 batch_size = 32
-learning_rate = 0.001
+learning_rate = 0.0001
+gradient_clip_norm = 1.0
 warmup_steps = 500
 patience = 2
 
 [detector]
 class_weights = [1.0, 3.0, 2.0, 3.0, 2.0, 2.0, 1.5]
-silver = ["data/interim/silver/us-reviewed-strict-v1.jsonl", "data/interim/silver/us-house-staff-v1.jsonl"]
+silver = ["data/interim/silver/us-reviewed-strict-safe-v1.jsonl", "data/interim/silver/us-house-staff-v1.jsonl", "data/interim/silver/us-house-district-offices-v1.jsonl", "data/interim/silver/us-reviewed-contact-snippets-safe-v1.jsonl", "data/interim/silver/us-reviewed-org-paragraphs-safe-v1.jsonl", "data/interim/silver/us-r23-reviewed-org-safe-v1.jsonl", "data/interim/silver/us-federal-org-reviewed-safe-v1.jsonl", "data/interim/silver/us-park-contacts-v1.jsonl", "data/interim/silver/us-or-districts-v1.jsonl", "data/interim/silver/us-2025-year-contacts-v2.jsonl", "data/interim/silver/us-2025-year-acronym-prose-v3.jsonl", "data/interim/silver/us-2025-year-contact-expansion-safe-v1.jsonl", "data/interim/silver/us-2025-targeted-contacts-v1.jsonl"]
 silver_repeat = 1
+silver_repeats = [16, 1, 32, 16, 8, 8, 8, 16, 16, 16, 16, 16, 16]
+synthetic_per_epoch = 60000
 
 [names]
 countries = ["US"]
