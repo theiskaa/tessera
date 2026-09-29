@@ -1,0 +1,12 @@
+{
+  "packet_v1_sha256": "63fd9140f381d0010fa2c7e6888d6864bab96c47fc4b6101b4cfaf28797f8421",
+  "packet_v2_sha256": "efa53ad078cd3b5f740841382d0aaafa8b43cb51b637f948ee5b524f71c5abf2",
+  "review_a_sha256": "a197a19e89859c9f41b9e7fb8f59841a64bc8cb78bb91bedf03c9266ac7bd650",
+  "review_b_sha256": "106395df59822b0785ff8dc109fc29b5a24afb6664d3f5d24120fc3a083e9cae",
+  "decisions": [
+    {"name": "us-2024-acronym-prose-2024-27838-1708", "take": "a", "reason": "NCWM identifies the named standards body in this source context even though this sentence does not expand it."},
+    {"name": "us-2024-acronym-prose-2024-29003-1281", "take": "a", "reason": "The named petitioner tribe is a specific organization; the surrounding legal status does not change the mention."},
+    {"name": "us-2024-acronym-prose-2024-31342-2614", "take": "a", "reason": "NRTL denotes the recognition category, while TUVRNA is the company taking action."},
+    {"name": "us-2024-acronym-prose-2024-31343-2530", "take": "a", "reason": "NRTL denotes the recognition category, while DEKRA is the company taking action."}
+  ]
+}
