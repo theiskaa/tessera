@@ -1,0 +1,32 @@
+{
+  "packet_sha256": "a77e8b6386b269f54fe72886b300d6298945f1dacf3c4fec8144a7084511163b",
+  "review_a_sha256": "b366337a8f5d54d7c2d5410d779ac8dbc23225069b34f1f765921f1bb9e914a2",
+  "review_b_sha256": "671d15c9eb53b232f900ebf199f3fc608e0f7862eb81d5fccda79bbfbf0addb0",
+  "decisions": [
+    {"name": "us-2025-contact-2025-01447-2", "take": "b", "reason": "DS/SI/PSS is presented as the contact's organizational routing unit, like the reviewed PRM/Admissions unit code."},
+    {"name": "us-2025-contact-2025-01513-1", "take": "a", "reason": "The source prints one phone number enclosed by parentheses; keep the whole printed phone surface."},
+    {"name": "us-2025-contact-2025-01842-1", "take": "b", "reason": "Doubletree by Hilton is used only as the meeting venue, matching the earlier contact policy for hotel venues."},
+    {"name": "us-2025-contact-2025-05413-4", "take": "a", "reason": "Forest Management Staff is a named Forest Service Washington Office unit, so staff belongs in its organization span."},
+    {"name": "us-2025-contact-2025-05442-2", "take": "b", "reason": "NASA uses ASAP for its Aerospace Safety Advisory Panel, the named unit modifying Administrative Officer."},
+    {"name": "us-2025-contact-2025-09373-1", "take": "a", "reason": "The suite and street form one postal address; all three standalone ACUS mentions refer to the named conference."},
+    {"name": "us-2025-contact-2025-09557-1", "take": "a", "reason": "Museum of the Bible is a named nonprofit institution; World Stage Theater is only the room and remains unlabeled."},
+    {"name": "us-2025-contact-2025-09780-3", "take": "a", "reason": "Both standalone EIA mentions refer to the Energy Information Administration, including the possessive website reference."},
+    {"name": "us-2025-contact-2025-11986-1", "take": "b", "reason": "TRICARE is a health care program, while the contractor is unnamed; the program is not an organization."},
+    {"name": "us-2025-contact-2025-14408-2", "take": "a", "reason": "ADDC/ RVDO is printed as a combined organizational routing code, like reviewed combined unit codes."},
+    {"name": "us-2025-contact-2025-14436-2", "take": "b", "reason": "The repeated surname is a person mention; the honorific Mrs. stays outside the span, as in earlier contact labels."},
+    {"name": "us-2025-contact-2025-16378-1", "take": "b", "reason": "North Charleston Marriott is used only as the meeting venue, matching the hotel venue policy."},
+    {"name": "us-2025-contact-2025-16509-2", "take": "b", "reason": "NASA uses ASAP for the Aerospace Safety Advisory Panel, the named unit modifying Executive Director."},
+    {"name": "us-2025-contact-2025-18859-1", "take": "b", "reason": "Hilton Garden Inn Boston Logan is used only as the meeting venue, matching the hotel venue policy."}
+  ],
+  "agreed_audits": [
+    {"name": "us-2025-contact-2025-07423-1", "reason": "Both reviewers labeled the source-printed extra-digit phone literally; exclude this anomalous case from training."},
+    {"name": "us-2025-contact-2025-09778-2", "reason": "Both reviewers treated PRM/Admissions as a named organizational routing unit."},
+    {"name": "us-2025-contact-2025-14152-1", "reason": "Both reviewers kept the building and street through ZIP as one address despite the missing separator."},
+    {"name": "us-2025-contact-2025-16291-1", "reason": "Both reviewers excluded the named building venue and kept the physical street address."}
+  ],
+  "training_excluded": [
+    "us-2025-contact-2025-01447-2",
+    "us-2025-contact-2025-07423-1",
+    "us-2025-contact-2025-14408-2"
+  ]
+}

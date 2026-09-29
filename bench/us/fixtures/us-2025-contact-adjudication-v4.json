@@ -1,0 +1,37 @@
+{
+  "packet_sha256": "97d333ba914278c437f5d221432e8ada7aa0d036d568e350f5e44968d54ac1db",
+  "review_a_sha256": "9385dca89fd7739a65111f410bb4749b2c39b5612586513d17ad5459a3447320",
+  "review_b_sha256": "d40f32fb1538d0392065574de219ee5e581af2d19ec4b16ede15de0aef270f12",
+  "decisions": [
+    {
+      "name": "us-2025-contact-2025-23585-2",
+      "take": "a",
+      "reason": "AmeriCorps State and National names a program, which the current organization policy excludes."
+    },
+    {
+      "name": "us-2025-contact-2025-23641-4",
+      "take": "b",
+      "reason": "ASTP/ONC is printed as one joint office acronym."
+    },
+    {
+      "name": "us-2025-contact-2025-23712-2",
+      "take": "b",
+      "reason": "Board of the Federal Reserve System names the specific organization."
+    },
+    {
+      "name": "us-2025-contact-2025-23766-1",
+      "take": "b",
+      "reason": "Indian Treaty Room is the named room at the start of the physical meeting address."
+    },
+    {
+      "name": "us-2025-contact-2025-23807-2",
+      "take": "a",
+      "reason": "ODASD(MC&FP) is the named office acronym in the mailing instruction."
+    },
+    {
+      "name": "us-2025-contact-2025-23928-2",
+      "take": "a",
+      "reason": "The source prints Oliver Sheuer and an email with olivia; both spans follow the literal source."
+    }
+  ]
+}

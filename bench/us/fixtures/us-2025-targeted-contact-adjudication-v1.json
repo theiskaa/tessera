@@ -1,0 +1,24 @@
+{
+  "packet_sha256": "7dfb114cf1a9486a40ae76d8fc47537c4af42cd389854be49e465edfc1e22837",
+  "review_a_sha256": "94bd095947180a0ca739e4ceda968008835d7e17ce1f38a9d562f14ee67b1bb3",
+  "review_b_sha256": "07554807d9776d2e7abd304ac887d239ca9816fc8479c2c0792334caeed00a49",
+  "retained_source_ids": [
+    "2025-03265",
+    "2025-18574",
+    "2025-18713",
+    "2025-19734",
+    "2025-23179"
+  ],
+  "decisions": [
+    {
+      "name": "us-2025-contact-2025-03265-2",
+      "take": "a",
+      "reason": "Orlando Airports District Office is a named office, while Community Planner is a role."
+    },
+    {
+      "name": "us-2025-contact-2025-18574-1",
+      "take": "b",
+      "reason": "The notice names the institute and Phillips Academy as separate institutional organizations."
+    }
+  ]
+}
