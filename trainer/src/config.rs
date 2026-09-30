@@ -181,6 +181,9 @@ pub struct GenerateConfig {
     pub addresses: String,
     /// Reviewed evaluation cases whose entity surfaces are excluded from generated documents.
     pub exclude_gold: String,
+    /// Include reviewed US unit-parent pairs in training-only documents.
+    #[serde(default)]
+    pub source_backed_hierarchy: bool,
     /// Longest document kept, in non-whitespace tokens, so training never needs chunking.
     pub max_tokens: usize,
 }

@@ -836,7 +836,7 @@ const TEMPLATES: &[(Family, u32, Category, &str)] = &[
         Prose,
         23,
         NoAddr,
-        "{sentence} Under the {neg_law}, the {org_gov#1} must reply within thirty days ({org_acr#1} Control Number {neg_digits}). Contact {person#2} at {email#2}.",
+        "{sentence} Under the {neg_law}, the {org_gov#1} ({org_acr#1}) must reply within thirty days. Contact {person#2} at {email#2} and reference {neg_order}.",
     ),
     (
         Prose,
@@ -1390,10 +1390,10 @@ pub const DISTRICT_PLACE_NAMES: &[&str] = &[
 /// District forms in public US school directories; the preceding field determines whether
 /// the same place-like surface refers to an organization or a location.
 pub const DISTRICT_FORMS: &[&str] = &[
-    "County",
-    "Independent",
-    "Unified",
-    "Elementary",
+    "County School District",
+    "Independent School District",
+    "Unified School District",
+    "Elementary School District",
     "City Schools",
     "County Schools",
     "School District",

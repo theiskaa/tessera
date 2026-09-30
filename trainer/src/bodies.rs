@@ -25,6 +25,32 @@ struct BodyRoster {
     bodies: Vec<Body>,
 }
 
+/// A reviewed unit and its source-backed parent organization.
+#[derive(Debug, Deserialize)]
+pub struct HierarchyPair {
+    /// Named office, branch, or other unit.
+    pub child: String,
+    /// Organization that contains the unit in the reviewed source.
+    pub parent: String,
+    evidence: Vec<HierarchyEvidence>,
+}
+
+#[derive(Debug, Deserialize)]
+struct HierarchyEvidence {
+    source_id: String,
+    source_url: String,
+    raw_sha256: String,
+}
+
+#[derive(Deserialize)]
+struct HierarchyRoster {
+    kind: String,
+    source_pairs_sha256: String,
+    review_a_sha256: String,
+    review_b_sha256: String,
+    pairs: Vec<HierarchyPair>,
+}
+
 /// Returns the validated public-body names and their official acronyms.
 pub(crate) fn public_bodies() -> anyhow::Result<&'static [Body]> {
     static ROSTER: OnceLock<anyhow::Result<Vec<Body>>> = OnceLock::new();
@@ -51,6 +77,51 @@ pub(crate) fn public_bodies() -> anyhow::Result<&'static [Body]> {
             );
         }
         Ok(roster.bodies)
+    });
+    result
+        .as_ref()
+        .map(Vec::as_slice)
+        .map_err(|error| anyhow::anyhow!("{error}"))
+}
+
+/// Returns independently reviewed US unit-parent pairs for training-only synthesis.
+pub(crate) fn hierarchy_pairs() -> anyhow::Result<&'static [HierarchyPair]> {
+    static ROSTER: OnceLock<anyhow::Result<Vec<HierarchyPair>>> = OnceLock::new();
+    let result = ROSTER.get_or_init(|| {
+        let roster: HierarchyRoster =
+            serde_json::from_str(include_str!("../data/us-org-hierarchy-pairs.json"))
+                .context("parsing reviewed US organization hierarchy roster")?;
+        anyhow::ensure!(
+            roster.kind == "us_org_hierarchy_roster_v1"
+                && roster.source_pairs_sha256.len() == 64
+                && roster.review_a_sha256.len() == 64
+                && roster.review_b_sha256.len() == 64
+                && roster.pairs.len() >= 40,
+            "invalid reviewed US organization hierarchy roster"
+        );
+        let mut unique = HashSet::new();
+        for pair in &roster.pairs {
+            anyhow::ensure!(
+                !pair.child.trim().is_empty()
+                    && !pair.parent.trim().is_empty()
+                    && !pair.child.eq_ignore_ascii_case(&pair.parent)
+                    && unique.insert((pair.child.to_lowercase(), pair.parent.to_lowercase()))
+                    && !pair.evidence.is_empty(),
+                "invalid or repeated US organization hierarchy pair"
+            );
+            for item in &pair.evidence {
+                anyhow::ensure!(
+                    item.source_id.len() == 10
+                        && item
+                            .source_url
+                            .starts_with("https://www.federalregister.gov/documents/")
+                        && item.source_url.contains(&item.source_id)
+                        && item.raw_sha256.len() == 64,
+                    "invalid US organization hierarchy source evidence"
+                );
+            }
+        }
+        Ok(roster.pairs)
     });
     result
         .as_ref()
@@ -237,6 +308,17 @@ impl Bodies {
             .choose(rng)
             .map(|body| (*body).clone())
             .with_context(|| format!("no US public bodies for {:?}", self.split))
+    }
+
+    /// Draws a reviewed relationship for training; evaluation uses unseen organization names.
+    pub fn hierarchy_pair(&self, rng: &mut ChaCha8Rng) -> anyhow::Result<&'static HierarchyPair> {
+        anyhow::ensure!(
+            self.split == Split::Train,
+            "source-backed organization pairs are training-only"
+        );
+        hierarchy_pairs()?
+            .choose(rng)
+            .context("empty US organization hierarchy roster")
     }
 
     /// Georgian local office headings are outside the US generator.

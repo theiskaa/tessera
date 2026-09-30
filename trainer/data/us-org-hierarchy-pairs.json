@@ -1,0 +1,806 @@
+{
+  "kind": "us_org_hierarchy_roster_v1",
+  "pairs": [
+    {
+      "child": "Bureau for Management",
+      "evidence": [
+        {
+          "child_end": 131,
+          "child_start": 110,
+          "parent_end": 108,
+          "parent_start": 103,
+          "raw_sha256": "7cb009e5858bdc975490977a4b2a282dce46a78a9d2ec566e0f87aca1d5f2157",
+          "silver_file": "data/interim/silver/us-r23-reviewed-org-safe-v1.jsonl",
+          "silver_id": "r23-us-org-2024-29614-1",
+          "source_id": "2024-29614",
+          "source_url": "https://www.federalregister.gov/documents/2024/12/19/2024-29614/usaid-injuryillness-collection-form-per-the-usaid-occupational-safety-and-health-ohs-program"
+        }
+      ],
+      "parent": "USAID"
+    },
+    {
+      "child": "Chancellor's Office",
+      "evidence": [
+        {
+          "child_end": 134,
+          "child_start": 115,
+          "parent_end": 171,
+          "parent_start": 137,
+          "raw_sha256": "94e86922eb63419ef8dbf0946298fa1f8e0d638f6008fd845e49d734000caf74",
+          "silver_file": "data/interim/silver/us-2025-year-contacts-v2.jsonl",
+          "silver_id": "us-2025-contact-2025-05224-1",
+          "source_id": "2025-05224",
+          "source_url": "https://www.federalregister.gov/documents/2025/03/27/2025-05224/notice-of-intended-repatriation-university-of-california-berkeley-berkeley-ca"
+        }
+      ],
+      "parent": "University of California, Berkeley"
+    },
+    {
+      "child": "Columbia-Pacific Northwest Regional Office",
+      "evidence": [
+        {
+          "child_end": 104,
+          "child_start": 62,
+          "parent_end": 127,
+          "parent_start": 106,
+          "raw_sha256": "ceaa61c6760f30157419925f951f9581592a33fe1c7d1ee157c88b070c56efb7",
+          "silver_file": "data/interim/silver/us-federal-org-reviewed-safe-v1.jsonl",
+          "silver_id": "raw-us-org-2024-29952-1",
+          "source_id": "2024-29952",
+          "source_url": "https://www.federalregister.gov/documents/2024/12/18/2024-29952/notice-of-inventory-completion-us-department-of-the-interior-bureau-of-reclamation-boise-id"
+        }
+      ],
+      "parent": "Bureau of Reclamation"
+    },
+    {
+      "child": "Cultural Heritage Center",
+      "evidence": [
+        {
+          "child_end": 76,
+          "child_start": 52,
+          "parent_end": 120,
+          "parent_start": 78,
+          "raw_sha256": "93795a13f004d41580e711885c82bdc2f1a46826e4cd591568bdf14ca189cc90",
+          "silver_file": "data/interim/silver/us-r23-reviewed-org-safe-v1.jsonl",
+          "silver_id": "r23-us-org-2024-31258-1",
+          "source_id": "2024-31258",
+          "source_url": "https://www.federalregister.gov/documents/2024/12/30/2024-31258/proposal-to-extend-the-cultural-property-agreement-between-the-united-states-and-morocco"
+        }
+      ],
+      "parent": "Bureau of Educational and Cultural Affairs"
+    },
+    {
+      "child": "Data Development and Information Products Division",
+      "evidence": [
+        {
+          "child_end": 107,
+          "child_start": 57,
+          "parent_end": 148,
+          "parent_start": 109,
+          "raw_sha256": "05744484f59ab00168759e4c26c8275252fb067c4d64c9a95f00be3fe488fe1b",
+          "silver_file": "data/interim/silver/us-reviewed-contact-snippets-safe-v1.jsonl",
+          "silver_id": "2024-28580-contact-2",
+          "source_id": "2024-28580",
+          "source_url": "https://www.federalregister.gov/documents/2024/12/06/2024-28580/agency-information-collection-activities-existing-collection"
+        }
+      ],
+      "parent": "Office of Enterprise Data and Analytics"
+    },
+    {
+      "child": "Diversion Control Division",
+      "evidence": [
+        {
+          "child_end": 127,
+          "child_start": 101,
+          "parent_end": 160,
+          "parent_start": 129,
+          "raw_sha256": "2f85dbdb9eaa30adaeef27219b932bdac786da7a92cc5fe781d562a4100d619f",
+          "silver_file": "data/interim/silver/us-2025-year-contacts-v2.jsonl",
+          "silver_id": "us-2025-contact-2025-21509-2",
+          "source_id": "2025-21509",
+          "source_url": "https://www.federalregister.gov/documents/2025/11/28/2025-21509/proposed-aggregate-production-quotas-for-schedule-i-and-ii-controlled-substances-and-assessment-of"
+        }
+      ],
+      "parent": "Drug Enforcement Administration"
+    },
+    {
+      "child": "Division of Clearing and Risk",
+      "evidence": [
+        {
+          "child_end": 139,
+          "child_start": 110,
+          "parent_end": 177,
+          "parent_start": 141,
+          "raw_sha256": "db3e8c99049bb056709396409afdfcb5b4859c047e1d6890d1527ba11c49fb7f",
+          "silver_file": "data/interim/silver/us-2025-year-contacts-v2.jsonl",
+          "silver_id": "us-2025-contact-2025-14444-2",
+          "source_id": "2025-14444",
+          "source_url": "https://www.federalregister.gov/documents/2025/07/31/2025-14444/agency-information-collection-activities-notice-of-intent-to-extend-collection-3038-0085-rule-5050"
+        }
+      ],
+      "parent": "Commodity Futures Trading Commission"
+    },
+    {
+      "child": "Division of Enforcement and Litigation",
+      "evidence": [
+        {
+          "child_end": 108,
+          "child_start": 70,
+          "parent_end": 151,
+          "parent_start": 110,
+          "raw_sha256": "8b5445df5592642fd18814ae4b07617a2965d869f48f1549dc071c3672a5b476",
+          "silver_file": "data/interim/silver/us-2025-year-contacts-v2.jsonl",
+          "silver_id": "us-2025-contact-2025-01753-2",
+          "source_id": "2025-01753",
+          "source_url": "https://www.federalregister.gov/documents/2025/01/27/2025-01753/proposed-settlement-agreement-stipulation-order-and-judgement-etc-fitbit-llc"
+        }
+      ],
+      "parent": "Office of Compliance and Field Operations"
+    },
+    {
+      "child": "Division of Management Systems",
+      "evidence": [
+        {
+          "child_end": 92,
+          "child_start": 62,
+          "parent_end": 120,
+          "parent_start": 94,
+          "raw_sha256": "f26cf8662426d8b37a507b9f56b16e24235c58fd3575b4cce1955d769b37bdc0",
+          "silver_file": "data/interim/silver/us-federal-org-reviewed-safe-v1.jsonl",
+          "silver_id": "raw-us-org-2024-30510-1",
+          "source_id": "2024-30510",
+          "source_url": "https://www.federalregister.gov/documents/2024/12/23/2024-30510/information-collection-activities-comment-request"
+        },
+        {
+          "child_end": 95,
+          "child_start": 65,
+          "parent_end": 123,
+          "parent_start": 97,
+          "raw_sha256": "c54b6e652ca8d2874136e8881f938ffe39aa19ead6b0afc01bad3d8da9d5b8ff",
+          "silver_file": "data/interim/silver/us-2025-year-contacts-v2.jsonl",
+          "silver_id": "us-2025-contact-2025-03160-1",
+          "source_id": "2025-03160",
+          "source_url": "https://www.federalregister.gov/documents/2025/02/27/2025-03160/information-collection-activities-comment-request"
+        }
+      ],
+      "parent": "Bureau of Labor Statistics"
+    },
+    {
+      "child": "Division of Monetary Affairs",
+      "evidence": [
+        {
+          "child_end": 251,
+          "child_start": 223,
+          "parent_end": 378,
+          "parent_start": 330,
+          "raw_sha256": "5479644cb5f739745da6cb9180c87459090471fa6bb97b30b781713aa7942f95",
+          "silver_file": "data/interim/silver/us-federal-org-reviewed-safe-v1.jsonl",
+          "silver_id": "raw-us-org-2024-29250-1",
+          "source_id": "2024-29250",
+          "source_url": "https://www.federalregister.gov/documents/2024/12/12/2024-29250/guidelines-for-evaluating-account-and-services-requests"
+        }
+      ],
+      "parent": "Board of Governors of the Federal Reserve System"
+    },
+    {
+      "child": "Division of National Programs, Tools and Technical Assistance",
+      "evidence": [
+        {
+          "child_end": 117,
+          "child_start": 56,
+          "parent_end": 149,
+          "parent_start": 119,
+          "raw_sha256": "ed7c7a8d5cd33bdfa8bed815b6b2c372f79419a51c964baec1333c1561ebd47e",
+          "silver_file": "data/interim/silver/us-r23-reviewed-org-safe-v1.jsonl",
+          "silver_id": "r23-us-org-2024-31019-2",
+          "source_id": "2024-31019",
+          "source_url": "https://www.federalregister.gov/documents/2024/12/30/2024-31019/employment-and-training-administration-program-year-2024-workforce-innovation-and-opportunity-act"
+        }
+      ],
+      "parent": "Office of Workforce Investment"
+    },
+    {
+      "child": "Division of Reserve Bank Operations and Payment Systems",
+      "evidence": [
+        {
+          "child_end": 144,
+          "child_start": 89,
+          "parent_end": 378,
+          "parent_start": 330,
+          "raw_sha256": "5479644cb5f739745da6cb9180c87459090471fa6bb97b30b781713aa7942f95",
+          "silver_file": "data/interim/silver/us-federal-org-reviewed-safe-v1.jsonl",
+          "silver_id": "raw-us-org-2024-29250-1",
+          "source_id": "2024-29250",
+          "source_url": "https://www.federalregister.gov/documents/2024/12/12/2024-29250/guidelines-for-evaluating-account-and-services-requests"
+        }
+      ],
+      "parent": "Board of Governors of the Federal Reserve System"
+    },
+    {
+      "child": "Division of Supervision and Regulation",
+      "evidence": [
+        {
+          "child_end": 324,
+          "child_start": 286,
+          "parent_end": 602,
+          "parent_start": 554,
+          "raw_sha256": "612b7c9fde387e205f2ef851787274325af136d5eef3fe017840e1b4c1eabb51",
+          "silver_file": "data/interim/silver/us-reviewed-contact-snippets-safe-v1.jsonl",
+          "silver_id": "2024-29981-contact-1",
+          "source_id": "2024-29981",
+          "source_url": "https://www.federalregister.gov/documents/2024/12/18/2024-29981/regulation-q-regulatory-capital-rule-risk-based-capital-surcharges-for-global-systemically-important"
+        }
+      ],
+      "parent": "Board of Governors of the Federal Reserve System"
+    },
+    {
+      "child": "Gulf of Mexico Regional Office",
+      "evidence": [
+        {
+          "child_end": 83,
+          "child_start": 53,
+          "parent_end": 51,
+          "parent_start": 47,
+          "raw_sha256": "86b67b49c2e2906eea6099e11b8eb4eed8cad70ac76ee4f46682245f5b457e15",
+          "silver_file": "data/interim/silver/us-federal-org-reviewed-safe-v1.jsonl",
+          "silver_id": "raw-us-org-2024-29360-4",
+          "source_id": "2024-29360",
+          "source_url": "https://www.federalregister.gov/documents/2024/12/13/2024-29360/notice-of-availability-of-a-gulf-of-mexico-regional-outer-continental-shelf-oil-and-gas-draft"
+        }
+      ],
+      "parent": "BOEM"
+    },
+    {
+      "child": "Human Resources Center of Expertise",
+      "evidence": [
+        {
+          "child_end": 125,
+          "child_start": 90,
+          "parent_end": 169,
+          "parent_start": 127,
+          "raw_sha256": "6c2a1363d03f7cb1ddaa2561aa5dc0d230e8f231470335a7da20328fedfa7460",
+          "silver_file": "data/interim/silver/us-2025-year-contacts-v2.jsonl",
+          "silver_id": "us-2025-contact-2025-19651-1",
+          "source_id": "2025-19651",
+          "source_url": "https://www.federalregister.gov/documents/2025/10/24/2025-19651/annual-pay-ranges-for-physicians-dentists-podiatrists-and-optometrists-of-the-veterans-health"
+        }
+      ],
+      "parent": "Workforce Management and Consulting Office"
+    },
+    {
+      "child": "Intelligence Operations Division",
+      "evidence": [
+        {
+          "child_end": 110,
+          "child_start": 78,
+          "parent_end": 76,
+          "parent_start": 55,
+          "raw_sha256": "7518e4bdfec516281f59bd25d85e9fe2b2da104fbb8bc48fcb9a379ab331ac74",
+          "silver_file": "data/interim/silver/us-reviewed-contact-snippets-safe-v1.jsonl",
+          "silver_id": "2024-27502-contact-1",
+          "source_id": "2024-27502",
+          "source_url": "https://www.federalregister.gov/documents/2024/11/25/2024-27502/notice-of-inventory-completion-michigan-state-police-dimondale-mi"
+        }
+      ],
+      "parent": "Michigan State Police"
+    },
+    {
+      "child": "Legal Division",
+      "evidence": [
+        {
+          "child_end": 552,
+          "child_start": 538,
+          "parent_end": 602,
+          "parent_start": 554,
+          "raw_sha256": "612b7c9fde387e205f2ef851787274325af136d5eef3fe017840e1b4c1eabb51",
+          "silver_file": "data/interim/silver/us-reviewed-contact-snippets-safe-v1.jsonl",
+          "silver_id": "2024-29981-contact-1",
+          "source_id": "2024-29981",
+          "source_url": "https://www.federalregister.gov/documents/2024/12/18/2024-29981/regulation-q-regulatory-capital-rule-risk-based-capital-surcharges-for-global-systemically-important"
+        },
+        {
+          "child_end": 328,
+          "child_start": 314,
+          "parent_end": 378,
+          "parent_start": 330,
+          "raw_sha256": "5479644cb5f739745da6cb9180c87459090471fa6bb97b30b781713aa7942f95",
+          "silver_file": "data/interim/silver/us-federal-org-reviewed-safe-v1.jsonl",
+          "silver_id": "raw-us-org-2024-29250-1",
+          "source_id": "2024-29250",
+          "source_url": "https://www.federalregister.gov/documents/2024/12/12/2024-29250/guidelines-for-evaluating-account-and-services-requests"
+        }
+      ],
+      "parent": "Board of Governors of the Federal Reserve System"
+    },
+    {
+      "child": "Market Participants Division",
+      "evidence": [
+        {
+          "child_end": 98,
+          "child_start": 70,
+          "parent_end": 136,
+          "parent_start": 100,
+          "raw_sha256": "a442b6a9744f6db511080ef40d067177867ad23858bee323ef0412b9f2756ace",
+          "silver_file": "data/interim/silver/us-2025-year-contacts-v2.jsonl",
+          "silver_id": "us-2025-contact-2025-02102-2",
+          "source_id": "2025-02102",
+          "source_url": "https://www.federalregister.gov/documents/2025/02/03/2025-02102/agency-information-collection-activities-notice-of-intent-to-extend-collection-3038-0075-protection"
+        }
+      ],
+      "parent": "Commodity Futures Trading Commission"
+    },
+    {
+      "child": "Missing Persons Coordination Unit",
+      "evidence": [
+        {
+          "child_end": 145,
+          "child_start": 112,
+          "parent_end": 110,
+          "parent_start": 78,
+          "raw_sha256": "7518e4bdfec516281f59bd25d85e9fe2b2da104fbb8bc48fcb9a379ab331ac74",
+          "silver_file": "data/interim/silver/us-reviewed-contact-snippets-safe-v1.jsonl",
+          "silver_id": "2024-27502-contact-1",
+          "source_id": "2024-27502",
+          "source_url": "https://www.federalregister.gov/documents/2024/11/25/2024-27502/notice-of-inventory-completion-michigan-state-police-dimondale-mi"
+        }
+      ],
+      "parent": "Intelligence Operations Division"
+    },
+    {
+      "child": "Office of Chief Counsel",
+      "evidence": [
+        {
+          "child_end": 109,
+          "child_start": 86,
+          "parent_end": 83,
+          "parent_start": 78,
+          "raw_sha256": "38611fc822994607c21db04c4e7e98fa17535df0e01006459606db8d9000b56d",
+          "silver_file": "data/interim/silver/us-reviewed-org-paragraphs-safe-v1.jsonl",
+          "silver_id": "2024-28236-org-paragraph-8",
+          "source_id": "2024-28236",
+          "source_url": "https://www.federalregister.gov/documents/2024/12/03/2024-28236/motor-carrier-safety-advisory-committee-mcsac-notice-of-public-meeting"
+        }
+      ],
+      "parent": "FMCSA"
+    },
+    {
+      "child": "Office of Civil Rights",
+      "evidence": [
+        {
+          "child_end": 118,
+          "child_start": 96,
+          "parent_end": 94,
+          "parent_start": 89,
+          "raw_sha256": "a053384c87f34679605426be0cf9c71b31bb24d66150be0b5c02b1f22bbd6a89",
+          "silver_file": "data/interim/silver/us-federal-org-reviewed-safe-v1.jsonl",
+          "silver_id": "raw-us-org-2024-30954-2",
+          "source_id": "2024-30954",
+          "source_url": "https://www.federalregister.gov/documents/2024/12/27/2024-30954/proposed-revision-of-aid-114-2-anti-harassment-intake-summary-sheet"
+        }
+      ],
+      "parent": "USAID"
+    },
+    {
+      "child": "Office of Communications and Legislative Affairs",
+      "evidence": [
+        {
+          "child_end": 436,
+          "child_start": 388,
+          "parent_end": 385,
+          "parent_start": 381,
+          "raw_sha256": "05744484f59ab00168759e4c26c8275252fb067c4d64c9a95f00be3fe488fe1b",
+          "silver_file": "data/interim/silver/us-reviewed-contact-snippets-safe-v1.jsonl",
+          "silver_id": "2024-28580-contact-2",
+          "source_id": "2024-28580",
+          "source_url": "https://www.federalregister.gov/documents/2024/12/06/2024-28580/agency-information-collection-activities-existing-collection"
+        }
+      ],
+      "parent": "EEOC"
+    },
+    {
+      "child": "Office of Compliance and Field Operations",
+      "evidence": [
+        {
+          "child_end": 151,
+          "child_start": 110,
+          "parent_end": 187,
+          "parent_start": 153,
+          "raw_sha256": "8b5445df5592642fd18814ae4b07617a2965d869f48f1549dc071c3672a5b476",
+          "silver_file": "data/interim/silver/us-2025-year-contacts-v2.jsonl",
+          "silver_id": "us-2025-contact-2025-01753-2",
+          "source_id": "2025-01753",
+          "source_url": "https://www.federalregister.gov/documents/2025/01/27/2025-01753/proposed-settlement-agreement-stipulation-order-and-judgement-etc-fitbit-llc"
+        }
+      ],
+      "parent": "Consumer Product Safety Commission"
+    },
+    {
+      "child": "Office of Enterprise Data and Analytics",
+      "evidence": [
+        {
+          "child_end": 148,
+          "child_start": 109,
+          "parent_end": 196,
+          "parent_start": 157,
+          "raw_sha256": "05744484f59ab00168759e4c26c8275252fb067c4d64c9a95f00be3fe488fe1b",
+          "silver_file": "data/interim/silver/us-reviewed-contact-snippets-safe-v1.jsonl",
+          "silver_id": "2024-28580-contact-2",
+          "source_id": "2024-28580",
+          "source_url": "https://www.federalregister.gov/documents/2024/12/06/2024-28580/agency-information-collection-activities-existing-collection"
+        }
+      ],
+      "parent": "Equal Employment Opportunity Commission"
+    },
+    {
+      "child": "Office of Environment",
+      "evidence": [
+        {
+          "child_end": 106,
+          "child_start": 85,
+          "parent_end": 83,
+          "parent_start": 53,
+          "raw_sha256": "86b67b49c2e2906eea6099e11b8eb4eed8cad70ac76ee4f46682245f5b457e15",
+          "silver_file": "data/interim/silver/us-federal-org-reviewed-safe-v1.jsonl",
+          "silver_id": "raw-us-org-2024-29360-4",
+          "source_id": "2024-29360",
+          "source_url": "https://www.federalregister.gov/documents/2024/12/13/2024-29360/notice-of-availability-of-a-gulf-of-mexico-regional-outer-continental-shelf-oil-and-gas-draft"
+        }
+      ],
+      "parent": "Gulf of Mexico Regional Office"
+    },
+    {
+      "child": "Office of Indian Gaming",
+      "evidence": [
+        {
+          "child_end": 85,
+          "child_start": 62,
+          "parent_end": 136,
+          "parent_start": 87,
+          "raw_sha256": "bd472ac1c92321f8ee26d76608f72794424ee64b017548cc76ac9ce2aad90b45",
+          "silver_file": "data/interim/silver/us-reviewed-org-paragraphs-safe-v1.jsonl",
+          "silver_id": "2024-29450-org-paragraph-1",
+          "source_id": "2024-29450",
+          "source_url": "https://www.federalregister.gov/documents/2024/12/13/2024-29450/indian-gaming-approval-of-the-tribal-state-class-iii-gaming-compact-amendment-between-the"
+        }
+      ],
+      "parent": "Office of the Assistant Secretary--Indian Affairs"
+    },
+    {
+      "child": "Office of Justice Services",
+      "evidence": [
+        {
+          "child_end": 98,
+          "child_start": 72,
+          "parent_end": 124,
+          "parent_start": 100,
+          "raw_sha256": "d4ec6c1a333ea0696a0062c7b98f4803357629f0149ff2bed19b1c9260ff8d12",
+          "silver_file": "data/interim/silver/us-federal-org-reviewed-safe-v1.jsonl",
+          "silver_id": "raw-us-org-2024-27619-1",
+          "source_id": "2024-27619",
+          "source_url": "https://www.federalregister.gov/documents/2024/11/26/2024-27619/acceptance-of-retrocession-of-jurisdiction-for-the-skokomish-nation"
+        }
+      ],
+      "parent": "Bureau of Indian Affairs"
+    },
+    {
+      "child": "Office of Leasing and Plans",
+      "evidence": [
+        {
+          "child_end": 83,
+          "child_start": 56,
+          "parent_end": 55,
+          "parent_start": 51,
+          "raw_sha256": "9ad0865a6e008384e6248909242cbaa3f495dc72079fa1fb1cd8166096f49574",
+          "silver_file": "data/interim/silver/us-reviewed-org-paragraphs-safe-v1.jsonl",
+          "silver_id": "2024-29358-org-paragraph-2",
+          "source_id": "2024-29358",
+          "source_url": "https://www.federalregister.gov/documents/2024/12/13/2024-29358/notice-of-availability-of-determination-of-competitive-interest-in-wind-energy-area-options-c-and-d"
+        }
+      ],
+      "parent": "BOEM"
+    },
+    {
+      "child": "Office of Management Policy, Budget, and Performance",
+      "evidence": [
+        {
+          "child_end": 185,
+          "child_start": 133,
+          "parent_end": 131,
+          "parent_start": 110,
+          "raw_sha256": "7cb009e5858bdc975490977a4b2a282dce46a78a9d2ec566e0f87aca1d5f2157",
+          "silver_file": "data/interim/silver/us-r23-reviewed-org-safe-v1.jsonl",
+          "silver_id": "r23-us-org-2024-29614-1",
+          "source_id": "2024-29614",
+          "source_url": "https://www.federalregister.gov/documents/2024/12/19/2024-29614/usaid-injuryillness-collection-form-per-the-usaid-occupational-safety-and-health-ohs-program"
+        }
+      ],
+      "parent": "Bureau for Management"
+    },
+    {
+      "child": "Office of Manufactured Housing Programs",
+      "evidence": [
+        {
+          "child_end": 132,
+          "child_start": 93,
+          "parent_end": 177,
+          "parent_start": 134,
+          "raw_sha256": "2592d6331b9d5fd59d29805cc59056115790beeb7262a9aed36e0bb3ccdb21aa",
+          "silver_file": "data/interim/silver/us-federal-org-reviewed-safe-v1.jsonl",
+          "silver_id": "raw-us-org-2024-28235-2",
+          "source_id": "2024-28235",
+          "source_url": "https://www.federalregister.gov/documents/2024/12/03/2024-28235/manufactured-housing-consensus-committee-mhcc-notice-inviting-nominations-of-individuals-to-serve-on"
+        },
+        {
+          "child_end": 235,
+          "child_start": 196,
+          "parent_end": 280,
+          "parent_start": 237,
+          "raw_sha256": "d4d374d285dba9d06c3fa3ae0b6741bffa25c9743e242aae56caaeef51b049b5",
+          "silver_file": "data/interim/silver/us-2025-year-contacts-v2.jsonl",
+          "silver_id": "us-2025-contact-2025-19004-1",
+          "source_id": "2025-19004",
+          "source_url": "https://www.federalregister.gov/documents/2025/09/30/2025-19004/manufactured-housing-consensus-committee-mhcc-notice-inviting-nominations-of-individuals-to-serve-on"
+        }
+      ],
+      "parent": "Department of Housing and Urban Development"
+    },
+    {
+      "child": "Office of Policy and International Affairs",
+      "evidence": [
+        {
+          "child_end": 95,
+          "child_start": 53,
+          "parent_end": 51,
+          "parent_start": 46,
+          "raw_sha256": "b76b7363b423247d1e5eafe65791849968f97cff897c26c5f5aaa730cee1503c",
+          "silver_file": "data/interim/silver/us-federal-org-reviewed-safe-v1.jsonl",
+          "silver_id": "raw-us-org-2024-28133-4",
+          "source_id": "2024-28133",
+          "source_url": "https://www.federalregister.gov/documents/2024/12/10/2024-28133/anti-piracy-symposium"
+        }
+      ],
+      "parent": "USPTO"
+    },
+    {
+      "child": "Office of Policy and Strategy",
+      "evidence": [
+        {
+          "child_end": 69,
+          "child_start": 40,
+          "parent_end": 38,
+          "parent_start": 33,
+          "raw_sha256": "a56448b7e57bbf0c661bd03c4651e4f7843f37b2186a662421bcb79526d86d4a",
+          "silver_file": "data/interim/silver/us-reviewed-contact-snippets-safe-v1.jsonl",
+          "silver_id": "2024-29494-contact-3",
+          "source_id": "2024-29494",
+          "source_url": "https://www.federalregister.gov/documents/2024/12/19/2024-29494/agency-information-collection-activities-revision-of-a-currently-approved-collection-petition-for"
+        }
+      ],
+      "parent": "USCIS"
+    },
+    {
+      "child": "Office of Public Affairs",
+      "evidence": [
+        {
+          "child_end": 184,
+          "child_start": 160,
+          "parent_end": 157,
+          "parent_start": 153,
+          "raw_sha256": "baadce2f7216a4fb909c9f5671b349808e781ef2638d3584c5bc16b155823bc7",
+          "silver_file": "data/interim/silver/us-reviewed-org-paragraphs-safe-v1.jsonl",
+          "silver_id": "2024-31236-org-paragraph-2",
+          "source_id": "2024-31236",
+          "source_url": "https://www.federalregister.gov/documents/2024/12/30/2024-31236/innovation-fund-advisory-committee"
+        }
+      ],
+      "parent": "NTIA"
+    },
+    {
+      "child": "Office of Renewable Energy Programs",
+      "evidence": [
+        {
+          "child_end": 90,
+          "child_start": 55,
+          "parent_end": 54,
+          "parent_start": 50,
+          "raw_sha256": "a509f65456181d6ea2760b7be9e7a355383b36af0d999562bbbea31b9ed18cf4",
+          "silver_file": "data/interim/silver/us-reviewed-org-paragraphs-safe-v1.jsonl",
+          "silver_id": "2024-26657-org-paragraph-2",
+          "source_id": "2024-26657",
+          "source_url": "https://www.federalregister.gov/documents/2024/11/15/2024-26657/notice-of-availability-of-a-final-environmental-impact-statement-for-southcoast-wind-energy-llcs"
+        }
+      ],
+      "parent": "BOEM"
+    },
+    {
+      "child": "Office of Repatriation",
+      "evidence": [
+        {
+          "child_end": 76,
+          "child_start": 54,
+          "parent_end": 52,
+          "parent_start": 29,
+          "raw_sha256": "551471fc688965560121f79d10cdf0af998213084dcf8889507ab86749a35d04",
+          "silver_file": "data/interim/silver/us-federal-org-reviewed-safe-v1.jsonl",
+          "silver_id": "raw-us-org-2024-27513-1",
+          "source_id": "2024-27513",
+          "source_url": "https://www.federalregister.gov/documents/2024/11/25/2024-27513/notice-of-inventory-completion-university-of-tennessee-department-of-anthropology-knoxville-tn"
+        }
+      ],
+      "parent": "University of Tennessee"
+    },
+    {
+      "child": "Office of the Chief Communications Officer",
+      "evidence": [
+        {
+          "child_end": 202,
+          "child_start": 160,
+          "parent_end": 209,
+          "parent_start": 204,
+          "raw_sha256": "b76b7363b423247d1e5eafe65791849968f97cff897c26c5f5aaa730cee1503c",
+          "silver_file": "data/interim/silver/us-federal-org-reviewed-safe-v1.jsonl",
+          "silver_id": "raw-us-org-2024-28133-4",
+          "source_id": "2024-28133",
+          "source_url": "https://www.federalregister.gov/documents/2024/12/10/2024-28133/anti-piracy-symposium"
+        }
+      ],
+      "parent": "USPTO"
+    },
+    {
+      "child": "Office of the Chief Data Officer",
+      "evidence": [
+        {
+          "child_end": 123,
+          "child_start": 91,
+          "parent_end": 173,
+          "parent_start": 125,
+          "raw_sha256": "86a1a4513767d9e4aa222ef6b36516bf24d7a74150b1f54e0cf7f4cd14fd8e7c",
+          "silver_file": "data/interim/silver/us-reviewed-contact-snippets-safe-v1.jsonl",
+          "silver_id": "2024-30587-contact-3",
+          "source_id": "2024-30587",
+          "source_url": "https://www.federalregister.gov/documents/2024/12/23/2024-30587/proposed-agency-information-collection-activities-comment-request"
+        }
+      ],
+      "parent": "Board of Governors of the Federal Reserve System"
+    },
+    {
+      "child": "Office of the Federal Register",
+      "evidence": [
+        {
+          "child_end": 154,
+          "child_start": 124,
+          "parent_end": 200,
+          "parent_start": 156,
+          "raw_sha256": "15c0dcae06402be637b669f4f982f58e24637c91d476b3508202f3d03f3a045d",
+          "silver_file": "data/interim/silver/us-2025-year-contacts-v2.jsonl",
+          "silver_id": "us-2025-contact-2025-19060-1",
+          "source_id": "2025-19060",
+          "source_url": "https://www.federalregister.gov/documents/2025/09/30/2025-19060/publication-procedures-for-federal-register-documents-during-a-funding-hiatus"
+        }
+      ],
+      "parent": "National Archives and Records Administration"
+    },
+    {
+      "child": "Office of the State Archaeologist Bioarchaeology Program",
+      "evidence": [
+        {
+          "child_end": 163,
+          "child_start": 107,
+          "parent_end": 183,
+          "parent_start": 165,
+          "raw_sha256": "d3428b20f10e421ee8667d091badb5c2d9cf20fd8884880a9c4232cb6fa6040a",
+          "silver_file": "data/interim/silver/us-2025-year-contact-expansion-safe-v1.jsonl",
+          "silver_id": "us-2025-contact-2025-23011-1",
+          "source_id": "2025-23011",
+          "source_url": "https://www.federalregister.gov/documents/2025/12/17/2025-23011/notice-of-inventory-completion-office-of-the-state-archaeologist-university-of-iowa-iowa-city-ia"
+        }
+      ],
+      "parent": "University of Iowa"
+    },
+    {
+      "child": "Part 11 Petitions Branch",
+      "evidence": [
+        {
+          "child_end": 68,
+          "child_start": 44,
+          "parent_end": 90,
+          "parent_start": 70,
+          "raw_sha256": "ad0d4565eb33c19c6e0c1fc67111d09860d9f0fe6b6fdd33978b85c9b0dac46e",
+          "silver_file": "data/interim/silver/us-reviewed-org-paragraphs-safe-v1.jsonl",
+          "silver_id": "2024-29542-org-paragraph-4",
+          "source_id": "2024-29542",
+          "source_url": "https://www.federalregister.gov/documents/2024/12/16/2024-29542/petition-for-exemption-summary-of-petition-received-wheels-up"
+        }
+      ],
+      "parent": "Office of Rulemaking"
+    },
+    {
+      "child": "Regulatory Coordination Division",
+      "evidence": [
+        {
+          "child_end": 103,
+          "child_start": 71,
+          "parent_end": 69,
+          "parent_start": 40,
+          "raw_sha256": "a56448b7e57bbf0c661bd03c4651e4f7843f37b2186a662421bcb79526d86d4a",
+          "silver_file": "data/interim/silver/us-reviewed-contact-snippets-safe-v1.jsonl",
+          "silver_id": "2024-29494-contact-3",
+          "source_id": "2024-29494",
+          "source_url": "https://www.federalregister.gov/documents/2024/12/19/2024-29494/agency-information-collection-activities-revision-of-a-currently-approved-collection-petition-for"
+        }
+      ],
+      "parent": "Office of Policy and Strategy"
+    },
+    {
+      "child": "Regulatory Drafting and Policy Support Section",
+      "evidence": [
+        {
+          "child_end": 99,
+          "child_start": 53,
+          "parent_end": 127,
+          "parent_start": 101,
+          "raw_sha256": "2f85dbdb9eaa30adaeef27219b932bdac786da7a92cc5fe781d562a4100d619f",
+          "silver_file": "data/interim/silver/us-2025-year-contacts-v2.jsonl",
+          "silver_id": "us-2025-contact-2025-21509-2",
+          "source_id": "2025-21509",
+          "source_url": "https://www.federalregister.gov/documents/2025/11/28/2025-21509/proposed-aggregate-production-quotas-for-schedule-i-and-ii-controlled-substances-and-assessment-of"
+        }
+      ],
+      "parent": "Diversion Control Division"
+    },
+    {
+      "child": "Regulatory Drafting and Policy Support Section",
+      "evidence": [
+        {
+          "child_end": 329,
+          "child_start": 283,
+          "parent_end": 362,
+          "parent_start": 331,
+          "raw_sha256": "7e6cb0111b21b57d741aa0a9dd11e700ea7c0b4e71b9e3203fe0bb6d02e9fde7",
+          "silver_file": "data/interim/silver/us-reviewed-org-paragraphs-safe-v1.jsonl",
+          "silver_id": "2024-28045-org-paragraph-1",
+          "source_id": "2024-28045",
+          "source_url": "https://www.federalregister.gov/documents/2024/11/29/2024-28045/agency-information-collection-activities-proposed-ecollection-ecomments-requested-extension-of-a"
+        }
+      ],
+      "parent": "Drug Enforcement Administration"
+    },
+    {
+      "child": "Services Surveys Branch",
+      "evidence": [
+        {
+          "child_end": 82,
+          "child_start": 59,
+          "parent_end": 112,
+          "parent_start": 84,
+          "raw_sha256": "f38f3e37efb7b085ab4af19ea405ace7e59c2c19b8e26bc1828bc6c109803849",
+          "silver_file": "data/interim/silver/us-2025-year-contacts-v2.jsonl",
+          "silver_id": "us-2025-contact-2025-03315-1",
+          "source_id": "2025-03315",
+          "source_url": "https://www.federalregister.gov/documents/2025/02/28/2025-03315/be-9-quarterly-survey-of-foreign-airline-operators-revenues-and-expenses-in-the-united-states"
+        }
+      ],
+      "parent": "Balance of Payments Division"
+    },
+    {
+      "child": "Workforce Management and Consulting Office",
+      "evidence": [
+        {
+          "child_end": 169,
+          "child_start": 127,
+          "parent_end": 201,
+          "parent_start": 171,
+          "raw_sha256": "6c2a1363d03f7cb1ddaa2561aa5dc0d230e8f231470335a7da20328fedfa7460",
+          "silver_file": "data/interim/silver/us-2025-year-contacts-v2.jsonl",
+          "silver_id": "us-2025-contact-2025-19651-1",
+          "source_id": "2025-19651",
+          "source_url": "https://www.federalregister.gov/documents/2025/10/24/2025-19651/annual-pay-ranges-for-physicians-dentists-podiatrists-and-optometrists-of-the-veterans-health"
+        }
+      ],
+      "parent": "Veterans Health Administration"
+    }
+  ],
+  "review_a_sha256": "ecd9e56f3e713eef684e041f6c1f1aab7dd69e14cf82d68bdd3315160c03a53f",
+  "review_b_sha256": "f0f9db476e931c62db67c11c61e13817ae0284c7d7c5b4a2970a80bfb03a0ad9",
+  "source_pairs_sha256": "11a2576152a2d61a5df533b820d24faf486372f79b9b532c131a9734d714f925"
+}

@@ -17,12 +17,12 @@ use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tessera::Kind;
 use tessera::internal::{is_content, tokenize};
+use tessera::{AddressLabel, Kind};
 use unicode_normalization::UnicodeNormalization;
 use unicode_normalization::char::is_combining_mark;
 
-use crate::bodies::{self, Bodies};
+use crate::bodies::{self, Bodies, HierarchyPair};
 use crate::config::{self, Config, GenerateConfig};
 use crate::data::{LabelledExample, Split, read_shard};
 use crate::filler;
@@ -532,6 +532,29 @@ impl GoldExclusions {
         Ok(())
     }
 
+    fn add_model_doc(&mut self, doc: &Doc) -> anyhow::Result<()> {
+        let bytes = doc.text.as_bytes();
+        for span in &doc.entities {
+            if !matches!(span.kind, "person" | "org" | "address") {
+                continue;
+            }
+            let surface = std::str::from_utf8(
+                bytes
+                    .get(span.start..span.end)
+                    .context("generated model span has invalid offsets")?,
+            )?;
+            self.add(span.kind, surface)?;
+        }
+        Ok(())
+    }
+
+    fn merge_model(&mut self, other: &mut Self) {
+        self.people.extend(other.people.drain());
+        self.person_keys.extend(other.person_keys.drain());
+        self.orgs.extend(other.orgs.drain());
+        self.addresses.extend(other.addresses.drain());
+    }
+
     fn expand_public_body_aliases(&mut self) -> anyhow::Result<()> {
         for body in bodies::public_bodies()? {
             let name = normalize_surface(&body.name);
@@ -698,6 +721,7 @@ pub struct Ctx<'a> {
     bound: HashMap<(Kind, u8), String>,
     bound_person: HashMap<u8, PoolPerson>,
     bound_acronym: HashMap<u8, String>,
+    related_pair: Option<&'static HierarchyPair>,
     /// Link groups the template also writes as an acronym, whose body must have one.
     acronym_groups: HashSet<u8>,
     /// Turns off every optional variation (honorifics, casing, email patterns and digits),
@@ -713,6 +737,7 @@ impl<'a> Ctx<'a> {
             bound: HashMap::new(),
             bound_person: HashMap::new(),
             bound_acronym: HashMap::new(),
+            related_pair: None,
             acronym_groups: HashSet::new(),
             plain: false,
         }
@@ -830,17 +855,24 @@ impl<'a> Ctx<'a> {
             Slot::OrgSchool => Filled::plain(*pick(templates::PERSON_NAMED_INSTITUTIONS, rng)),
             Slot::OrgDistrict => Filled::plain(district_name(rng)),
             Slot::OrgGov => {
-                let body = self
-                    .pools
-                    .bodies
-                    .body(self.acronym_groups.contains(&group), rng)?;
-                if let Some(acronym) = body.acronym.filter(|_| group > 0) {
-                    self.bound_acronym.insert(group, acronym);
+                if let Some(pair) = &self.related_pair {
+                    Filled::plain(pair.parent.clone())
+                } else {
+                    let body = self
+                        .pools
+                        .bodies
+                        .body(self.acronym_groups.contains(&group), rng)?;
+                    if let Some(acronym) = body.acronym.filter(|_| group > 0) {
+                        self.bound_acronym.insert(group, acronym);
+                    }
+                    Filled::plain(body.name)
                 }
-                Filled::plain(body.name)
             }
             Slot::OrgAcronym => Filled::plain(self.acronym(group, rng)?),
-            Slot::OrgUnit => Filled::plain(self.pools.bodies.unit(rng)?),
+            Slot::OrgUnit => match &self.related_pair {
+                Some(pair) => Filled::plain(pair.child.clone()),
+                None => Filled::plain(self.pools.bodies.unit(rng)?),
+            },
             Slot::OrgLocalOffice => Filled::plain(
                 self.pools
                     .bodies
@@ -1435,6 +1467,11 @@ pub fn render(template: &Template, ctx: &mut Ctx, rng: &mut ChaCha8Rng) -> anyho
     let mut phones_fixture_safe = true;
     let expanded = expand_lists(template.text, ctx.country, rng);
     let refs = templates::parse_slots(&expanded)?;
+    ctx.related_pair = if paired_unit_template(&refs) {
+        Some(ctx.pools.bodies.hierarchy_pair(rng)?)
+    } else {
+        None
+    };
     ctx.acronym_groups = refs
         .iter()
         .filter(|r| r.slot == Slot::OrgAcronym && r.group > 0)
@@ -1559,6 +1596,7 @@ pub enum Drop {
     CategoryMismatch,
     EvaluationOverlap,
     SilverOverlap,
+    SyntheticSplitOverlap,
 }
 
 impl Drop {
@@ -1572,6 +1610,7 @@ impl Drop {
             Drop::CategoryMismatch => "category_mismatch",
             Drop::EvaluationOverlap => "evaluation_overlap",
             Drop::SilverOverlap => "silver_overlap",
+            Drop::SyntheticSplitOverlap => "synthetic_split_overlap",
         }
     }
 }
@@ -1629,7 +1668,25 @@ struct Row {
     doc: Doc,
 }
 
-fn supported_template(template: &Template, country: &str) -> bool {
+fn paired_unit_template(slots: &[SlotRef]) -> bool {
+    slots
+        .iter()
+        .filter(|item| item.slot == Slot::OrgUnit)
+        .count()
+        == 1
+        && slots
+            .iter()
+            .filter(|item| item.slot == Slot::OrgGov)
+            .count()
+            == 1
+        && slots
+            .iter()
+            .filter(|item| item.slot.kind() == Some(Kind::Org))
+            .count()
+            == 2
+}
+
+fn supported_template(template: &Template, country: &str, split: Split) -> bool {
     if !template.fits(country) {
         return false;
     }
@@ -1645,13 +1702,17 @@ fn supported_template(template: &Template, country: &str) -> bool {
     let unrelated_parent = slots
         .iter()
         .any(|item| matches!(item.slot, Slot::Org | Slot::OrgGov | Slot::OrgAcronym));
-    if unit && unrelated_parent {
+    if unit && unrelated_parent && !(split == Split::Train && paired_unit_template(&slots)) {
         return false;
     }
     let other_than_registry = slots
         .iter()
         .any(|item| item.slot != Slot::OrgRegistry && item.slot.kind() == Some(Kind::Org));
     !(registry && other_than_registry)
+}
+
+fn hierarchy_enabled(cfg: &Config, gen_cfg: &GenerateConfig) -> bool {
+    gen_cfg.source_backed_hierarchy || cfg.name == "detector-us-v3"
 }
 
 /// Generates the detector corpus described by the config's `[generate]` section, or with
@@ -1662,6 +1723,7 @@ pub fn run(config_path: &Path, sample: Option<usize>, family: Option<&str>) -> a
         .generate
         .as_ref()
         .with_context(|| format!("{} has no [generate] section", config_path.display()))?;
+    let hierarchy_enabled = hierarchy_enabled(&cfg, gen_cfg);
     let names = cfg
         .names
         .as_ref()
@@ -1681,8 +1743,17 @@ pub fn run(config_path: &Path, sample: Option<usize>, family: Option<&str>) -> a
         &countries,
         &exclusions,
         &silver.surfaces,
+        hierarchy_enabled,
     )?;
-    let all = templates::all()?;
+    let mut all = templates::all()?;
+    if !hierarchy_enabled {
+        all.retain(|template| {
+            !template
+                .slots()
+                .map(|slots| paired_unit_template(&slots))
+                .unwrap_or(false)
+        });
+    }
     let mut rng = ChaCha8Rng::seed_from_u64(cfg.seed);
 
     if let Some(n) = sample {
@@ -1704,7 +1775,7 @@ pub fn run(config_path: &Path, sample: Option<usize>, family: Option<&str>) -> a
                 let country = *countries.choose(&mut rng).context("no countries")?;
                 let fitting: Vec<&&Template> = chosen
                     .iter()
-                    .filter(|t| supported_template(t, country))
+                    .filter(|t| supported_template(t, country, Split::Train))
                     .collect();
                 let Some(template) = fitting.choose(&mut rng) else {
                     continue;
@@ -1728,12 +1799,15 @@ pub fn run(config_path: &Path, sample: Option<usize>, family: Option<&str>) -> a
     }
 
     let (rows, dropped) = generate(
-        gen_cfg,
-        &countries,
-        &pools,
-        &all,
-        &exclusions,
-        &silver.surfaces,
+        GenerateInputs {
+            cfg: gen_cfg,
+            countries: &countries,
+            pools: &pools,
+            templates: &all,
+            exclusions: &exclusions,
+            silver: &silver.surfaces,
+            strict_split: hierarchy_enabled,
+        },
         &mut rng,
     )?;
     for row in &rows {
@@ -1748,16 +1822,16 @@ pub fn run(config_path: &Path, sample: Option<usize>, family: Option<&str>) -> a
         let subset: Vec<&Row> = rows.iter().filter(|r| r.split == split).collect();
         write_split(&out.join(format!("{}.parquet", split.name())), &subset)?;
     }
-    write_manifest(
-        &cfg,
+    write_manifest(ManifestInputs {
+        cfg: &cfg,
         gen_cfg,
-        &rows,
-        &dropped,
-        &pools,
-        &all,
-        &exclusions,
-        &silver,
-    )?;
+        rows: &rows,
+        dropped: &dropped,
+        pools: &pools,
+        templates: &all,
+        exclusions: &exclusions,
+        silver: &silver,
+    })?;
     print_summary(&rows, &dropped);
     Ok(())
 }
@@ -1859,21 +1933,43 @@ fn choose_template<'t>(
 
 type Dropped = BTreeMap<&'static str, usize>;
 
+struct GenerateInputs<'a> {
+    cfg: &'a GenerateConfig,
+    countries: &'a [&'static str],
+    pools: &'a HashMap<(Split, &'static str), Pools>,
+    templates: &'a [Template],
+    exclusions: &'a GoldExclusions,
+    silver: &'a GoldExclusions,
+    strict_split: bool,
+}
+
 /// Renders every planned document; a document that fails a post-render check is counted
 /// and replaced by a fresh draw, so the split sizes are exact.
 fn generate(
-    cfg: &GenerateConfig,
-    countries: &[&'static str],
-    pools: &HashMap<(Split, &'static str), Pools>,
-    all: &[Template],
-    exclusions: &GoldExclusions,
-    silver: &GoldExclusions,
+    inputs: GenerateInputs<'_>,
     rng: &mut ChaCha8Rng,
 ) -> anyhow::Result<(Vec<Row>, Dropped)> {
+    let GenerateInputs {
+        cfg,
+        countries,
+        pools,
+        templates: all,
+        exclusions,
+        silver,
+        strict_split,
+    } = inputs;
     let mut rows = Vec::new();
     let mut dropped = Dropped::new();
     let mut seen_text = HashSet::new();
+    let mut earlier_split = GoldExclusions::default();
+    let mut current_split = GoldExclusions::default();
+    let mut active_split = Split::Train;
     for (split, subset, count) in plan(cfg) {
+        if strict_split && split != active_split {
+            earlier_split.merge_model(&mut current_split);
+            earlier_split.expand_public_body_aliases()?;
+            active_split = split;
+        }
         let pool = eligible(all, subset);
         for _ in 0..count {
             let mut attempts = 0;
@@ -1886,7 +1982,7 @@ fn generate(
                 let fitting: Vec<&Template> = pool
                     .iter()
                     .copied()
-                    .filter(|t| supported_template(t, country))
+                    .filter(|t| supported_template(t, country, split))
                     .collect();
                 let template = choose_template(&fitting, subset, rng)?;
                 let mut ctx = Ctx::new(country, &pools[&(split, country)]);
@@ -1898,7 +1994,21 @@ fn generate(
                     Ok(()) if split != Split::Train && silver.check(&doc).is_err() => {
                         *dropped.entry(Drop::SilverOverlap.name()).or_default() += 1;
                     }
-                    Ok(()) if seen_text.insert(doc.text.clone()) => break doc,
+                    Ok(())
+                        if strict_split
+                            && split != Split::Train
+                            && earlier_split.check(&doc).is_err() =>
+                    {
+                        *dropped
+                            .entry(Drop::SyntheticSplitOverlap.name())
+                            .or_default() += 1;
+                    }
+                    Ok(()) if seen_text.insert(doc.text.clone()) => {
+                        if strict_split {
+                            current_split.add_model_doc(&doc)?;
+                        }
+                        break doc;
+                    }
                     Ok(()) => *dropped.entry(Drop::Duplicate.name()).or_default() += 1,
                     Err(d) => *dropped.entry(d.name()).or_default() += 1,
                 }
@@ -1921,6 +2031,7 @@ fn load_pools(
     countries: &[&'static str],
     exclusions: &GoldExclusions,
     silver: &GoldExclusions,
+    strict_split: bool,
 ) -> anyhow::Result<HashMap<(Split, &'static str), Pools>> {
     let reserved_listed = crate::bodies::reserved_listed_surfaces()?;
     let mut pools: HashMap<(Split, &'static str), Pools> = HashMap::new();
@@ -2011,13 +2122,25 @@ fn load_pools(
             });
         }
     }
+    let mut earlier_addresses = HashSet::new();
+    let mut current_addresses = HashSet::new();
     for split in Split::ALL {
+        if strict_split && split != Split::Train {
+            earlier_addresses.extend(current_addresses.drain());
+        }
         let path = addresses.join(format!("{}.parquet", split.name()));
         for e in read_shard(&path, split)? {
             if e.augmented || pool_filter::hydrant(&e.text) {
                 continue;
             }
             if !pool_filter::postal(&e) {
+                continue;
+            }
+            let physical = strict_split.then(|| physical_address_key(&e)).flatten();
+            if physical
+                .as_ref()
+                .is_some_and(|key| earlier_addresses.contains(key))
+            {
                 continue;
             }
             let address = PoolAddress::from_example(&e);
@@ -2053,10 +2176,62 @@ fn load_pools(
                     }
                 }
                 p.addresses.push(address);
+                if let Some(key) = physical {
+                    current_addresses.insert(key);
+                }
             }
         }
     }
     Ok(pools)
+}
+
+fn physical_address_key(e: &LabelledExample) -> Option<(String, String, String)> {
+    if e.country != "US" {
+        return None;
+    }
+    let component = |label| {
+        e.spans
+            .iter()
+            .find(|span| span.label == label)
+            .and_then(|span| e.text.get(span.start as usize..span.end as usize))
+    };
+    let postcode: String = component(AddressLabel::Postcode)?.chars().take(5).collect();
+    if postcode.len() != 5 || !postcode.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    let house = component(AddressLabel::HouseNumber)?
+        .trim()
+        .trim_end_matches(|ch: char| ch.is_ascii_alphabetic())
+        .to_ascii_lowercase();
+    if house.is_empty() {
+        return None;
+    }
+    let road = component(AddressLabel::Road)?
+        .split(|ch: char| !ch.is_alphanumeric())
+        .filter(|part| !part.is_empty())
+        .find(|part| {
+            !matches!(
+                part.to_ascii_lowercase().as_str(),
+                "n" | "s"
+                    | "e"
+                    | "w"
+                    | "ne"
+                    | "nw"
+                    | "se"
+                    | "sw"
+                    | "north"
+                    | "south"
+                    | "east"
+                    | "west"
+                    | "wst"
+                    | "northeast"
+                    | "northwest"
+                    | "southeast"
+                    | "southwest"
+            )
+        })?
+        .to_ascii_lowercase();
+    Some((postcode, house, road))
 }
 
 fn pool_mut<'p>(
@@ -2146,16 +2321,29 @@ fn write_split(path: &Path, rows: &[&Row]) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn write_manifest(
-    cfg: &Config,
-    gen_cfg: &GenerateConfig,
-    rows: &[Row],
-    dropped: &Dropped,
-    pools: &HashMap<(Split, &'static str), Pools>,
-    all: &[Template],
-    exclusions: &GoldExclusions,
-    silver: &SilverExclusions,
-) -> anyhow::Result<()> {
+struct ManifestInputs<'a> {
+    cfg: &'a Config,
+    gen_cfg: &'a GenerateConfig,
+    rows: &'a [Row],
+    dropped: &'a Dropped,
+    pools: &'a HashMap<(Split, &'static str), Pools>,
+    templates: &'a [Template],
+    exclusions: &'a GoldExclusions,
+    silver: &'a SilverExclusions,
+}
+
+fn write_manifest(inputs: ManifestInputs<'_>) -> anyhow::Result<()> {
+    let ManifestInputs {
+        cfg,
+        gen_cfg,
+        rows,
+        dropped,
+        pools,
+        templates: all,
+        exclusions,
+        silver,
+    } = inputs;
+    let hierarchy_enabled = hierarchy_enabled(cfg, gen_cfg);
     let count_by = |f: &dyn Fn(&Row) -> String| -> BTreeMap<String, BTreeMap<&'static str, usize>> {
         let mut out: BTreeMap<String, BTreeMap<&'static str, usize>> = BTreeMap::new();
         for r in rows {
@@ -2202,10 +2390,44 @@ fn write_manifest(
             format!("{:x}", Sha256::digest(std::fs::read(&path)?)),
         );
     }
-    let manifest = serde_json::json!({
+    let hierarchy_template_ids: HashSet<u32> = all
+        .iter()
+        .filter_map(|template| {
+            template
+                .slots()
+                .ok()
+                .filter(|slots| paired_unit_template(slots))
+                .map(|_| template.id)
+        })
+        .collect();
+    let hierarchy_train_rows = rows
+        .iter()
+        .filter(|row| {
+            row.split == Split::Train && hierarchy_template_ids.contains(&row.doc.template_id)
+        })
+        .count();
+    if hierarchy_enabled {
+        anyhow::ensure!(
+            hierarchy_train_rows > 0,
+            "no source-backed hierarchy training rows"
+        );
+    }
+    anyhow::ensure!(
+        rows.iter().all(|row| {
+            row.split == Split::Train || !hierarchy_template_ids.contains(&row.doc.template_id)
+        }),
+        "source-backed hierarchy names entered synthetic validation or test"
+    );
+    let mut hierarchy_template_ids: Vec<u32> = hierarchy_template_ids.into_iter().collect();
+    hierarchy_template_ids.sort_unstable();
+    let mut manifest = serde_json::json!({
         "source": "tessera-generator",
-        "version": 2,
-        "template_policy": "exclude_unverified_us_unit_parent_v1",
+        "version": if hierarchy_enabled { 3 } else { 2 },
+        "template_policy": if hierarchy_enabled {
+            "source_backed_us_unit_parent_v1"
+        } else {
+            "exclude_unverified_us_unit_parent_v1"
+        },
         "synthetic_parquet_sha256": synthetic_parquet_sha256,
         "seed": cfg.seed,
         "templates": all.len(),
@@ -2230,7 +2452,20 @@ fn write_manifest(
         "pools": pool_sizes,
         "phones_fixture_safe_ratio": safe as f64 / rows.len().max(1) as f64,
     });
+    if hierarchy_enabled {
+        manifest["hierarchy_roster"] =
+            serde_json::json!("trainer/data/us-org-hierarchy-pairs.json");
+        manifest["hierarchy_roster_sha256"] = serde_json::json!(format!(
+            "{:x}",
+            Sha256::digest(include_bytes!("../data/us-org-hierarchy-pairs.json"))
+        ));
+        manifest["hierarchy_roster_pairs"] = serde_json::json!(bodies::hierarchy_pairs()?.len());
+        manifest["hierarchy_template_ids"] = serde_json::json!(hierarchy_template_ids);
+        manifest["hierarchy_train_rows"] = serde_json::json!(hierarchy_train_rows);
+    }
     let path = Path::new(&cfg.data.manifests).join("detector-synthetic.json");
+    std::fs::create_dir_all(path.parent().context("generator manifest has no parent")?)
+        .with_context(|| format!("creating manifest directory for {}", path.display()))?;
     std::fs::write(&path, serde_json::to_string_pretty(&manifest)? + "\n")
         .with_context(|| format!("writing {}", path.display()))
 }
@@ -2569,7 +2804,10 @@ mod tests {
     #[test]
     fn public_body_templates_are_selected() {
         let all = templates::all().unwrap();
-        let supported: Vec<_> = all.iter().filter(|t| supported_template(t, "US")).collect();
+        let supported: Vec<_> = all
+            .iter()
+            .filter(|t| supported_template(t, "US", Split::Train))
+            .collect();
         assert!(!supported.is_empty());
         assert!(supported.iter().any(|template| template.id == 231));
         assert!(!supported.iter().any(|template| template.id == 230));
@@ -2590,28 +2828,55 @@ mod tests {
     }
 
     #[test]
-    fn synthetic_units_do_not_claim_unverified_parent_organizations() {
+    fn synthetic_units_only_use_reviewed_parent_pairs() {
         let all = templates::all().unwrap();
-        for id in [72, 77, 622] {
-            let template = all.iter().find(|template| template.id == id).unwrap();
-            assert!(!supported_template(template, "US"), "template {id}");
-        }
         let standalone = all.iter().find(|template| template.id == 621).unwrap();
-        assert!(supported_template(standalone, "US"));
-        for template in all
-            .iter()
-            .filter(|template| supported_template(template, "US"))
-        {
+        assert!(supported_template(standalone, "US", Split::Train));
+        let mut pair_templates = 0;
+        for template in all.iter().filter(|t| t.fits("US")) {
             let slots = template.slots().unwrap();
-            assert!(
-                !slots.iter().any(|item| item.slot == Slot::OrgUnit)
-                    || !slots.iter().any(|item| {
-                        matches!(item.slot, Slot::Org | Slot::OrgGov | Slot::OrgAcronym)
-                    }),
-                "template {} combines independent unit and parent draws",
-                template.id
-            );
+            let unit = slots.iter().any(|item| item.slot == Slot::OrgUnit);
+            let parent = slots
+                .iter()
+                .any(|item| matches!(item.slot, Slot::Org | Slot::OrgGov | Slot::OrgAcronym));
+            if unit && parent {
+                assert_eq!(
+                    supported_template(template, "US", Split::Train),
+                    paired_unit_template(&slots),
+                    "template {} combines independent unit and parent draws",
+                    template.id
+                );
+                assert!(!supported_template(template, "US", Split::Valid));
+                assert!(!supported_template(template, "US", Split::Test));
+                pair_templates += usize::from(paired_unit_template(&slots));
+            }
         }
+        assert!(pair_templates >= 3);
+    }
+
+    #[test]
+    fn reviewed_pair_renders_as_two_organization_spans() {
+        let all = templates::all().unwrap();
+        let template = all
+            .iter()
+            .find(|t| paired_unit_template(&t.slots().unwrap()))
+            .unwrap();
+        let pools = stub_pools(&[("Maya Johnson", "latin")]);
+        let mut ctx = Ctx::new("US", &pools);
+        ctx.plain = true;
+        let mut rng = ChaCha8Rng::seed_from_u64(19);
+        let doc = render(template, &mut ctx, &mut rng).unwrap();
+        let organizations: Vec<_> = doc
+            .entities
+            .iter()
+            .filter(|span| span.kind == "org")
+            .map(|span| &doc.text[span.start..span.end])
+            .collect();
+        assert_eq!(organizations.len(), 2);
+        assert!(bodies::hierarchy_pairs().unwrap().iter().any(|pair| {
+            organizations.contains(&pair.child.as_str())
+                && organizations.contains(&pair.parent.as_str())
+        }));
     }
 
     #[test]
@@ -2636,9 +2901,9 @@ mod tests {
             for subset in [Subset::SeenTemplates, Subset::HeldoutFamilies] {
                 for category in Category::ALL {
                     assert!(
-                        eligible(&all, subset)
-                            .iter()
-                            .any(|t| t.category == category && supported_template(t, country)),
+                        eligible(&all, subset).iter().any(|t| {
+                            t.category == category && supported_template(t, country, Split::Train)
+                        }),
                         "{country} {} {}",
                         subset.name(),
                         category.name()
@@ -2648,7 +2913,7 @@ mod tests {
             assert!(
                 eligible(&all, Subset::HeldoutTemplates)
                     .iter()
-                    .any(|t| supported_template(t, country)),
+                    .any(|t| supported_template(t, country, Split::Test)),
                 "{country} heldout templates"
             );
         }
@@ -2664,7 +2929,7 @@ mod tests {
                 for (i, t) in all
                     .iter()
                     .enumerate()
-                    .filter(|(_, t)| supported_template(t, country))
+                    .filter(|(_, t)| supported_template(t, country, split))
                 {
                     let mut ctx = Ctx::new(country, &pools);
                     let mut rng = ChaCha8Rng::seed_from_u64(i as u64);
@@ -2746,17 +3011,21 @@ mod tests {
             test_heldout_families: 15,
             addresses: String::new(),
             exclude_gold: String::new(),
+            source_backed_hierarchy: false,
             max_tokens: 900,
         };
         let all = templates::all().unwrap();
         let mut rng = ChaCha8Rng::seed_from_u64(5);
         let (rows, _) = generate(
-            &cfg,
-            &["US"],
-            &pools,
-            &all,
-            &GoldExclusions::default(),
-            &GoldExclusions::default(),
+            GenerateInputs {
+                cfg: &cfg,
+                countries: &["US"],
+                pools: &pools,
+                templates: &all,
+                exclusions: &GoldExclusions::default(),
+                silver: &GoldExclusions::default(),
+                strict_split: true,
+            },
             &mut rng,
         )
         .unwrap();
@@ -2772,6 +3041,16 @@ mod tests {
         for r in rows.iter().filter(|r| r.split != Split::Train) {
             assert!(!r.doc.text.contains("Train Person"), "{}", r.doc.text);
         }
+        let mut earlier = GoldExclusions::default();
+        for split in Split::ALL {
+            let mut current = GoldExclusions::default();
+            for row in rows.iter().filter(|row| row.split == split) {
+                earlier.check(&row.doc).unwrap();
+                current.add_model_doc(&row.doc).unwrap();
+            }
+            earlier.merge_model(&mut current);
+            earlier.expand_public_body_aliases().unwrap();
+        }
         let test_only: Vec<u32> = all.iter().filter(|t| t.test_only()).map(|t| t.id).collect();
         for r in rows.iter().filter(|r| r.split != Split::Test) {
             assert!(
@@ -2780,6 +3059,64 @@ mod tests {
                 r.doc.template_id
             );
         }
+    }
+
+    #[test]
+    fn physical_key_matches_road_spelling_variants_but_keeps_house_numbers() {
+        fn example(house: &str, road: &str, postcode: &str) -> LabelledExample {
+            let text = format!("{house} {road}, Fruita, CO {postcode}");
+            let road_start = text.find(road).unwrap();
+            let postcode_start = text.rfind(postcode).unwrap();
+            LabelledExample {
+                id: 1,
+                group_id: 1,
+                country: "US".to_string(),
+                language: "en".to_string(),
+                text,
+                spans: vec![
+                    crate::data::Span {
+                        label: AddressLabel::HouseNumber,
+                        start: 0,
+                        end: house.len() as u32,
+                    },
+                    crate::data::Span {
+                        label: AddressLabel::Road,
+                        start: road_start as u32,
+                        end: (road_start + road.len()) as u32,
+                    },
+                    crate::data::Span {
+                        label: AddressLabel::Postcode,
+                        start: postcode_start as u32,
+                        end: (postcode_start + postcode.len()) as u32,
+                    },
+                ],
+                split: Split::Train,
+                augmented: false,
+            }
+        }
+        let original = example("400", "Jurassic Avnu", "81521");
+        let alias = example("400", "Jurassic Avnue", "81521");
+        let different = example("401", "Jurassic Avnu", "81521");
+        assert_eq!(
+            physical_address_key(&original),
+            physical_address_key(&alias)
+        );
+        assert_ne!(
+            physical_address_key(&original),
+            physical_address_key(&different)
+        );
+        assert_ne!(
+            physical_address_key(&example("60-23", "Cooper Avenue", "11385")),
+            physical_address_key(&example("68-23", "Cooper Avenue", "11385"))
+        );
+        assert_eq!(
+            physical_address_key(&example("211", "Wst Oak Str", "40203")),
+            physical_address_key(&example("211", "West Oak Street", "40203"))
+        );
+        assert_eq!(
+            physical_address_key(&example("3715", "NE 9th Avenue", "97212")),
+            physical_address_key(&example("3715", "Northeast 9th Avenue", "97212"))
+        );
     }
 
     #[test]
