@@ -1,0 +1,62 @@
+name = "detector-us-v5"
+task = "detector"
+seed = 42
+
+[data]
+countries = ["US"]
+train_per_country = 30000
+valid_per_country = 3000
+test_per_country = 3000
+manifests = "data/manifests/v5"
+processed = "data/processed/detector-us-v5"
+
+[features]
+ngram_sizes = [2, 3, 4]
+hash_buckets = 32768
+hash_seed = 0
+ngram_dim = 48
+shape_dim = 16
+
+[net]
+hidden = 96
+kernel = 3
+dilations = [1, 2, 4, 8, 16, 1]
+dropout = 0.1
+max_params = 1000000
+ngram_from = "runs/parser-us-v1"
+
+[train]
+epochs = 3
+batch_size = 32
+learning_rate = 0.0001
+gradient_clip_norm = 1.0
+warmup_steps = 64
+patience = 2
+
+[detector]
+class_weights = [1.0, 3.0, 2.0, 3.0, 2.0, 2.0, 1.5]
+silver = ["data/interim/silver/us-reviewed-strict-safe-v1.jsonl", "data/interim/silver/us-house-staff-v1.jsonl", "data/interim/silver/us-house-district-offices-v1.jsonl", "data/interim/silver/us-reviewed-contact-snippets-safe-v1.jsonl", "data/interim/silver/us-reviewed-org-paragraphs-strict-v1.jsonl", "data/interim/silver/us-r23-reviewed-org-safe-v1.jsonl", "data/interim/silver/us-federal-org-reviewed-safe-v2.jsonl", "data/interim/silver/us-2025-year-contacts-v2.jsonl", "data/interim/silver/us-2025-year-acronym-prose-v3.jsonl", "data/interim/silver/us-2025-year-contact-expansion-safe-v1.jsonl", "data/interim/silver/us-2025-targeted-contacts-v1.jsonl", "data/interim/silver/us-r25-reviewed-contacts-v1.jsonl", "data/interim/silver/us-official-reviewed-contacts-v1.jsonl", "data/interim/silver/us-military-reviewed-addresses-v1.jsonl", "data/interim/silver/us-nrcs-reviewed-field-offices-v1.jsonl", "data/interim/silver/us-dol-whd-reviewed-offices-v1.jsonl", "data/interim/silver/us-dol-whd-reviewed-remaining-v1.jsonl", "data/interim/silver/us-environmental-hard-negatives-v1.jsonl", "data/interim/silver/us-v4-reviewed-additions-strict-v2.jsonl", "data/interim/silver/us-v4-reviewed-long-additions-v1.jsonl", "data/interim/silver/us-v4-reviewed-historical-long-v1.jsonl", "data/interim/silver/us-v4-reviewed-historical-acronyms-strict-v1.jsonl", "data/interim/silver/us-v5-reviewed-long-org-prose-strict-v1.jsonl", "data/interim/silver/us-reviewed-extra-long-org-prose-strict-v1.jsonl", "data/interim/silver/us-reviewed-two-paragraph-org-prose-strict-v1.jsonl", "data/interim/silver/us-govman-reviewed-org-prose-v2.jsonl", "data/interim/silver/us-address-prefix-reviewed-v1.jsonl", "data/interim/silver/us-official-mail-code-reviewed-v1.jsonl", "data/interim/silver/us-person-long-reviewed-v2.jsonl", "data/interim/silver/us-person-long-reviewed-v3.jsonl", "data/interim/silver/us-address-long-reviewed-v1.jsonl", "data/interim/silver/us-person-keltner-policy-reviewed-v1.jsonl", "data/interim/silver/us-address-long-reviewed-v2.jsonl", "data/interim/silver/us-long-prose-reviewed-v1.jsonl"]
+silver_repeat = 1
+silver_repeats = [8, 1, 1, 2, 8, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 8, 8, 2, 8, 32, 32, 2, 2, 2, 32, 32, 32, 32, 32, 32]
+synthetic_per_epoch = 3000
+
+[names]
+countries = ["US"]
+people_per_country = 20000
+orgs_per_country = 20000
+raw = "data/raw"
+interim = "data/interim"
+out = "data/processed/names-us-v1"
+sample_seed = 42
+birth_years = [1930, 2005]
+
+[generate]
+train = 170000
+valid = 10000
+test_seen = 10000
+test_heldout_templates = 5000
+test_heldout_families = 5000
+addresses = "data/processed/parser-us-v1"
+exclude_gold = "data/interim/review/us-eval-exclusions-v5.jsonl"
+source_backed_hierarchy = true
+max_tokens = 900

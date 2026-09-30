@@ -1,0 +1,206 @@
+{
+  "source": "tessera-generator",
+  "version": 3,
+  "template_policy": "source_backed_us_unit_parent_v1",
+  "synthetic_parquet_sha256": {
+    "test": "d6d4792558b2d76396d395781d7b3b7361e6912f9acf77735f698237bb5db36f",
+    "train": "8054c7d079133dbdff517932f5174483fc3dccf244ba0ec21303985963f88ed6",
+    "valid": "9350e59906e3fc1c0daf23add12faa1067df8ae2b0e066c9e9a711db02fdacbe"
+  },
+  "seed": 42,
+  "templates": 218,
+  "max_tokens": 900,
+  "names": "data/processed/names-us-v1",
+  "addresses": "data/processed/parser-us-v1",
+  "public_bodies": "trainer/data/us-public-bodies.json",
+  "public_bodies_sha256": "d2b8fa0aba85725160c043533c3d15a2fa2d09ab4bd597def762d24676697650",
+  "exclude_gold": "data/interim/review/us-eval-exclusions-v5.jsonl",
+  "exclude_gold_sha256": "788fba979eff4362b74c503a61307001af07a1141fe6d4dabcfe73050e806c14",
+  "real_silver_sha256": {
+    "data/interim/silver/us-2025-targeted-contacts-v1.jsonl": "beb19310037eb451056ae06d13808aaa1d9c7ea42475deda0e97768c48f31d20",
+    "data/interim/silver/us-2025-year-acronym-prose-v3.jsonl": "1f9fcafd846e860a3dca5dc99909b2b18f826a323cacfc59cb5114774639d314",
+    "data/interim/silver/us-2025-year-contact-expansion-safe-v1.jsonl": "af05670dcb9ef46ef400fc9dfdf85baa784498a648a59ceb06d174b7e0e503f5",
+    "data/interim/silver/us-2025-year-contacts-v2.jsonl": "723279c97aadd1d4a006d8eb198ac07efe584d7f8e72b0ac5e88b47e36f31e32",
+    "data/interim/silver/us-address-long-reviewed-v1.jsonl": "07a2ec0b0bd63ec4c0a71e6912b229b770d775fb96aa86ccd07941b250e94178",
+    "data/interim/silver/us-address-long-reviewed-v2.jsonl": "a58ae2e2971fad1ad27c0bd66166424a5291bfcc68b7c6612d4e8837c84e9c17",
+    "data/interim/silver/us-address-prefix-reviewed-v1.jsonl": "6c934f54815069e1f74582d0f92291e6aacf81f1de48750b76d44e49cca0630a",
+    "data/interim/silver/us-dol-whd-reviewed-offices-v1.jsonl": "b6f2234e2a39a13a780a26555d4181056d21ff0f8d12303c53d560f2e8900987",
+    "data/interim/silver/us-dol-whd-reviewed-remaining-v1.jsonl": "fd0c16a6429146b2a181a77d0d2151432cf34c31b2013673bf542250e2742dd4",
+    "data/interim/silver/us-environmental-hard-negatives-v1.jsonl": "3f8ac411334e189a101cc8b73af3b34922a6f1725ee1247aaa292053f4c7aca6",
+    "data/interim/silver/us-federal-org-reviewed-safe-v2.jsonl": "1164eca28305937009e06175a3444666cfc16d55e8d9448ab27e2d272d2e596f",
+    "data/interim/silver/us-govman-reviewed-org-prose-v2.jsonl": "3753630d6864a77dde71d4750d897a5f3d845849061def0831c215e12e91556e",
+    "data/interim/silver/us-house-district-offices-v1.jsonl": "0408b19e0d367558b135d39ba928085e6eccb6883035d6c1803b6684cf6e5786",
+    "data/interim/silver/us-house-staff-v1.jsonl": "5dfd28cdb3924d1c9a6afba9d1161dd99af52dc80b9ddc304377df3197dd2a5a",
+    "data/interim/silver/us-long-prose-reviewed-v1.jsonl": "37df8a55f79ad0b65b5dde418780051ed4bfdc2b6c4bded830e4b881668543a4",
+    "data/interim/silver/us-military-reviewed-addresses-v1.jsonl": "5806d9a52f1ed835dded829dcd584e04d06189ad9260b8959fb09665bceb38ea",
+    "data/interim/silver/us-nrcs-reviewed-field-offices-v1.jsonl": "aa882cb1813ba8227c24490ae01d7236cada1f34ab1bd6e235e29ecc49180353",
+    "data/interim/silver/us-official-mail-code-reviewed-v1.jsonl": "fe7973a64bbe93c301061ac686f1ab3a646b253eb712cb74c05c5fd595ecbe20",
+    "data/interim/silver/us-official-reviewed-contacts-v1.jsonl": "c9739f6cef920620f81585985d176e9f40ed5dee5c0b8a7ab2b1e9bcd3621c92",
+    "data/interim/silver/us-person-keltner-policy-reviewed-v1.jsonl": "57f3ba82d285de580897b066082e390e0f22dc0299b76d1e4b670e7e5c1956cc",
+    "data/interim/silver/us-person-long-reviewed-v2.jsonl": "3ebf6e71cae89c8c8d74b39c3428c7b358745827f1839a6019bc9eea7edd9769",
+    "data/interim/silver/us-person-long-reviewed-v3.jsonl": "108ac25b2b479a6ae7ce36d7b6c0b8e978b2db2c1d6dd9fb326bda03599f0418",
+    "data/interim/silver/us-r23-reviewed-org-safe-v1.jsonl": "06b1b2aa4e2a41153ae843e14a8f0f47957982011e3554f64ec6bf4ce56ae09f",
+    "data/interim/silver/us-r25-reviewed-contacts-v1.jsonl": "84c2620a25e4e409553ce5fc285927af02ec1d226f76143528c7b1a75a5514e2",
+    "data/interim/silver/us-reviewed-contact-snippets-safe-v1.jsonl": "115c2109450960afd1b97bad7737436e5efb8ed3af12ef0b526a51c2c4589d07",
+    "data/interim/silver/us-reviewed-extra-long-org-prose-strict-v1.jsonl": "ae752ff3c2c6d106f6b2f461afd02425fae3e6c240280c9c7cf1eab68b168d96",
+    "data/interim/silver/us-reviewed-org-paragraphs-strict-v1.jsonl": "336337dffca7ad991a675407e3c3dec2cb51ff13b2221b9f7d3c00047368fce6",
+    "data/interim/silver/us-reviewed-strict-safe-v1.jsonl": "81a64d0a48adfb5748051738df07e6c3afa73aa1cb0f6bb26ff346eda2c805d1",
+    "data/interim/silver/us-reviewed-two-paragraph-org-prose-strict-v1.jsonl": "efd489aceda5a91066d8b46cd30bc9339c581610f31b4bf4cc6f1198314c5030",
+    "data/interim/silver/us-v4-reviewed-additions-strict-v2.jsonl": "83b966374999e1649099d90b737d3fcd4e14ed11a2b8d5de100f4e1b53dd6c5c",
+    "data/interim/silver/us-v4-reviewed-historical-acronyms-strict-v1.jsonl": "72fb9fd53556f59955c1cba0fd88fa628b3301a0bd6a116005de057ad8c7f43d",
+    "data/interim/silver/us-v4-reviewed-historical-long-v1.jsonl": "d04d8473f5502232b6ef65a31b1ccaf9f2f1fa17195f99fd35e9cb92d5fdc3a5",
+    "data/interim/silver/us-v4-reviewed-long-additions-v1.jsonl": "cac69189c043997fa8507c0cb808400572b4cb1a4d5d9743ba5570c42a00b2ed",
+    "data/interim/silver/us-v5-reviewed-long-org-prose-strict-v1.jsonl": "3b1459b3432087a19676641289fa273f291b7865fb1eb811cc1061b8a15656b9"
+  },
+  "use": "detector training data only: documents contain real Wikidata, GLEIF, and USAGov names and never enter versioned fixtures",
+  "counts": {
+    "split": {
+      "test": {
+        "test": 20000
+      },
+      "train": {
+        "train": 170000
+      },
+      "valid": {
+        "valid": 10000
+      }
+    },
+    "subset": {
+      "heldout_families": {
+        "test": 5000
+      },
+      "heldout_templates": {
+        "test": 5000
+      },
+      "seen_templates": {
+        "test": 10000,
+        "train": 170000,
+        "valid": 10000
+      }
+    },
+    "family": {
+      "email_body": {
+        "test": 1588,
+        "train": 14253,
+        "valid": 760
+      },
+      "invoice": {
+        "test": 1441,
+        "train": 11332,
+        "valid": 781
+      },
+      "letterhead": {
+        "test": 1698,
+        "train": 18365,
+        "valid": 1023
+      },
+      "markdown": {
+        "test": 5000
+      },
+      "prose": {
+        "test": 4029,
+        "train": 60571,
+        "valid": 3243
+      },
+      "signature": {
+        "test": 1990,
+        "train": 19224,
+        "valid": 1218
+      },
+      "support": {
+        "test": 1255,
+        "train": 12681,
+        "valid": 862
+      },
+      "table": {
+        "test": 2771,
+        "train": 30629,
+        "valid": 1963
+      },
+      "technical": {
+        "test": 228,
+        "train": 2945,
+        "valid": 150
+      }
+    },
+    "category": {
+      "both": {
+        "test": 11172,
+        "train": 85107,
+        "valid": 4648
+      },
+      "no_address_with_person": {
+        "test": 3130,
+        "train": 28610,
+        "valid": 1470
+      },
+      "no_person_with_address": {
+        "test": 2551,
+        "train": 28207,
+        "valid": 1837
+      },
+      "nothing": {
+        "test": 3147,
+        "train": 28076,
+        "valid": 2045
+      }
+    },
+    "country": {
+      "US": {
+        "test": 20000,
+        "train": 170000,
+        "valid": 10000
+      }
+    }
+  },
+  "train_category_share": {
+    "both": 0.5006294117647059,
+    "no_address_with_person": 0.16829411764705882,
+    "no_person_with_address": 0.16592352941176472,
+    "nothing": 0.16515294117647059
+  },
+  "dropped": {
+    "duplicate": 290,
+    "evaluation_overlap": 473,
+    "silver_overlap": 3170,
+    "synthetic_split_overlap": 7205
+  },
+  "pools": {
+    "US/test": {
+      "people": 998,
+      "orgs": 940,
+      "borrowed_orgs": 0,
+      "addresses": 2383,
+      "multiline_addresses": 2067,
+      "complete_multiline_addresses": 1061
+    },
+    "US/train": {
+      "people": 17961,
+      "orgs": 16989,
+      "borrowed_orgs": 0,
+      "addresses": 23912,
+      "multiline_addresses": 20588,
+      "complete_multiline_addresses": 10465
+    },
+    "US/valid": {
+      "people": 1018,
+      "orgs": 929,
+      "borrowed_orgs": 0,
+      "addresses": 2395,
+      "multiline_addresses": 2077,
+      "complete_multiline_addresses": 1073
+    }
+  },
+  "phones_fixture_safe_ratio": 1.0,
+  "hierarchy_roster": "trainer/data/us-org-hierarchy-pairs.json",
+  "hierarchy_roster_sha256": "f87502cf92f3530a20d64d5dae535cf8f3965b1eb583bf9e5c76b6c2c619a378",
+  "hierarchy_roster_pairs": 45,
+  "hierarchy_template_ids": [
+    20,
+    72,
+    75,
+    320,
+    329
+  ],
+  "hierarchy_train_rows": 3093
+}
