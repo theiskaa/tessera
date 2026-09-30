@@ -700,6 +700,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires the locally prepared US training corpus"]
     fn export_rejects_old_or_mistagged_training_snapshots() {
         for task in [Task::Parser, Task::Detector] {
             let old = gated_run(task);
@@ -744,6 +745,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires the locally prepared US training corpus"]
     fn both_networks_require_current_artifact_hashes() {
         for task in [Task::Parser, Task::Detector] {
             let dir = gated_run(task);
@@ -770,6 +772,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires the locally prepared US training corpus"]
     fn export_rechecks_training_file_bytes_after_quantization() {
         let dir = gated_run(Task::Detector);
         load_run(dir.path(), Task::Detector).unwrap();
@@ -801,6 +804,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires the locally prepared US training corpus"]
     fn export_rejects_runs_without_training_input_snapshots() {
         let parser = gated_run(Task::Parser);
         let detector = gated_run(Task::Detector);

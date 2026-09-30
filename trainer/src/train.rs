@@ -1536,6 +1536,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "requires the locally prepared US training corpus"]
     fn pinned_real_development_set_is_source_backed_and_encodable() {
         let cfg = crate::config::load(&repo_path("configs/detector-shared.toml")).unwrap();
         verify_real_development_gold(&cfg).unwrap();
@@ -1552,6 +1553,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires the locally prepared US training corpus"]
     fn v4_training_uses_corrected_development_gold_and_exclusions() {
         let cfg = crate::config::load(&repo_path("configs/detector-shared-v4.toml")).unwrap();
         verify_real_development_gold(&cfg).unwrap();
@@ -1576,6 +1578,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires the locally prepared US training corpus"]
     fn v5_training_pins_all_exclusions_and_corrected_development_gold() {
         let cfg = crate::config::load(&repo_path("configs/detector-shared-v5.toml")).unwrap();
         verify_real_development_gold(&cfg).unwrap();
@@ -1641,6 +1644,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires the locally prepared US training corpus"]
     fn v5_generation_manifest_rejects_altered_shards_and_silver_hashes() {
         let dir = tempfile::tempdir().unwrap();
         let mut cfg = crate::config::load(&repo_path("configs/detector-shared-v5.toml")).unwrap();
@@ -1818,6 +1822,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires the locally prepared US training corpus"]
     fn detector_requires_current_parser_source_snapshot_before_run_setup() {
         let dir = tempfile::tempdir().unwrap();
         let parser_run = dir.path().join("parser");
