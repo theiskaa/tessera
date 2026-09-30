@@ -141,6 +141,20 @@ pub fn run(args: EvalArgs) -> anyhow::Result<()> {
         };
     }
     if args.gold.is_some() {
+        if let Some(run) = &args.run {
+            return match args.backend {
+                crate::train::BackendKind::Wgpu => crate::detect_eval::run_gold_model::<
+                    burn::backend::Wgpu,
+                >(
+                    &args, run, &Default::default()
+                ),
+                crate::train::BackendKind::Ndarray => crate::detect_eval::run_gold_model::<
+                    burn::backend::NdArray,
+                >(
+                    &args, run, &Default::default()
+                ),
+            };
+        }
         return crate::detect_eval::run_gold(&args);
     }
     if let Some(run) = &args.run

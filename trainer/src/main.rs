@@ -91,6 +91,11 @@ enum Command {
         #[arg(long)]
         config: PathBuf,
     },
+    /// Validate all prepared detector inputs without starting training.
+    CheckDetectorData {
+        #[arg(long)]
+        config: PathBuf,
+    },
     /// Score a run, the deterministic baselines, or external predictions.
     Eval(Box<EvalArgs>),
     /// Time each pipeline stage natively on the profiling fixtures and append to the report.
@@ -151,8 +156,7 @@ struct EvalArgs {
     /// With `--run`: the backend to run the model on.
     #[arg(long, value_enum, default_value = "wgpu")]
     backend: train::BackendKind,
-    /// Score the shipped `detect` on reviewed documents in this JSONL file, one case per line,
-    /// with `--baseline` and each `--predictions` file beside it.
+    /// Score reviewed JSONL: the shipped detector by default, or a run's f32 model with --run.
     #[arg(long)]
     gold: Option<PathBuf>,
     /// With `--gold`: use the gold country as a phone hint or infer it from the document.
@@ -161,13 +165,13 @@ struct EvalArgs {
     /// With `--gold`: an external system's predictions by case name (repeatable).
     #[arg(long)]
     predictions: Vec<PathBuf>,
-    /// With `--gold`: save the shipped detector's spans for error analysis.
+    /// With `--gold`: save the selected detector's spans for error analysis.
     #[arg(long)]
     dump_predictions: Option<PathBuf>,
     /// The bundle `detect` loads for `--gold` and for a detector run's split.
     #[arg(long, default_value = "models/tessera-v1.safetensors")]
     bundle: PathBuf,
-    /// With `--gold`, a detector run, or `--grouper`: write the report as Markdown here.
+    /// With shipped `--gold`, a detector run's split, or `--grouper`: write Markdown here.
     #[arg(long)]
     report: Option<PathBuf>,
     /// Score the contact grouper on the fixtures in this directory, on gold entities and end
@@ -211,6 +215,7 @@ fn main() -> anyhow::Result<()> {
             backend,
         }),
         Command::CheckSilver { config } => train::check_silver(&config),
+        Command::CheckDetectorData { config } => train::check_detector_data(&config),
         Command::Eval(args) => eval::run(*args),
         Command::Bench {
             model,

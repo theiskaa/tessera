@@ -121,7 +121,8 @@ fn train<B: AutodiffBackend>(args: &TrainArgs<'_>, device: &B::Device) -> anyhow
     validate_ngram_source(&cfg)?;
     validate_training_scope(&cfg)?;
     if matches!(cfg.task, crate::config::Task::Detector) {
-        verify_real_development_gold()?;
+        verify_real_development_gold(&cfg)?;
+        verify_generation_manifest(&cfg)?;
     }
     let run_dir = PathBuf::from("runs").join(&cfg.name);
     initialize_run(&run_dir, &cfg)?;
@@ -171,6 +172,24 @@ const REAL_DEV_GOLD_SHA256: &str =
 const REAL_DEV_MANIFEST: &str = "data/interim/review/us-development-gold-v2.manifest.json";
 const REAL_DEV_ERRATA: &str = "bench/us/fixtures/us-development-gold-errata-v2.json";
 const REAL_DEV_EXCLUSIONS: &str = "data/interim/review/us-eval-exclusions-v1.jsonl";
+const REAL_DEV_GOLD_V3: &str = "data/interim/review/us-development-gold-v3.jsonl";
+const REAL_DEV_GOLD_V3_SHA256: &str =
+    "65006863254b6e3b5520b5063e4e08153e7ecd269c05155203b3de10b0833c74";
+const REAL_DEV_MANIFEST_V3: &str = "data/interim/review/us-development-gold-v3.manifest.json";
+const REAL_DEV_ERRATA_V3: &str = "bench/us/fixtures/us-development-gold-errata-v3.json";
+const REAL_DEV_EXCLUSIONS_V4: &str = "data/interim/review/us-eval-exclusions-v4.jsonl";
+const REAL_DEV_EXCLUSIONS_V5: &str = "data/interim/review/us-eval-exclusions-v5.jsonl";
+const REAL_DEV_EXCLUSIONS_V5_SHA256: &str =
+    "788fba979eff4362b74c503a61307001af07a1141fe6d4dabcfe73050e806c14";
+const REAL_DEV_EXCLUSIONS_V5_MANIFEST: &str =
+    "data/interim/review/us-eval-exclusions-v5.manifest.json";
+const REAL_DEV_EXCLUSIONS_V5_BUILDER: &str = "bench/us/build_us_next_eval_exclusions.py";
+const REVIEW_POLICY: &str = "internal/bench/review/GUIDELINES.md";
+const REAL_DEV_EXCLUSIONS_V5_SOURCES: [&str; 3] = [
+    REAL_DEV_EXCLUSIONS_V4,
+    "data/interim/review/us-long-org-eval-gold-v4.jsonl",
+    "data/interim/review/us-doe-org-overviews-strict-gold-v1.jsonl",
+];
 const REAL_DEV_SOURCES: [&str; 4] = [
     "data/interim/review/us-dev-v1.jsonl",
     "data/interim/review/us-office-eval-v1.jsonl",
@@ -195,7 +214,35 @@ struct RealDevManifest {
     sources_sha256: BTreeMap<String, String>,
 }
 
-fn verify_real_development_gold() -> anyhow::Result<()> {
+fn uses_v4_gold(cfg: &Config) -> bool {
+    cfg.name == "detector-us-v4"
+        || cfg.data.processed == "data/processed/detector-us-v4"
+        || cfg.data.manifests == "data/manifests/v4"
+        || cfg
+            .generate
+            .as_ref()
+            .is_some_and(|generate| generate.exclude_gold == REAL_DEV_EXCLUSIONS_V4)
+}
+
+fn uses_v5_gold(cfg: &Config) -> bool {
+    cfg.name == "detector-us-v5"
+        || cfg.data.processed == "data/processed/detector-us-v5"
+        || cfg.data.manifests == "data/manifests/v5"
+        || cfg
+            .generate
+            .as_ref()
+            .is_some_and(|generate| generate.exclude_gold == REAL_DEV_EXCLUSIONS_V5)
+}
+
+fn real_dev_gold(cfg: &Config) -> (&'static str, &'static str) {
+    if uses_v4_gold(cfg) || uses_v5_gold(cfg) {
+        (REAL_DEV_GOLD_V3, REAL_DEV_GOLD_V3_SHA256)
+    } else {
+        (REAL_DEV_GOLD, REAL_DEV_GOLD_SHA256)
+    }
+}
+
+fn verify_real_development_gold(cfg: &Config) -> anyhow::Result<()> {
     let manifest: RealDevManifest =
         serde_json::from_slice(&std::fs::read(repo_path(REAL_DEV_MANIFEST))?)?;
     anyhow::ensure!(
@@ -274,6 +321,157 @@ fn verify_real_development_gold() -> anyhow::Result<()> {
         count == manifest.cases,
         "real development case count changed"
     );
+    if uses_v4_gold(cfg) || uses_v5_gold(cfg) {
+        verify_v4_real_development_gold()?;
+    }
+    if uses_v5_gold(cfg) {
+        verify_v5_evaluation_exclusions()?;
+    }
+    Ok(())
+}
+
+fn verify_v4_real_development_gold() -> anyhow::Result<()> {
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(repo_path(REAL_DEV_MANIFEST_V3))?)?;
+    anyhow::ensure!(
+        manifest["kind"] == "us_development_gold_corrected_v3"
+            && manifest["cases"] == 196
+            && manifest["added_org_spans"] == 5
+            && manifest["sha256"] == REAL_DEV_GOLD_V3_SHA256
+            && manifest["base_sha256"] == REAL_DEV_GOLD_SHA256
+            && manifest["errata_sha256"] == hash_file(&repo_path(REAL_DEV_ERRATA_V3))?
+            && hash_file(&repo_path(REAL_DEV_GOLD_V3))? == REAL_DEV_GOLD_V3_SHA256,
+        "pinned V4 real development gold changed"
+    );
+    let exclusions = std::fs::read_to_string(repo_path(REAL_DEV_EXCLUSIONS_V4))?;
+    let excluded: BTreeMap<String, serde_json::Value> = exclusions
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| {
+            let row: serde_json::Value = serde_json::from_str(line)?;
+            let name = row["name"]
+                .as_str()
+                .context("V4 evaluation exclusion has no name")?
+                .to_string();
+            Ok((name, row))
+        })
+        .collect::<anyhow::Result<_>>()?;
+    anyhow::ensure!(excluded.len() == 343, "V4 evaluation exclusions changed");
+    let exclusion_manifest: serde_json::Value = serde_json::from_slice(&std::fs::read(
+        repo_path("data/interim/review/us-eval-exclusions-v4.manifest.json"),
+    )?)?;
+    anyhow::ensure!(
+        exclusion_manifest["kind"] == "us_v4_eval_exclusions_v1"
+            && exclusion_manifest["cases"] == 343
+            && exclusion_manifest["sha256"] == hash_file(&repo_path(REAL_DEV_EXCLUSIONS_V4))?
+            && exclusion_manifest["source_sha256"][REAL_DEV_GOLD_V3] == REAL_DEV_GOLD_V3_SHA256
+            && exclusion_manifest["source_sha256"]["data/interim/review/us-eval-exclusions-v3.jsonl"]
+                == hash_file(&repo_path(
+                    "data/interim/review/us-eval-exclusions-v3.jsonl"
+                ))?,
+        "V4 evaluation exclusion manifest changed"
+    );
+    let gold = std::fs::read_to_string(repo_path(REAL_DEV_GOLD_V3))?;
+    let mut count = 0;
+    for line in gold.lines().filter(|line| !line.trim().is_empty()) {
+        let row: serde_json::Value = serde_json::from_str(line)?;
+        let name = row["name"]
+            .as_str()
+            .context("V4 real development case has no name")?;
+        anyhow::ensure!(
+            excluded.get(name) == Some(&row),
+            "V4 real development case {name} differs from training exclusions"
+        );
+        count += 1;
+    }
+    anyhow::ensure!(count == 196, "V4 real development case count changed");
+    Ok(())
+}
+
+fn verify_v5_evaluation_exclusions() -> anyhow::Result<()> {
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(repo_path(REAL_DEV_EXCLUSIONS_V5_MANIFEST))?)?;
+    let bytes = std::fs::read(repo_path(REAL_DEV_EXCLUSIONS_V5))?;
+    anyhow::ensure!(
+        manifest["kind"] == "us_next_eval_exclusions_v5"
+            && manifest["cases"] == 371
+            && manifest["training_eligible"] == false
+            && manifest["sha256"] == REAL_DEV_EXCLUSIONS_V5_SHA256
+            && crate::export::sha256_hex(&bytes) == REAL_DEV_EXCLUSIONS_V5_SHA256,
+        "V5 evaluation exclusion manifest changed"
+    );
+    let mut combined = Vec::new();
+    let mut sources = BTreeMap::new();
+    let mut inputs = BTreeMap::new();
+    for (source, cases) in REAL_DEV_EXCLUSIONS_V5_SOURCES
+        .into_iter()
+        .zip([343, 15, 13])
+    {
+        let path = repo_path(source);
+        let source_bytes = std::fs::read(&path)?;
+        let hash = crate::export::sha256_hex(&source_bytes);
+        let source_manifest_path = path.with_extension("manifest.json");
+        let source_manifest: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&source_manifest_path)?)?;
+        anyhow::ensure!(
+            source_manifest["sha256"] == hash && source_manifest["cases"] == cases,
+            "V5 evaluation source manifest changed: {source}"
+        );
+        sources.insert(source.to_string(), hash);
+        inputs.insert(
+            Path::new(source)
+                .with_extension("manifest.json")
+                .to_string_lossy()
+                .into_owned(),
+            hash_file(&source_manifest_path)?,
+        );
+        combined.extend(source_bytes);
+    }
+    for source in [REAL_DEV_EXCLUSIONS_V5_BUILDER, REVIEW_POLICY] {
+        inputs.insert(source.to_string(), hash_file(&repo_path(source))?);
+    }
+    anyhow::ensure!(
+        bytes == combined
+            && manifest["source_sha256"] == serde_json::to_value(sources)?
+            && manifest["input_sha256"] == serde_json::to_value(inputs)?,
+        "V5 evaluation exclusions differ from their complete pinned sources"
+    );
+    let mut excluded = BTreeMap::new();
+    for line in std::str::from_utf8(&bytes)?
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+    {
+        let row: serde_json::Value = serde_json::from_str(line)?;
+        let name = row["name"]
+            .as_str()
+            .context("V5 evaluation case has no name")?
+            .to_string();
+        anyhow::ensure!(
+            row["country"] == "US",
+            "V5 evaluation case is not US: {name}"
+        );
+        anyhow::ensure!(
+            excluded.insert(name.clone(), row).is_none(),
+            "duplicate V5 evaluation case: {name}"
+        );
+    }
+    anyhow::ensure!(
+        excluded.len() == 371,
+        "V5 evaluation exclusion membership changed"
+    );
+    for line in std::fs::read_to_string(repo_path(REAL_DEV_GOLD_V3))?
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+    {
+        let row: serde_json::Value = serde_json::from_str(line)?;
+        let name = row["name"]
+            .as_str()
+            .context("V5 development case has no name")?;
+        anyhow::ensure!(
+            excluded.get(name) == Some(&row),
+            "V5 development case {name} differs from training exclusions"
+        );
+    }
     Ok(())
 }
 
@@ -297,6 +495,92 @@ pub(crate) struct InputSnapshot {
 fn hash_file(path: &Path) -> anyhow::Result<String> {
     let bytes = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
     Ok(crate::export::sha256_hex(&bytes))
+}
+
+fn verify_generation_manifest(cfg: &Config) -> anyhow::Result<()> {
+    if !uses_v4_gold(cfg) && !uses_v5_gold(cfg) {
+        return Ok(());
+    }
+    let (version, exclusions) = if uses_v5_gold(cfg) {
+        ("V5", REAL_DEV_EXCLUSIONS_V5)
+    } else {
+        ("V4", REAL_DEV_EXCLUSIONS_V4)
+    };
+    let generate = cfg
+        .generate
+        .as_ref()
+        .with_context(|| format!("{version} detector needs [generate]"))?;
+    anyhow::ensure!(
+        generate.exclude_gold == exclusions,
+        "{version} detector must exclude corrected {version} evaluation gold"
+    );
+    if uses_v5_gold(cfg) {
+        anyhow::ensure!(
+            cfg.name != "detector-us-v4"
+                && cfg.data.processed != "data/processed/detector-us-v4"
+                && cfg.data.manifests != "data/manifests/v4",
+            "V5 detector must use separate V5 output paths and run name"
+        );
+    }
+    let detector = cfg
+        .detector
+        .as_ref()
+        .with_context(|| format!("{version} detector needs [detector]"))?;
+    if uses_v5_gold(cfg) {
+        anyhow::ensure!(
+            detector.silver.len() == 34
+                && detector.silver.iter().collect::<BTreeSet<_>>().len() == 34,
+            "V5 detector must use 34 distinct reviewed silver sources"
+        );
+    }
+    let path = repo_path(&cfg.data.manifests).join("detector-synthetic.json");
+    let manifest: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(&path).with_context(|| format!("reading {}", path.display()))?,
+    )?;
+    anyhow::ensure!(
+        manifest["source"] == "tessera-generator"
+            && manifest["version"] == 3
+            && manifest["template_policy"] == "source_backed_us_unit_parent_v1"
+            && manifest["seed"] == cfg.seed
+            && manifest["max_tokens"] == generate.max_tokens
+            && manifest["names"].as_str() == cfg.names.as_ref().map(|names| names.out.as_str())
+            && manifest["addresses"] == generate.addresses
+            && manifest["exclude_gold"] == generate.exclude_gold
+            && manifest["exclude_gold_sha256"] == hash_file(&repo_path(&generate.exclude_gold))?,
+        "{version} generator manifest does not match configured exclusions"
+    );
+    let shard_hashes = manifest["synthetic_parquet_sha256"]
+        .as_object()
+        .with_context(|| format!("{version} generator manifest has no shard hashes"))?;
+    anyhow::ensure!(
+        shard_hashes.len() == 3,
+        "{version} generator shard set changed"
+    );
+    for split in ["train", "valid", "test"] {
+        let shard = repo_path(&cfg.data.processed).join(format!("{split}.parquet"));
+        anyhow::ensure!(
+            shard_hashes.get(split).and_then(serde_json::Value::as_str)
+                == Some(hash_file(&shard)?.as_str()),
+            "{version} generated {split} shard differs from its manifest"
+        );
+    }
+    let silver_hashes = manifest["real_silver_sha256"]
+        .as_object()
+        .with_context(|| format!("{version} generator manifest has no silver hashes"))?;
+    anyhow::ensure!(
+        silver_hashes.len() == detector.silver.len(),
+        "{version} generator silver source set changed"
+    );
+    for source in &detector.silver {
+        anyhow::ensure!(
+            silver_hashes
+                .get(source)
+                .and_then(serde_json::Value::as_str)
+                == Some(hash_file(&repo_path(source))?.as_str()),
+            "{version} silver source {source} differs from its generator manifest"
+        );
+    }
+    Ok(())
 }
 
 fn validate_ngram_source(cfg: &Config) -> anyhow::Result<()> {
@@ -334,24 +618,87 @@ pub(crate) fn input_paths(cfg: &Config) -> Vec<(String, PathBuf)> {
             PathBuf::from(&cfg.data.sample_manifest),
         )),
         crate::config::Task::Detector => {
+            let (gold, _) = real_dev_gold(cfg);
+            let (manifest, errata, exclusions) = if uses_v5_gold(cfg) {
+                (
+                    REAL_DEV_MANIFEST_V3,
+                    REAL_DEV_ERRATA_V3,
+                    REAL_DEV_EXCLUSIONS_V5,
+                )
+            } else if uses_v4_gold(cfg) {
+                (
+                    REAL_DEV_MANIFEST_V3,
+                    REAL_DEV_ERRATA_V3,
+                    REAL_DEV_EXCLUSIONS_V4,
+                )
+            } else {
+                (REAL_DEV_MANIFEST, REAL_DEV_ERRATA, REAL_DEV_EXCLUSIONS)
+            };
             paths.extend([
-                ("real_dev_gold".to_string(), repo_path(REAL_DEV_GOLD)),
-                (
-                    "real_dev_manifest".to_string(),
-                    repo_path(REAL_DEV_MANIFEST),
-                ),
-                ("real_dev_errata".to_string(), repo_path(REAL_DEV_ERRATA)),
-                (
-                    "real_dev_exclusions".to_string(),
-                    repo_path(REAL_DEV_EXCLUSIONS),
-                ),
+                ("real_dev_gold".to_string(), repo_path(gold)),
+                ("real_dev_manifest".to_string(), repo_path(manifest)),
+                ("real_dev_errata".to_string(), repo_path(errata)),
+                ("real_dev_exclusions".to_string(), repo_path(exclusions)),
             ]);
-            paths.extend(
-                REAL_DEV_SOURCES
-                    .iter()
-                    .enumerate()
-                    .map(|(i, source)| (format!("real_dev_source_{i}"), repo_path(source))),
-            );
+            if uses_v4_gold(cfg) || uses_v5_gold(cfg) {
+                paths.extend([
+                    ("real_dev_base".to_string(), repo_path(REAL_DEV_GOLD)),
+                    (
+                        "real_dev_base_manifest".to_string(),
+                        repo_path(REAL_DEV_MANIFEST),
+                    ),
+                    (
+                        "real_dev_base_errata".to_string(),
+                        repo_path(REAL_DEV_ERRATA),
+                    ),
+                    (
+                        "eval_exclusions_base".to_string(),
+                        repo_path("data/interim/review/us-eval-exclusions-v3.jsonl"),
+                    ),
+                    (
+                        "eval_exclusions_manifest".to_string(),
+                        repo_path("data/interim/review/us-eval-exclusions-v4.manifest.json"),
+                    ),
+                    (
+                        "generator_manifest".to_string(),
+                        Path::new(&cfg.data.manifests).join("detector-synthetic.json"),
+                    ),
+                ]);
+                paths.extend(
+                    REAL_DEV_SOURCES
+                        .iter()
+                        .enumerate()
+                        .map(|(i, source)| (format!("real_dev_source_{i}"), repo_path(source))),
+                );
+            } else {
+                paths.extend(
+                    REAL_DEV_SOURCES
+                        .iter()
+                        .enumerate()
+                        .map(|(i, source)| (format!("real_dev_source_{i}"), repo_path(source))),
+                );
+            }
+            if uses_v5_gold(cfg) {
+                paths.extend([
+                    ("test_shard".to_string(), processed.join("test.parquet")),
+                    (
+                        "v5_exclusions_manifest".to_string(),
+                        repo_path(REAL_DEV_EXCLUSIONS_V5_MANIFEST),
+                    ),
+                    (
+                        "v5_exclusions_builder".to_string(),
+                        repo_path(REAL_DEV_EXCLUSIONS_V5_BUILDER),
+                    ),
+                    ("review_policy".to_string(), repo_path(REVIEW_POLICY)),
+                ]);
+                for (index, source) in REAL_DEV_EXCLUSIONS_V5_SOURCES.iter().enumerate() {
+                    paths.push((format!("v5_exclusions_source_{index}"), repo_path(source)));
+                    paths.push((
+                        format!("v5_exclusions_source_manifest_{index}"),
+                        repo_path(source).with_extension("manifest.json"),
+                    ));
+                }
+            }
             if let Some(detector) = &cfg.detector {
                 paths.extend(
                     detector
@@ -629,6 +976,98 @@ pub fn check_silver(config: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Validate the exact detector training inputs without creating a run or GPU state.
+pub fn check_detector_data(config: &Path) -> anyhow::Result<()> {
+    let cfg = crate::config::load(config)?;
+    anyhow::ensure!(
+        matches!(cfg.task, crate::config::Task::Detector),
+        "check-detector-data requires a detector config"
+    );
+    validate_ngram_source(&cfg)?;
+    validate_training_scope(&cfg)?;
+    verify_real_development_gold(&cfg)?;
+    verify_generation_manifest(&cfg)?;
+    let fc = cfg.features.to_tessera();
+    let mut synthetic = BTreeMap::new();
+    let mut training_lengths = Vec::new();
+    for split in Split::ALL {
+        let (docs, counts) = detector::load_split(Path::new(&cfg.data.processed), split, &fc)?;
+        if split == Split::Train {
+            training_lengths.extend(docs.iter().map(|doc| doc.enc.token_spans.len()));
+        }
+        synthetic.insert(
+            split.name(),
+            serde_json::json!({
+                "documents": docs.len(),
+                "encoding": counts,
+            }),
+        );
+    }
+    let detector_cfg = cfg
+        .detector
+        .as_ref()
+        .context("a detector config needs a [detector] section")?;
+    let (silver_docs, silver) =
+        detector::load_silver(&detector_cfg.silver, &fc, SILVER_MAX_TOKENS)?;
+    training_lengths.extend(silver_docs.iter().map(|doc| doc.enc.token_spans.len()));
+    let synthetic_count = synthetic["train"]["documents"]
+        .as_u64()
+        .context("synthetic train count is absent")? as usize;
+    let source_repeats = if detector_cfg.silver_repeats.is_empty() {
+        vec![detector_cfg.silver_repeat; detector_cfg.silver.len()]
+    } else {
+        detector_cfg.silver_repeats.clone()
+    };
+    let synthetic_per_epoch = detector_cfg.synthetic_per_epoch.unwrap_or(synthetic_count);
+    let plan = DetectorEpochDraws {
+        synthetic_count,
+        synthetic_per_epoch,
+        source_pieces: silver.source_pieces.clone(),
+        source_repeats,
+        seed: cfg.seed,
+    };
+    let draws_per_epoch = plan.len()?;
+    anyhow::ensure!(
+        training_lengths.len() == synthetic_count + plan.source_pieces.iter().sum::<usize>(),
+        "detector token counts do not match encoded pieces"
+    );
+    let batches_per_epoch = draws_per_epoch.div_ceil(cfg.train.batch_size);
+    let mut epoch_tokens = Vec::new();
+    for epoch in 1..=cfg.train.epochs {
+        let draws = plan.indices(epoch)?;
+        let mut synthetic_tokens = 0usize;
+        let mut real_tokens = 0usize;
+        for index in draws {
+            let tokens = training_lengths[index];
+            if index < synthetic_count {
+                synthetic_tokens += tokens;
+            } else {
+                real_tokens += tokens;
+            }
+        }
+        epoch_tokens.push(serde_json::json!({
+            "epoch": epoch,
+            "synthetic_content_tokens": synthetic_tokens,
+            "real_content_tokens": real_tokens,
+        }));
+    }
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&serde_json::json!({
+            "synthetic": synthetic,
+            "silver": silver,
+            "draws_per_epoch": draws_per_epoch,
+            "synthetic_draws_per_epoch": synthetic_per_epoch,
+            "real_draws_per_epoch": draws_per_epoch - synthetic_per_epoch,
+            "batches_per_epoch": batches_per_epoch,
+            "scheduled_optimizer_steps": cfg.train.epochs * batches_per_epoch,
+            "warmup_steps": cfg.train.warmup_steps,
+            "epoch_content_tokens": epoch_tokens,
+        }))?
+    );
+    Ok(())
+}
+
 /// The old materialized order: synthetic entries once, then each silver entry per repeat.
 fn detector_draw_indices(
     synthetic_count: usize,
@@ -720,7 +1159,8 @@ fn train_detector<B: AutodiffBackend>(
     let dir = PathBuf::from(&cfg.data.processed);
     let (train_docs, train_counts) = detector::load_split(&dir, Split::Train, &fc)?;
     let (valid_docs, valid_counts) = detector::load_split(&dir, Split::Valid, &fc)?;
-    let real_dev_docs = detector::load_development_gold(&repo_path(REAL_DEV_GOLD), &fc)?;
+    let (gold_path, gold_sha256) = real_dev_gold(cfg);
+    let real_dev_docs = detector::load_development_gold(&repo_path(gold_path), &fc)?;
     anyhow::ensure!(
         !valid_docs.is_empty(),
         "detector validation has no encoded documents"
@@ -821,7 +1261,7 @@ fn train_detector<B: AutodiffBackend>(
         "best_real_dev": fit.best_metrics["real_dev"],
         "best_valid": fit.best_metrics["valid"],
         "real_dev_cases": real_dev_docs.len(),
-        "real_dev_gold_sha256": REAL_DEV_GOLD_SHA256,
+        "real_dev_gold_sha256": gold_sha256,
         "wall_clock_seconds": fit.seconds,
         "train": train_counts,
         "valid": valid_counts,
@@ -1097,15 +1537,11 @@ mod tests {
 
     #[test]
     fn pinned_real_development_set_is_source_backed_and_encodable() {
-        verify_real_development_gold().unwrap();
-        let docs = detector::load_development_gold(
-            &repo_path(REAL_DEV_GOLD),
-            &crate::config::load(&repo_path("configs/detector-shared.toml"))
-                .unwrap()
-                .features
-                .to_tessera(),
-        )
-        .unwrap();
+        let cfg = crate::config::load(&repo_path("configs/detector-shared.toml")).unwrap();
+        verify_real_development_gold(&cfg).unwrap();
+        let docs =
+            detector::load_development_gold(&repo_path(REAL_DEV_GOLD), &cfg.features.to_tessera())
+                .unwrap();
         assert_eq!(docs.len(), 196);
         for kind in 0..3 {
             assert!(
@@ -1113,6 +1549,160 @@ mod tests {
                     .any(|doc| doc.gold.iter().any(|span| span.kind == kind))
             );
         }
+    }
+
+    #[test]
+    fn v4_training_uses_corrected_development_gold_and_exclusions() {
+        let cfg = crate::config::load(&repo_path("configs/detector-shared-v4.toml")).unwrap();
+        verify_real_development_gold(&cfg).unwrap();
+        assert_eq!(real_dev_gold(&cfg).0, REAL_DEV_GOLD_V3);
+        let inputs: BTreeMap<_, _> = input_paths(&cfg).into_iter().collect();
+        assert_eq!(inputs["real_dev_gold"], repo_path(REAL_DEV_GOLD_V3));
+        assert_eq!(
+            inputs["real_dev_exclusions"],
+            repo_path(REAL_DEV_EXCLUSIONS_V4)
+        );
+        assert_eq!(
+            inputs["generator_manifest"],
+            Path::new(&cfg.data.manifests).join("detector-synthetic.json")
+        );
+        let mut changed =
+            crate::config::load(&repo_path("configs/detector-shared-v4.toml")).unwrap();
+        changed.generate.as_mut().unwrap().exclude_gold =
+            "data/interim/review/us-eval-exclusions-v3.jsonl".into();
+        assert_eq!(real_dev_gold(&changed).0, REAL_DEV_GOLD_V3);
+        let error = verify_generation_manifest(&changed).unwrap_err();
+        assert!(error.to_string().contains("corrected V4 evaluation gold"));
+    }
+
+    #[test]
+    fn v5_training_pins_all_exclusions_and_corrected_development_gold() {
+        let cfg = crate::config::load(&repo_path("configs/detector-shared-v5.toml")).unwrap();
+        verify_real_development_gold(&cfg).unwrap();
+        assert_eq!(real_dev_gold(&cfg).0, REAL_DEV_GOLD_V3);
+        let inputs: BTreeMap<_, _> = input_paths(&cfg).into_iter().collect();
+        for path in [
+            REAL_DEV_GOLD_V3,
+            REAL_DEV_MANIFEST_V3,
+            REAL_DEV_ERRATA_V3,
+            REAL_DEV_GOLD,
+            REAL_DEV_MANIFEST,
+            REAL_DEV_ERRATA,
+            REAL_DEV_EXCLUSIONS_V5,
+            REAL_DEV_EXCLUSIONS_V5_MANIFEST,
+            REAL_DEV_EXCLUSIONS_V5_BUILDER,
+            REVIEW_POLICY,
+        ] {
+            assert!(
+                inputs.values().any(|value| value == &repo_path(path)),
+                "{path}"
+            );
+        }
+        for source in REAL_DEV_EXCLUSIONS_V5_SOURCES {
+            assert!(inputs.values().any(|value| value == &repo_path(source)));
+            assert!(
+                inputs
+                    .values()
+                    .any(|value| value == &repo_path(source).with_extension("manifest.json"))
+            );
+        }
+        assert_eq!(
+            inputs["test_shard"],
+            Path::new(&cfg.data.processed).join("test.parquet")
+        );
+        assert_eq!(
+            inputs["generator_manifest"],
+            Path::new(&cfg.data.manifests).join("detector-synthetic.json")
+        );
+    }
+
+    #[test]
+    fn v5_training_rejects_downgraded_exclusions_without_falling_back() {
+        for hint in 0..4 {
+            let mut cfg =
+                crate::config::load(&repo_path("configs/detector-shared-v5.toml")).unwrap();
+            cfg.name = "custom-detector".into();
+            cfg.data.processed = "data/processed/custom-detector".into();
+            cfg.data.manifests = "data/manifests/custom-detector".into();
+            cfg.generate.as_mut().unwrap().exclude_gold = REAL_DEV_EXCLUSIONS_V4.into();
+            match hint {
+                0 => cfg.name = "detector-us-v5".into(),
+                1 => cfg.data.processed = "data/processed/detector-us-v5".into(),
+                2 => cfg.data.manifests = "data/manifests/v5".into(),
+                _ => cfg.generate.as_mut().unwrap().exclude_gold = REAL_DEV_EXCLUSIONS_V5.into(),
+            }
+            assert!(uses_v5_gold(&cfg));
+            assert_eq!(real_dev_gold(&cfg).0, REAL_DEV_GOLD_V3);
+            if hint < 3 {
+                let error = verify_generation_manifest(&cfg).unwrap_err();
+                assert!(error.to_string().contains("corrected V5 evaluation gold"));
+            }
+        }
+    }
+
+    #[test]
+    fn v5_generation_manifest_rejects_altered_shards_and_silver_hashes() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut cfg = crate::config::load(&repo_path("configs/detector-shared-v5.toml")).unwrap();
+        cfg.data.processed = dir.path().join("processed").to_string_lossy().into_owned();
+        cfg.data.manifests = dir.path().join("manifests").to_string_lossy().into_owned();
+        std::fs::create_dir_all(&cfg.data.processed).unwrap();
+        std::fs::create_dir_all(&cfg.data.manifests).unwrap();
+        let mut shards = BTreeMap::new();
+        for split in ["train", "valid", "test"] {
+            let path = Path::new(&cfg.data.processed).join(format!("{split}.parquet"));
+            std::fs::write(&path, split).unwrap();
+            shards.insert(split, hash_file(&path).unwrap());
+        }
+        let generate = cfg.generate.as_ref().unwrap();
+        let silver = &cfg.detector.as_ref().unwrap().silver;
+        let silver_hashes: BTreeMap<_, _> = silver
+            .iter()
+            .map(|path| (path, hash_file(&repo_path(path)).unwrap()))
+            .collect();
+        let manifest = serde_json::json!({
+            "source": "tessera-generator",
+            "version": 3,
+            "template_policy": "source_backed_us_unit_parent_v1",
+            "seed": cfg.seed,
+            "max_tokens": generate.max_tokens,
+            "names": cfg.names.as_ref().unwrap().out,
+            "addresses": generate.addresses,
+            "exclude_gold": generate.exclude_gold,
+            "exclude_gold_sha256": hash_file(&repo_path(&generate.exclude_gold)).unwrap(),
+            "synthetic_parquet_sha256": shards,
+            "real_silver_sha256": silver_hashes,
+        });
+        let path = Path::new(&cfg.data.manifests).join("detector-synthetic.json");
+        std::fs::write(&path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+        verify_generation_manifest(&cfg).unwrap();
+        let test_shard = Path::new(&cfg.data.processed).join("test.parquet");
+        std::fs::write(&test_shard, "changed").unwrap();
+        assert!(
+            verify_generation_manifest(&cfg)
+                .unwrap_err()
+                .to_string()
+                .contains("generated test shard")
+        );
+        std::fs::write(&test_shard, "test").unwrap();
+        let mut changed = manifest.clone();
+        changed["real_silver_sha256"][&silver[0]] = serde_json::json!("changed");
+        std::fs::write(&path, serde_json::to_vec(&changed).unwrap()).unwrap();
+        assert!(
+            verify_generation_manifest(&cfg)
+                .unwrap_err()
+                .to_string()
+                .contains("differs from its generator manifest")
+        );
+        let mut changed = manifest;
+        changed["exclude_gold_sha256"] = serde_json::json!("changed");
+        std::fs::write(&path, serde_json::to_vec(&changed).unwrap()).unwrap();
+        assert!(
+            verify_generation_manifest(&cfg)
+                .unwrap_err()
+                .to_string()
+                .contains("configured exclusions")
+        );
     }
 
     #[test]

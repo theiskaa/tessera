@@ -48,6 +48,7 @@ def main():
     parser.add_argument("--category", choices=("boundary", "wrong_kind", "no_overlap"))
     parser.add_argument("--direction", choices=("gold", "pred"), default="gold")
     parser.add_argument("--limit", type=int, default=12)
+    parser.add_argument("--source-groups", action="store_true")
     args = parser.parse_args()
     gold_bytes = args.gold.read_bytes()
     gold = load_rows(args.gold)
@@ -61,6 +62,7 @@ def main():
         raise ValueError("predictions omit or duplicate gold cases")
     counts = collections.defaultdict(collections.Counter)
     slices = collections.defaultdict(lambda: collections.defaultdict(collections.Counter))
+    source_groups = collections.defaultdict(lambda: collections.defaultdict(collections.Counter))
     org_shapes = collections.defaultdict(collections.Counter)
     examples = []
     for row in gold:
@@ -72,6 +74,8 @@ def main():
                 status = category(span, others)
                 counts[span["kind"]][f"{direction}_{status}"] += 1
                 slices[row["doc_type"]][span["kind"]][f"{direction}_{status}"] += 1
+                source_groups[row.get("source_group", "unknown")][span["kind"]][
+                    f"{direction}_{status}"] += 1
                 if span["kind"] == "org":
                     value = row["input"].encode()[span["start"]:span["end"]].decode()
                     org_shapes[org_shape(value)][f"{direction}_{status}"] += 1
@@ -105,6 +109,20 @@ def main():
         print(f"{shape}: {total} / {c['gold_exact']} / {c['gold_boundary']} / "
               f"{c['gold_no_overlap']} / "
               f"{sum(c[f'pred_{status}'] for status in ('boundary','wrong_kind','no_overlap'))}")
+    if args.source_groups:
+        print("\nsource group  kind  gold  predicted  exact  exact_f1")
+        for group, kinds in sorted(source_groups.items()):
+            for kind in KINDS:
+                c = kinds[kind]
+                gold_count = sum(c[f"gold_{status}"] for status in
+                                 ("exact", "boundary", "wrong_kind", "no_overlap"))
+                predicted_count = sum(c[f"pred_{status}"] for status in
+                                      ("exact", "boundary", "wrong_kind", "no_overlap"))
+                if gold_count or predicted_count:
+                    exact = c["gold_exact"]
+                    f1 = 200 * exact / (gold_count + predicted_count)
+                    print(f"{group}  {kind}  {gold_count}  {predicted_count}  "
+                          f"{exact}  {f1:.1f}")
     for name, value, doc_type, text in examples[:args.limit]:
         print(f"{name} [{doc_type}] {value!r}: {text}")
 

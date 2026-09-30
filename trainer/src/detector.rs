@@ -345,6 +345,8 @@ pub struct SilverCounts {
     /// Exact-text copies with identical detector labels that were not encoded again.
     pub duplicate_documents: usize,
     pub pieces: usize,
+    /// Retained content tokens in successfully encoded distinct silver documents.
+    pub content_tokens: usize,
     pub spans: usize,
     /// Spans no BIO tagging can produce. A nonzero count rejects the whole input before training.
     pub unreachable_spans: usize,
@@ -352,6 +354,8 @@ pub struct SilverCounts {
     pub by_country: BTreeMap<String, SilverCountryCounts>,
     /// Encoded pieces from each input path, in the same order as `paths`.
     pub source_pieces: Vec<usize>,
+    /// Retained content tokens from each input path, in the same order as `paths`.
+    pub source_content_tokens: Vec<usize>,
 }
 
 #[derive(Debug, Default, Clone, Serialize)]
@@ -377,6 +381,7 @@ pub fn load_silver(
     let mut unreachable_details = Vec::new();
     for path in paths {
         let pieces_before = docs.len();
+        let tokens_before = counts.content_tokens;
         let text = std::fs::read_to_string(path).with_context(|| format!("reading {path}"))?;
         for (line_no, line) in text
             .lines()
@@ -454,6 +459,7 @@ pub fn load_silver(
                 let mut enc = encode_document(piece, &reachable, fc)
                     .map_err(|e| anyhow::anyhow!("{path}: {e}"))?;
                 enc.country = doc.country.clone();
+                counts.content_tokens += enc.token_spans.len();
                 docs.push(DetectorDoc {
                     text: piece.to_owned(),
                     enc,
@@ -464,6 +470,9 @@ pub fn load_silver(
             }
         }
         counts.source_pieces.push(docs.len() - pieces_before);
+        counts
+            .source_content_tokens
+            .push(counts.content_tokens - tokens_before);
     }
     ensure!(
         unreachable_details.is_empty(),
@@ -930,6 +939,43 @@ mod tests {
         );
         assert!(error.contains("other.jsonl:1 conflicts with"), "{error}");
         assert!(error.contains("silver.jsonl:1"), "{error}");
+    }
+
+    #[test]
+    fn silver_loader_counts_retained_tokens_by_source_after_deduplication() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = dir.path().join("first.jsonl");
+        let second = dir.path().join("second.jsonl");
+        let split = serde_json::json!({
+            "text": "one two three\n\nfour five", "country": "US", "entities": []
+        });
+        let short = serde_json::json!({
+            "text": "six seven", "country": "US", "entities": []
+        });
+        let last = serde_json::json!({
+            "text": "eight nine ten", "country": "US", "entities": []
+        });
+        std::fs::write(&first, format!("{split}\n{short}\n")).unwrap();
+        std::fs::write(&second, format!("{split}\n{last}\n")).unwrap();
+
+        let (docs, counts) = load_silver(
+            &[first.display().to_string(), second.display().to_string()],
+            &FeatureConfig::default(),
+            3,
+        )
+        .unwrap();
+
+        assert_eq!(counts.documents, 3);
+        assert_eq!(counts.duplicate_documents, 1);
+        assert_eq!(counts.source_pieces, vec![3, 1]);
+        assert_eq!(counts.source_content_tokens, vec![7, 3]);
+        assert_eq!(counts.content_tokens, 10);
+        assert_eq!(
+            docs.iter()
+                .map(|doc| doc.enc.token_spans.len())
+                .collect::<Vec<_>>(),
+            vec![3, 2, 2, 3]
+        );
     }
 
     #[test]

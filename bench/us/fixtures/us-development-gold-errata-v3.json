@@ -1,0 +1,16 @@
+{
+  "base_sha256": "d7fd7166a5a40cc1d199eed1cfda234639f9737a16bf92fa9130ba06fe65c2f5",
+  "evidence_url": "https://www.govinfo.gov/content/pkg/CFR-2025-title21-vol1/pdf/CFR-2025-title21-vol1-chapI.pdf",
+  "corrections": [
+    {
+      "name": "2026-02972",
+      "add": [
+        {"kind": "org", "start": 1647, "end": 1671, "text": "Dockets Management Staff"},
+        {"kind": "org", "start": 1807, "end": 1831, "text": "Dockets Management Staff"},
+        {"kind": "org", "start": 2427, "end": 2451, "text": "Dockets Management Staff"},
+        {"kind": "org", "start": 3212, "end": 3236, "text": "Dockets Management Staff"},
+        {"kind": "org", "start": 4131, "end": 4155, "text": "Dockets Management Staff"}
+      ]
+    }
+  ]
+}

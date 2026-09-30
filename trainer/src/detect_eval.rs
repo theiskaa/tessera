@@ -1,8 +1,7 @@
-//! Scores the shipped detection path, `tessera::Tessera::detect` over a bundle (not the
-//! trainer's f32 model), beside the deterministic baseline and external systems' predictions,
-//! on a reviewed gold file or a generated split: exact and lenient (same-kind overlap) span
-//! scores per kind, per slice of the cases, and per script of the spans, documents with a
-//! false positive, latency, and the Markdown tables of the detector report.
+//! Scores the shipped detection path, `tessera::Tessera::detect` over a bundle, beside
+//! the deterministic baseline and external systems' predictions. A separate diagnostic
+//! scores a run's f32 detector checkpoint on reviewed gold. Shipped-path scores cover
+//! exact and lenient spans by kind, case slice, and script, plus false positives and latency.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
@@ -10,6 +9,7 @@ use std::path::Path;
 use std::time::Instant;
 
 use anyhow::{Context, bail};
+use burn::prelude::Backend;
 use polars::prelude::*;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -413,7 +413,7 @@ pub fn load_predictions(path: &Path, cases: &[Case]) -> anyhow::Result<Predictio
 }
 
 /// Exact and lenient match counts. A lenient match is a same-kind overlap; boundary accuracy
-/// is the share of predictions with a lenient match that also match exactly.
+/// uses distinct one-to-one overlaps so split predictions cannot inflate its denominator.
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub struct Tally {
     pub gold: usize,
@@ -469,10 +469,10 @@ impl Tally {
     }
 
     pub fn boundary_accuracy(&self) -> f64 {
-        if self.lenient_predicted == 0 {
+        if self.unique_predicted == 0 {
             0.0
         } else {
-            self.exact as f64 / self.lenient_predicted as f64
+            self.exact as f64 / self.unique_predicted as f64
         }
     }
 
@@ -711,7 +711,7 @@ fn cell(scores: &Value, path: &[&str], metric: &str, side: &str) -> String {
 /// (`["by_kind"]`, or `["by_slice", "country", "US"]` and so on).
 pub fn kind_table(systems: &[Value], path: &[&str]) -> String {
     let mut out = String::from(
-        "| kind | system | gold | predicted | exact P | exact R | exact F1 | lenient P | lenient R | lenient F1 | boundary |\n| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n",
+        "| kind | system | gold | predicted | exact P | exact R | exact F1 | lenient 1:1 P | lenient 1:1 R | lenient 1:1 F1 | boundary |\n| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n",
     );
     for kind in KINDS {
         for s in systems {
@@ -732,9 +732,9 @@ pub fn kind_table(systems: &[Value], path: &[&str]) -> String {
                 cell(s, &full, "precision", "exact"),
                 cell(s, &full, "recall", "exact"),
                 cell(s, &full, "f1", "exact"),
-                cell(s, &full, "precision", "lenient"),
-                cell(s, &full, "recall", "lenient"),
-                cell(s, &full, "f1", "lenient"),
+                cell(s, &full, "precision", "lenient_one_to_one"),
+                cell(s, &full, "recall", "lenient_one_to_one"),
+                cell(s, &full, "f1", "lenient_one_to_one"),
                 t["boundary_accuracy"].as_f64().map_or("–".into(), pct),
             ));
         }
@@ -898,6 +898,80 @@ pub fn run_gold(args: &EvalArgs) -> anyhow::Result<()> {
         ),
     ];
     finish(args.report.as_deref(), &tables)
+}
+
+/// Scores a detector run's f32 checkpoint on reviewed US gold, before runtime rules and export.
+pub fn run_gold_model<B: Backend>(
+    args: &EvalArgs,
+    run: &Path,
+    device: &B::Device,
+) -> anyhow::Result<()> {
+    let gold_path = args.gold.as_deref().context("--gold is required")?;
+    anyhow::ensure!(
+        args.predictions.is_empty() && args.external.is_empty(),
+        "--predictions and --external are unsupported with --run --gold"
+    );
+    anyhow::ensure!(
+        args.report.is_none() && args.country_hint_mode == CountryHintMode::Known,
+        "--report and --country-hint-mode auto are unsupported for model-only gold scoring"
+    );
+    let cfg_path = run.join("config.toml");
+    let cfg = crate::config::load(&cfg_path)?;
+    anyhow::ensure!(cfg.net_name() == "detector", "--run is not a detector run");
+    let gold_bytes =
+        std::fs::read(gold_path).with_context(|| format!("reading {}", gold_path.display()))?;
+    let cases = parse_gold(gold_path, std::str::from_utf8(&gold_bytes)?)?;
+    anyhow::ensure!(
+        cases.iter().all(|case| case.country == "US"),
+        "checkpoint gold scoring currently requires US cases"
+    );
+    let docs = crate::detector::load_development_gold(gold_path, &cfg.features.to_tessera())?;
+    anyhow::ensure!(cases.len() == docs.len(), "gold case alignment changed");
+    let model = crate::quantize::load_best::<B>(run, &cfg, device)?;
+    let predicted = crate::detector::predict(&model, &docs, cfg.train.batch_size, device);
+    let gold: Vec<_> = docs.iter().map(|doc| doc.gold.clone()).collect();
+    let scores = crate::detector::score(&gold, &predicted);
+    let provenance = json!({
+        "gold_sha256": crate::export::sha256_hex(&gold_bytes),
+        "config_sha256": crate::export::sha256_hex(&std::fs::read(&cfg_path)?),
+        "best_sha256": crate::export::sha256_hex(&std::fs::read(run.join("best.mpk"))?),
+        "evaluator_sha256": evaluator_sha256()?,
+    });
+    if let Some(path) = &args.dump_predictions {
+        let predictions: Vec<_> = cases
+            .iter()
+            .zip(&predicted)
+            .map(|(case, spans)| {
+                json!({
+                    "name": case.name,
+                    "entities": spans.iter().map(|span| json!({
+                        "kind": crate::detector::KINDS[span.kind].as_str(),
+                        "start": span.start,
+                        "end": span.end,
+                    })).collect::<Vec<_>>(),
+                })
+            })
+            .collect();
+        write_json(
+            path,
+            &json!({
+                "system": "detector_f32_model_only",
+                "provenance": provenance,
+                "predictions": predictions,
+            }),
+        )?;
+    }
+    let result = json!({
+        "system": "detector_f32_model_only",
+        "scope": "person, org, and address model spans; no runtime rules or export",
+        "gold": gold_path,
+        "cases": docs.len(),
+        "provenance": provenance,
+        "scores": scores,
+    });
+    write_json(&args.out.join("eval").join("review-model.json"), &result)?;
+    println!("{}", serde_json::to_string_pretty(&result)?);
+    Ok(())
 }
 
 /// `trainer eval --run <detector run> --split test`: the shipped `detect` on a generated split,
@@ -1219,6 +1293,7 @@ mod tests {
         let tally = total(score_doc(text, &gold, &predicted));
         assert_eq!(tally.exact, 1);
         assert_eq!(tally.exact_prf(), (0.5, 1.0, 2.0 / 3.0));
+        assert_eq!(tally.boundary_accuracy(), 1.0);
     }
 
     #[test]
