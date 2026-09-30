@@ -10,10 +10,27 @@ class OrgAliasTests(unittest.TestCase):
         gold = [{"expected": [
             {"kind": "org", "text": "Commerce"},
             {"kind": "org", "text": "Department of Homeland Security"},
+            {"kind": "org", "text": "National Marine Fisheries Service"},
         ]}]
-        aliases = active_aliases(gold)
+        aliases = active_aliases(gold, strict=True)
         self.assertIn("department of commerce", aliases)
+        self.assertIn("doc", aliases)
         self.assertIn("dhs", aliases)
+        self.assertIn("noaa fisheries", aliases)
+        self.assertIn("national oceanic and atmospheric administration fisheries", aliases)
+
+    def test_strict_aliases_cover_heldout_referents_without_changing_legacy(self):
+        gold = [{"expected": [{"kind": "org", "text": name} for name in
+                              ("FEMA", "HHS", "OPM", "NTSB", "OUII", "DOE")]}]
+        strict = active_aliases(gold, strict=True)
+        for name in ("federal emergency management agency",
+                     "department of health and human services",
+                     "u.s. office of personnel management",
+                     "national transportation safety board",
+                     "office of unfair import investigations",
+                     "department of energy"):
+            self.assertIn(name, strict)
+        self.assertNotIn("department of energy", active_aliases(gold))
 
     def test_generic_office_names_do_not_share_a_family(self):
         gold = [{"expected": [

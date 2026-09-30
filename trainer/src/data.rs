@@ -1394,10 +1394,15 @@ pub(crate) mod abbrev {
             "US",
             &[
                 ("street", "st"),
+                ("street", "str"),
                 ("avenue", "ave"),
+                ("avenue", "avnu"),
+                ("avenue", "avnue"),
                 ("boulevard", "blvd"),
                 ("road", "rd"),
                 ("drive", "dr"),
+                ("drive", "dve"),
+                ("mile", "mi"),
                 ("lane", "ln"),
                 ("court", "ct"),
                 ("place", "pl"),
@@ -1407,6 +1412,7 @@ pub(crate) mod abbrev {
                 ("south", "s"),
                 ("east", "e"),
                 ("west", "w"),
+                ("west", "wst"),
             ],
         ),
         (
@@ -3572,6 +3578,43 @@ mod tests {
             )
         };
         assert_eq!(key("10 Baker Street", (3, 15)), key("10 Baker St", (3, 11)));
+        assert_eq!(
+            abbrev::fold_road("US", "jurassic avenue"),
+            abbrev::fold_road("US", "jurassic avnu")
+        );
+        assert_eq!(
+            abbrev::fold_road("US", "jurassic avenue"),
+            abbrev::fold_road("US", "jurassic avnue")
+        );
+        assert_eq!(
+            abbrev::fold_road("US", "west oak street"),
+            abbrev::fold_road("US", "wst oak str")
+        );
+        let us_key = |text: &str| {
+            let road = text.find(' ').unwrap() + 1;
+            group_key(
+                "US",
+                text,
+                &[
+                    Span {
+                        label: AddressLabel::HouseNumber,
+                        start: 0,
+                        end: (road - 1) as u32,
+                    },
+                    Span {
+                        label: AddressLabel::Road,
+                        start: road as u32,
+                        end: text.len() as u32,
+                    },
+                ],
+            )
+        };
+        assert_eq!(us_key("211 West Oak Street"), us_key("211 Wst Oak Str"));
+        assert_eq!(
+            us_key("8900 Elks Bluff Drive"),
+            us_key("8900 Elks Bluff Dve")
+        );
+        assert_eq!(us_key("845 Red Mile Road"), us_key("845 Red Mi Road"));
         assert_eq!(abbrev::fold_road("DE", "hauptstr"), "hauptstraße");
         assert_eq!(abbrev::fold_road("DE", "hauptstrasse"), "hauptstraße");
         assert_eq!(abbrev::fold_road("DE", "am markt str"), "am markt straße");

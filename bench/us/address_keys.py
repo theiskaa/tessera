@@ -7,15 +7,15 @@ STREET_TYPES = {
     "st", "street", "ave", "avenue", "rd", "road", "dr", "drive", "blvd",
     "boulevard", "ln", "lane", "way", "pl", "place", "pkwy", "parkway",
     "ct", "court", "cir", "circle", "pike", "hwy", "highway", "ter",
-    "terrace", "plaza", "sq", "square", "trail", "trl",
+    "terrace", "plaza", "sq", "square", "trail", "trl", "str",
 }
 DIRECTIONS = {
     "n", "s", "e", "w", "ne", "nw", "se", "sw", "north", "south",
-    "east", "west", "northeast", "northwest", "southeast", "southwest",
+    "east", "west", "wst", "northeast", "northwest", "southeast", "southwest",
 }
 NON_STREET_STARTS = {"of", "the", "room", "suite", "floor", "building", "code", "mail", "stop"}
 POSTCODE = re.compile(r"\b(\d{5})(?:-\d{4})?\b")
-NUMBER_WORD = re.compile(r"\b(\d{1,6})[A-Za-z]?[ \t]+([A-Za-z]+)\b")
+NUMBER_WORD = re.compile(r"(?<![\w-])(\d{1,6}(?:-\d{1,6})?)[A-Za-z]?[ \t]+([A-Za-z]+)\b")
 NUMBERED_STREET_IN_TEXT = re.compile(
     r"\b\d{1,6}[ \t]+\d{1,3}(?:st|nd|rd|th)[ \t]+"
     r"(?:St|Street|Ave|Avenue|Rd|Road|Dr|Drive|Blvd|Boulevard|Pl|Place)\b", re.I)
@@ -39,7 +39,7 @@ def address_keys(value):
     streets = {}
     offset = 0
     for line in value.splitlines(keepends=True):
-        number = re.match(r"^[ \t]*(\d{1,6})[A-Za-z]?[ \t]+", line)
+        number = re.match(r"^[ \t]*(\d{1,6}(?:-\d{1,6})?)[A-Za-z]?[ \t]+", line)
         if number is None:
             offset += len(line)
             continue

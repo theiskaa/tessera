@@ -940,6 +940,64 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "private US evaluation boundary audit; run explicitly with --ignored --nocapture"]
+    fn us_v3_eval_span_boundary_audit() {
+        use serde_json::Value;
+        use std::collections::BTreeMap;
+        use std::fs;
+        use std::path::PathBuf;
+
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../data/interim/review/us-eval-exclusions-v3.jsonl");
+        let source = fs::read_to_string(path).unwrap();
+        let mut counts: BTreeMap<String, (usize, usize)> = BTreeMap::new();
+        let mut examples = Vec::new();
+        let mut docs = 0;
+        for line in source.lines() {
+            let row: Value = serde_json::from_str(line).unwrap();
+            let text = row["input"].as_str().unwrap();
+            let name = row["name"].as_str().unwrap();
+            let tokens = tokenize(text);
+            docs += 1;
+            for span in row["expected"].as_array().unwrap() {
+                let kind = span["kind"].as_str().unwrap();
+                if !matches!(kind, "person" | "org" | "address") {
+                    continue;
+                }
+                let start = span["start"].as_u64().unwrap() as usize;
+                let end = span["end"].as_u64().unwrap() as usize;
+                let start_ok = tokens.iter().any(|token| {
+                    !matches!(token.class, TokenClass::Space | TokenClass::Newline)
+                        && token.start == start
+                });
+                let end_ok = tokens.iter().any(|token| {
+                    !matches!(token.class, TokenClass::Space | TokenClass::Newline)
+                        && token.end == end
+                });
+                let entry = counts.entry(kind.to_owned()).or_default();
+                entry.0 += 1;
+                if !(start_ok && end_ok) {
+                    entry.1 += 1;
+                    if examples.len() < 30 {
+                        examples.push(format!(
+                            "{name} {kind} {:?} start={start_ok} end={end_ok}",
+                            text.get(start..end)
+                        ));
+                    }
+                }
+            }
+        }
+        assert_eq!(docs, 343);
+        assert_eq!(counts.get("person").map(|entry| entry.1), Some(0));
+        assert_eq!(counts.get("address").map(|entry| entry.1), Some(0));
+        assert!(counts.get("org").is_some_and(|entry| entry.1 <= 2));
+        println!("US_V3_BOUNDARY_AUDIT {counts:?}");
+        for example in examples {
+            println!("US_V3_UNREACHABLE {example}");
+        }
+    }
+
+    #[test]
     #[ignore = "private frozen-corpus structural audit; run explicitly with --ignored --nocapture"]
     fn boundary_v1_frozen_corpus_audit() {
         use serde_json::Value;

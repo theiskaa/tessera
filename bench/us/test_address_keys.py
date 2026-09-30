@@ -60,6 +60,22 @@ class AddressKeysTest(unittest.TestCase):
         evaluation = "409 3rd Street SW, Suite 6050, Washington, DC 20416"
         self.assertTrue(address_keys_in_text(passage) & address_keys(evaluation))
 
+    def test_hyphenated_house_numbers_do_not_collapse_to_the_last_part(self):
+        first = "60-23 Cooper Avenue, Queens, NY 11385"
+        second = "68-23 Cooper Avenue, Queens, NY 11385"
+        self.assertFalse(address_keys(first) & address_keys(second))
+        self.assertIn(("11385", "68-23", "cooper"), address_keys(second))
+
+    def test_hyphenated_house_number_survives_a_suite_variant(self):
+        first = "68-23 Cooper Avenue\nApt Number 103\nQueens\nNY 11385"
+        second = "Room 504, 68-23 Cooper Avenue, Queens, NY 11385"
+        self.assertTrue(address_keys(first) & address_keys(second))
+
+    def test_west_and_street_abbreviations_share_a_building(self):
+        first = "211 Wst Oak Str, Louisville, KY 40203"
+        second = "211 West Oak Street, Louisville, KY 40203"
+        self.assertTrue(address_keys(first) & address_keys(second))
+
 
 if __name__ == "__main__":
     unittest.main()

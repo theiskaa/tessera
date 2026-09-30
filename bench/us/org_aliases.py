@@ -61,6 +61,19 @@ READINESS_FAMILIES = (
     ("U.S. Army Corps of Engineers", "US Army Corps. of Engineers"),
 )
 
+STRICT_FAMILIES = (
+    ("Commerce", "Commerce Department", "Department of Commerce",
+     "U.S. Department of Commerce", "DOC"),
+    ("National Marine Fisheries Service", "NMFS", "NOAA Fisheries",
+     "National Oceanic and Atmospheric Administration Fisheries"),
+    ("Health Resources and Services Administration", "HRSA"),
+    ("Department of Energy", "U.S. Department of Energy", "DOE"),
+    ("Department of Health and Human Services", "HHS"),
+    ("Office of Personnel Management", "U.S. Office of Personnel Management", "OPM"),
+    ("National Transportation Safety Board", "NTSB"),
+    ("Office of Unfair Import Investigations", "OUII"),
+)
+
 
 def normalized(value):
     return " ".join(unicodedata.normalize("NFC", value).casefold().split())
@@ -85,12 +98,12 @@ def roster_families():
     return families
 
 
-def active_aliases(gold, *, include_roster=False):
+def active_aliases(gold, *, include_roster=False, strict=False):
     observed = {normalized(span["text"]) for row in gold for span in row["expected"]
                 if span["kind"] == "org"}
     active = set()
     families = FAMILIES + (READINESS_FAMILIES + tuple(roster_families())
-                          if include_roster else ())
+                          if include_roster or strict else ()) + (STRICT_FAMILIES if strict else ())
     for family in families:
         if any(normalized(name) in observed for name in family):
             active.update(normalized(name) for name in family)
