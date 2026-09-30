@@ -30,3 +30,35 @@ node_modules/
 .DS_Store
 .idea/
 .vscode/
+
+# public us checks; collection and review recipes stay local
+/bench/us/*
+!/bench/us/README.md
+!/bench/us/address_keys.py
+!/bench/us/org_aliases.py
+!/bench/us/source_identity.py
+!/bench/us/silver_dedupe.py
+!/bench/us/diagnose_predictions.py
+!/bench/us/holdout.py
+!/bench/us/check_data.py
+!/bench/us/check_sampling.py
+!/bench/us/build_us_next_eval_exclusions.py
+!/bench/us/test_address_keys.py
+!/bench/us/test_org_aliases.py
+!/bench/us/test_source_identity.py
+!/bench/us/test_holdout_overlap.py
+!/bench/us/test_check_data.py
+!/bench/us/test_check_sampling.py
+!/bench/us/test_silver_dedupe.py
+!/bench/us/fixtures/
+/bench/us/fixtures/*
+!/bench/us/fixtures/us-development-gold-errata-v2.json
+!/bench/us/fixtures/us-development-gold-errata-v3.json
+!/bench/us/fixtures/us-next-data-targets-v1.json
+
+# local historical configurations and generated corpus manifests
+/configs/detector-shared-v3.toml
+/configs/parser-curve.toml
+/configs/parser-us-v2.toml
+/data/manifests/detector-synthetic*.json
+/data/manifests/v*/
