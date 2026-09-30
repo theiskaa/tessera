@@ -2,7 +2,7 @@
 
 import unittest
 
-from check_holdout_overlap import collisions
+from holdout import collisions
 
 
 class HoldoutOverlapTests(unittest.TestCase):

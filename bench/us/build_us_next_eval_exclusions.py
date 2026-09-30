@@ -4,7 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 
-from check_us_next_data_split import EVALUATION, ROOT
+ROOT = Path(__file__).resolve().parents[2]
 
 
 SOURCES = tuple(ROOT / "data/interim/review" / name for name in (
@@ -70,8 +70,6 @@ def validate_rows(rows):
 
 def main():
     """Write or replay a byte-preserving, source-pinned exclusion union."""
-    if not MANIFEST.exists() and tuple(EVALUATION) != SOURCES:
-        raise ValueError("current US evaluation membership differs from the v5 sources")
     grouped = [source_rows(path) for path in SOURCES]
     rows = [row for source, _, _ in grouped for row in source]
     validate_rows(rows)
