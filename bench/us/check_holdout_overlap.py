@@ -21,13 +21,13 @@ CURRENT_SYNTHETIC = ROOT / "data/processed/detector-us-v2"
 KINDS = {"person", "org", "address"}
 
 
-def index_gold(rows):
+def index_gold(rows, *, strict_aliases=False):
     surfaces = collections.defaultdict(lambda: collections.defaultdict(set))
     people = collections.defaultdict(set)
     addresses = collections.defaultdict(set)
     aliases = collections.defaultdict(set)
     for row in rows:
-        for alias in active_aliases([row]):
+        for alias in active_aliases([row], strict=strict_aliases):
             aliases[alias].add(row["name"])
         for span in row["expected"]:
             kind = span["kind"]
@@ -43,8 +43,8 @@ def index_gold(rows):
     return surfaces, people, addresses, aliases
 
 
-def collisions(rows, sources):
-    surfaces, people, addresses, aliases = index_gold(rows)
+def collisions(rows, sources, *, strict_aliases=False):
+    surfaces, people, addresses, aliases = index_gold(rows, strict_aliases=strict_aliases)
     hits = collections.defaultdict(lambda: collections.defaultdict(set))
     for origin, text, spans in sources:
         source = text.encode()

@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "purpose": "minimum coverage for the next controlled US training experiment; not a prediction of model accuracy",
+  "long_minimum_words": 200,
+  "long_source_documents": 100,
+  "long_positive_source_documents": {
+    "person": 45,
+    "org": 70,
+    "address": 30
+  },
+  "long_prefixed_address_source_documents": 15,
+  "long_address_non_federal_register_websites": 2,
+  "sampling": {
+    "maximum_synthetic_fraction": 0.5,
+    "minimum_long_real_fraction_of_all_draws": 0.25,
+    "maximum_long_real_fraction_of_all_draws": 0.4,
+    "maximum_single_source_document_fraction": 0.25
+  }
+}
