@@ -58,7 +58,8 @@ node_modules/
 
 # local historical configurations and generated corpus manifests
 /configs/detector-shared-v3.toml
+/configs/detector-shared-v6.toml
 /configs/parser-curve.toml
 /configs/parser-us-v2.toml
-/data/manifests/detector-synthetic*.json
+/data/manifests/**/detector-synthetic*.json
 /data/manifests/v*/

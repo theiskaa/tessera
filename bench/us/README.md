@@ -17,3 +17,9 @@ python3 bench/us/check_sampling.py --config configs/detector-shared-v5.toml --si
 `diagnose_predictions.py` explains errors in saved detector predictions.
 
 Tests that need the private training corpus run locally with `cargo test -p trainer -- --ignored`. The default test suite runs without that corpus.
+
+The native preflight reports exact BIO token counts and class-weighted contributions averaged over the actual training batches. Row percentages and global token percentages do not describe those contributions.
+
+Input checks validate the pinned data; they do not establish model accuracy. Separate real and synthetic training probes check whether the detector learns seen examples. Release accuracy requires evaluation on separate documents.
+
+Bounded diagnostics save probe curves and checkpoints while retaining the full schedule's learning-rate horizon. They cannot be quantized or exported through the ordinary release commands. Experiment configurations and their generated evidence stay local.
