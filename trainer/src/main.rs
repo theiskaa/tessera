@@ -41,6 +41,7 @@ mod negatives;
 mod net;
 mod pool_filter;
 mod quantize;
+mod release_candidate;
 mod residual_rms;
 mod templates;
 mod train;
@@ -193,6 +194,19 @@ enum Command {
         run: PathBuf,
         #[arg(long, value_enum, default_value = "ndarray")]
         backend: train::BackendKind,
+    },
+    /// Stage the exact bounded checkpoint with an explicit experimental quality waiver.
+    Promote {
+        #[arg(long)]
+        run: PathBuf,
+        #[arg(long)]
+        training_run: PathBuf,
+        #[arg(long)]
+        evaluation: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+        #[arg(long, required = true)]
+        accept_experimental_quality: bool,
     },
     /// Write the two-network safetensors bundle and the golden vectors of both networks.
     Export {
@@ -367,6 +381,19 @@ fn main() -> anyhow::Result<()> {
                 quantize::run::<burn::backend::NdArray>(&run, &Default::default())
             }
         },
+        Command::Promote {
+            run,
+            training_run,
+            evaluation,
+            out,
+            accept_experimental_quality,
+        } => release_candidate::promote(
+            &run,
+            &training_run,
+            &evaluation,
+            &out,
+            accept_experimental_quality,
+        ),
         Command::Export {
             parser_run,
             detector_run,

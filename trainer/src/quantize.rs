@@ -578,6 +578,9 @@ pub fn run<B: Backend>(run_dir: &Path, device: &B::Device) -> anyhow::Result<()>
 }
 
 fn reject_diagnostic_run(run_dir: &Path) -> anyhow::Result<()> {
+    if crate::release_candidate::verify(run_dir)?.is_some() {
+        return Ok(());
+    }
     anyhow::ensure!(
         !run_dir.join("diagnostic.json").try_exists()?
             && !run_dir
@@ -600,6 +603,9 @@ pub(crate) fn verify_learning_result(
     run_dir: &Path,
     cfg: &crate::config::Config,
 ) -> anyhow::Result<()> {
+    if crate::release_candidate::verify(run_dir)?.is_some() {
+        return Ok(());
+    }
     if cfg
         .detector
         .as_ref()
