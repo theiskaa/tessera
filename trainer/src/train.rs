@@ -2787,10 +2787,7 @@ mod tests {
 
     #[test]
     fn checked_validation_route_cannot_fall_back_to_standard_forward() {
-        let mut cfg = crate::config::load(
-            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../configs/detector-shared-v6.toml"),
-        )
-        .unwrap();
+        let mut cfg = crate::config::learning_test_config();
         cfg.features.hash_buckets = 64;
         cfg.features.ngram_dim = 4;
         cfg.features.shape_dim = 4;
@@ -2839,8 +2836,7 @@ mod tests {
     #[test]
     fn learning_failure_retains_evidence_without_completing_the_run() {
         use burn::backend::{Autodiff, NdArray};
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
-        let mut cfg = crate::config::load(&root.join("configs/detector-shared-v6.toml")).unwrap();
+        let mut cfg = crate::config::learning_test_config();
         cfg.net.hidden = 4;
         cfg.net.dropout = 0.0;
         cfg.train.epochs = 3;
@@ -2970,7 +2966,7 @@ mod tests {
     #[test]
     fn diagnostic_logit_penalty_is_scoped_and_zero_preserves_updates() {
         type B = Autodiff<NdArray>;
-        let mut cfg = crate::config::load(&repo_path("configs/detector-shared-v6.toml")).unwrap();
+        let mut cfg = crate::config::learning_test_config();
         cfg.features.hash_buckets = 16;
         cfg.net.hidden = 4;
         cfg.net.ngram_from = None;
@@ -3080,7 +3076,7 @@ mod tests {
 
     #[test]
     fn bounded_diagnostic_reaches_its_cap_despite_epoch_patience() {
-        let mut cfg = crate::config::load(&repo_path("configs/detector-shared-v6.toml")).unwrap();
+        let mut cfg = crate::config::learning_test_config();
         cfg.features.hash_buckets = 16;
         cfg.net.hidden = 4;
         cfg.net.ngram_from = None;
@@ -3142,8 +3138,7 @@ mod tests {
 
     #[test]
     fn learning_check_requires_exposure_and_an_enforced_check_before_stopping() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
-        let mut cfg = crate::config::load(&root.join("configs/detector-shared-v6.toml")).unwrap();
+        let mut cfg = crate::config::learning_test_config();
         validate_learning_budget(&cfg, 8856, Some(2000)).unwrap();
         assert!(validate_learning_budget(&cfg, 8856, Some(1999)).is_err());
         cfg.train.epochs = 3;

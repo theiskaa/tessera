@@ -504,10 +504,7 @@ mod tests {
     use super::*;
 
     fn config() -> Config {
-        crate::config::load(
-            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../configs/detector-shared-v6.toml"),
-        )
-        .unwrap()
+        crate::config::learning_test_config()
     }
 
     #[test]

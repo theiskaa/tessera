@@ -462,6 +462,25 @@ pub fn load(path: &Path) -> anyhow::Result<Config> {
 }
 
 #[cfg(test)]
+pub(crate) fn learning_test_config() -> Config {
+    let mut cfg: Config =
+        toml::from_str(include_str!("../../configs/detector-shared-v5.toml")).unwrap();
+    cfg.name = "detector-learning-test".into();
+    cfg.net.finetune_ngram = true;
+    cfg.train.epochs = 25;
+    cfg.train.warmup_steps = 500;
+    cfg.train.patience = 5;
+    cfg.detector.as_mut().unwrap().learning_check = Some(LearningCheckConfig {
+        documents: 192,
+        every_steps: 500,
+        start_step: 2000,
+        minimum_recall: 0.5,
+    });
+    cfg.validate().unwrap();
+    cfg
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

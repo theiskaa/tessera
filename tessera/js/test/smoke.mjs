@@ -32,27 +32,39 @@ assert.deepEqual(tessera.kinds, ["address"]);
 
 let cases = 0;
 let components = 0;
-for (const file of (await readdir(new URL("fixtures/parser/", root))).filter((f) => f.endsWith(".json"))) {
-  for (const c of JSON.parse(await read(`fixtures/parser/${file}`)).cases) {
+const parserFiles = (await readdir(new URL("fixtures/parser/", root))).filter((f) => f.endsWith(".json")).sort();
+assert.ok(parserFiles.includes("us.json"), "US parser fixtures missing");
+const fixtures = await Promise.all(parserFiles.map(async (file) => [file, JSON.parse(await read(`fixtures/parser/${file}`))]));
+const expectedCases = fixtures.reduce((total, [, fixture]) => total + fixture.cases.length, 0);
+const visited = new Set();
+for (const [file, fixture] of fixtures) {
+  assert.ok(fixture.cases.length > 0, `${file}: empty fixture`);
+  for (const c of fixture.cases) {
+    const name = `${file}: ${c.name}`;
+    assert.equal(c.country, "US", `${name}: country`);
+    assert.ok(!visited.has(name), `${name}: duplicate fixture case`);
     const entity = await tessera.parseAddress(c.input);
     assert.equal(entity.kind, "address", c.name);
-    assertSlices(c.input, entity, `${file}: ${c.name}`);
-    assert.ok(entity.components.length > 0, `${file}: ${c.name}: no components`);
+    assertSlices(c.input, entity, name);
+    assert.ok(entity.components.length > 0, `${name}: no components`);
+    visited.add(name);
     cases += 1;
     components += entity.components.length;
   }
 }
-assert.ok(cases >= 40, `only ${cases} fixture cases`);
+assert.ok(expectedCases > 0, "no US parser cases");
+assert.equal(cases, expectedCases, "parser fixture coverage");
+assert.equal(visited.size, expectedCases, "distinct parser fixture coverage");
 
 // Characters outside the BMP take two UTF-16 units and four UTF-8 bytes.
-const astral = "🏠🏠 10 Downing Street, London SW1A 2AA";
+const astral = "🏠🏠 400 Broad St, Seattle, WA 98109";
 const home = await tessera.parseAddress(astral);
 assert.ok(home.components.length > 0, "astral: no components");
 assertSlices(astral, home, "astral");
 
 await assert.rejects(tessera.parseAddress("x ".repeat(300)), { name: "TesseraError", code: "INPUT_TOO_LARGE" });
 tessera.dispose();
-await assert.rejects(tessera.parseAddress("221B Baker Street"), { code: "DISPOSED" });
+await assert.rejects(tessera.parseAddress("400 Broad St, Seattle, WA 98109"), { code: "DISPOSED" });
 await assert.rejects(createTessera({ modelBytes, integrity: "sha256-0000", kinds: ["address"] }), {
   code: "CHECKSUM_MISMATCH",
 });
@@ -74,4 +86,4 @@ assert.equal((await rules.detect("a@b.example", { format: "text" })).length, 1);
 rules.dispose();
 
 const runtime = typeof Bun === "undefined" ? `node ${process.version}` : `bun ${Bun.version}`;
-console.log(`smoke: ${components} address components sliced correctly on ${runtime}`);
+console.log(`smoke: ${cases} US cases in ${parserFiles.length} fixture files; ${components} address components sliced correctly on ${runtime}`);

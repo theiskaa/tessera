@@ -55,13 +55,9 @@ pub(crate) fn parameter_sha256(tensors: &[F32Tensor]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::Path;
 
     fn config() -> Config {
-        crate::config::load(
-            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../configs/detector-shared-v6.toml"),
-        )
-        .unwrap()
+        crate::config::learning_test_config()
     }
 
     #[test]

@@ -234,10 +234,7 @@ mod tests {
     use super::*;
 
     fn config() -> Config {
-        let mut cfg = crate::config::load(
-            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../configs/detector-shared-v6.toml"),
-        )
-        .unwrap();
+        let mut cfg = crate::config::learning_test_config();
         cfg.train.diagnostic_schedule_steps = Some(7000);
         cfg.train.learning_rate = 0.0001;
         cfg.train.warmup_steps = 500;

@@ -487,11 +487,7 @@ mod tests {
     fn prepare_keeps_original_rows_and_native_arrays_with_limits_and_duplicate_sources() {
         let (docs, _) = candidates();
         let directory = tempfile::tempdir().unwrap();
-        let mut cfg = crate::config::load(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../configs/detector-shared-v6.toml"),
-        )
-        .unwrap();
+        let mut cfg = crate::config::learning_test_config();
         let paths: Vec<_> = (0..3)
             .map(|source| directory.path().join(format!("source-{source}.jsonl")))
             .collect();

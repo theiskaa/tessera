@@ -608,10 +608,7 @@ mod tests {
 
     #[test]
     fn context96_scope_config_accepts_only_the_named_seven_block_graph() {
-        let mut cfg = crate::config::load(
-            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../configs/detector-shared-v6.toml"),
-        )
-        .unwrap();
+        let mut cfg = crate::config::learning_test_config();
         cfg.train.diagnostic_schedule_steps = Some(7000);
         let detector = cfg.detector.as_mut().unwrap();
         detector.synthetic_per_epoch = Some(12000);

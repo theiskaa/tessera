@@ -433,10 +433,7 @@ mod tests {
     }
 
     fn config() -> Config {
-        let mut cfg = crate::config::load(
-            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../configs/detector-shared-v6.toml"),
-        )
-        .unwrap();
+        let mut cfg = crate::config::learning_test_config();
         cfg.features.hash_buckets = 64;
         cfg.features.ngram_dim = 4;
         cfg.features.shape_dim = 4;

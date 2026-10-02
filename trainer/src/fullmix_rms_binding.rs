@@ -408,10 +408,7 @@ mod tests {
 
     #[test]
     fn context96_inspection_accepts_only_the_explicit_network_transition() {
-        let original = crate::config::load(
-            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../configs/detector-shared-v6.toml"),
-        )
-        .unwrap();
+        let original = crate::config::learning_test_config();
         let mut candidate: Config =
             serde_json::from_value(serde_json::to_value(&original).unwrap()).unwrap();
         validate_inspection_contract(SCOPE, &candidate, &original).unwrap();

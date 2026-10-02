@@ -688,8 +688,7 @@ mod tests {
         )
         .unwrap();
         assert!(reject_diagnostic_run(dir.path()).is_err());
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
-        let cfg = crate::config::load(&root.join("configs/detector-shared-v6.toml")).unwrap();
+        let cfg = crate::config::learning_test_config();
         for value in [
             serde_json::json!({"training_complete":true,"learning_check_passed":false}),
             serde_json::json!({"training_complete":true}),
