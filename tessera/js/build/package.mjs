@@ -4,6 +4,8 @@ import { copyFile, readFile, rm, writeFile } from "node:fs/promises";
 
 const pkgDir = new URL("../../pkg/", import.meta.url);
 const shipped = [
+  "LICENSE-MIT",
+  "LICENSE-APACHE",
   "index.js",
   "index.d.ts",
   "worker.js",
@@ -25,6 +27,10 @@ Object.assign(pkg, {
   sideEffects: ["./worker.js"],
 });
 await writeFile(path, JSON.stringify(pkg, null, 2) + "\n");
+
+for (const file of ["LICENSE-MIT", "LICENSE-APACHE"]) {
+  await copyFile(new URL(`../../${file}`, import.meta.url), new URL(file, pkgDir));
+}
 
 for (const file of ["index.js", "index.d.ts", "worker.js"]) {
   await copyFile(new URL(`../${file}`, import.meta.url), new URL(file, pkgDir));
