@@ -3,9 +3,12 @@
 //! different depths and label counts, defined in the trainer with Burn as `TaggerNet`; the
 //! golden vectors keep the two in agreement.
 
+mod address_continuation;
 pub(crate) mod bio;
+pub(crate) mod context;
 pub(crate) mod json;
 pub(crate) mod kernels;
+mod rms;
 pub(crate) mod sha256;
 #[cfg(test)]
 pub(crate) mod testing;
@@ -84,6 +87,7 @@ pub(crate) struct Tagger {
     head: kernels::Dense,
     labels: usize,
     hidden: usize,
+    context96_rms: bool,
 }
 
 impl Tagger {
@@ -93,10 +97,18 @@ impl Tagger {
             return Err(Error::BundleInvalid);
         }
         let ngram = Arc::new(ngram_table(bundle, "parser")?);
-        Tagger::load(bundle, "parser", ngram, &PARSER_DILATIONS, PARSER_LABELS)
+        Tagger::load(
+            bundle,
+            "parser",
+            ngram,
+            &PARSER_DILATIONS,
+            PARSER_LABELS,
+            false,
+        )
     }
 
-    /// The entity detector: `detector.*` tensors, six blocks, `DETECTOR_LABELS` outputs. A
+    /// The entity detector: `detector.*` tensors, six legacy blocks or seven context RMS
+    /// blocks, and `DETECTOR_LABELS` outputs. A
     /// bundle without `detector.embed.ngram` trained the detector on the parser's n-gram table,
     /// which is then shared with `parser` when it is loaded and read from the bundle otherwise.
     pub(crate) fn detector(bundle: &Bundle<'_>, parser: Option<&Tagger>) -> Result<Tagger, Error> {
@@ -114,8 +126,13 @@ impl Tagger {
             bundle,
             "detector",
             ngram,
-            &DETECTOR_DILATIONS,
+            if bundle.manifest.context96_rms {
+                &context::CONTEXT96_RMS_DILATIONS
+            } else {
+                &DETECTOR_DILATIONS
+            },
             DETECTOR_LABELS,
+            bundle.manifest.context96_rms,
         )
     }
 
@@ -127,12 +144,17 @@ impl Tagger {
         ngram: Arc<QTensor>,
         dilations: &[usize],
         labels: usize,
+        context96_rms: bool,
     ) -> Result<Tagger, Error> {
+        bundle.check_block_count(net, dilations.len())?;
         // The hidden width is read from the projection's bias; every other tensor must agree.
         let hidden = bundle
             .f32_len(&format!("{net}.proj.bias"))
             .filter(|h| (1..=MAX_HIDDEN).contains(h))
             .ok_or(Error::BundleInvalid)?;
+        if context96_rms && hidden != 96 {
+            return Err(Error::BundleInvalid);
+        }
         let mut blocks = Vec::with_capacity(dilations.len());
         for (i, &d) in dilations.iter().enumerate() {
             let w = bundle.take_i8(
@@ -162,6 +184,7 @@ impl Tagger {
             ),
             labels,
             hidden,
+            context96_rms,
         })
     }
 
@@ -177,7 +200,7 @@ impl Tagger {
     }
 
     /// Logits `[len, labels]` for the retained tokens' features.
-    pub(crate) fn forward(&self, feats: &[TokenFeatures]) -> Vec<f32> {
+    pub(crate) fn forward(&self, feats: &[TokenFeatures]) -> Result<Vec<f32>, Error> {
         let len = feats.len();
         let mut x = vec![0f32; len * INPUT_DIM];
         for (row, f) in x.chunks_mut(INPUT_DIM).zip(feats) {
@@ -198,9 +221,35 @@ impl Tagger {
             kernels::conv1d_same(&h, len, layer, *d, &mut conv);
             kernels::relu_inplace(&mut conv);
             kernels::add_inplace(&mut h, &conv);
+            if self.context96_rms {
+                rms::normalize(&mut h, self.hidden)?;
+            }
         }
         let mut logits = vec![0f32; len * self.labels];
         kernels::linear(&h, len, &self.head, &mut logits);
-        logits
+        if self.context96_rms && !logits.iter().all(|value| value.is_finite()) {
+            return Err(Error::Inference { stage: "detector" });
+        }
+        Ok(logits)
+    }
+
+    pub(crate) fn context_margin(&self) -> usize {
+        if self.context96_rms {
+            context::CONTEXT96_MARGIN
+        } else {
+            crate::chunk::CONTEXT_MARGIN_TOKENS
+        }
+    }
+
+    pub(crate) fn window_overlap(&self) -> usize {
+        if self.context96_rms {
+            context::CONTEXT96_OVERLAP
+        } else {
+            crate::chunk::OVERLAP_TOKENS
+        }
+    }
+
+    pub(crate) fn uses_address_continuation(&self) -> bool {
+        self.context96_rms
     }
 }

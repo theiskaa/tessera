@@ -63,8 +63,12 @@ pub mod internal {
     };
     pub use crate::group::group;
     pub use crate::model::bio::{
-        DETECTOR_KINDS, DetectedSpan, argmax, decode_detector, detector_label_strings,
-        parser_label_strings,
+        DETECTOR_KINDS, DetectedSpan, argmax, decode_detector, decode_detector_with_text,
+        detector_label_strings, parser_label_strings,
+    };
+    pub use crate::model::context::{
+        CONTEXT96_DECODER_CONTRACT, CONTEXT96_RMS_CONTRACT, CONTEXT96_RMS_DILATIONS,
+        CONTEXT96_RMS_EPSILON, CONTEXT96_RMS_NAME,
     };
     pub use crate::model::{
         DECODER_CONTRACT, DETECTOR_LABELS, FLAG_BITS, PARSER_LABELS, SCRIPT_ROWS, SHAPE_ROWS,
@@ -798,7 +802,7 @@ impl Tessera {
             .filter(|(t, _)| retained(t))
             .map(|(t, f)| ((t.start, t.end), f))
             .unzip();
-        let logits = parser.forward(&features);
+        let logits = parser.forward(&features)?;
         let mut probs = logits.clone();
         model::kernels::softmax_rows(&mut probs, model::PARSER_LABELS);
         let (decoded, probabilities) = model::bio::decode_probs(&probs, model::PARSER_LABELS)

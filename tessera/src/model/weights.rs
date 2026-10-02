@@ -47,6 +47,7 @@ pub(crate) struct Manifest {
     pub experimental_regions: Vec<String>,
     pub training_snapshot: String,
     pub report_url: String,
+    pub context96_rms: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -113,6 +114,23 @@ impl<'a> Bundle<'a> {
 
     pub(crate) fn has_net(&self, net: &str) -> bool {
         self.manifest.nets.iter().any(|n| n == net)
+    }
+
+    pub(crate) fn check_block_count(&self, net: &str, count: usize) -> Result<(), Error> {
+        let prefix = format!("{net}.block");
+        for entry in &self.entries {
+            if let Some(suffix) = entry.name.strip_prefix(&prefix) {
+                let index = suffix
+                    .split('.')
+                    .next()
+                    .and_then(|v| v.parse::<usize>().ok())
+                    .ok_or(Error::BundleInvalid)?;
+                if index >= count {
+                    return Err(Error::BundleInvalid);
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Whether the bundle holds a tensor named `name`.
@@ -240,9 +258,11 @@ fn entries(json: &Json, data_len: usize) -> Result<Vec<Entry>, Error> {
 /// series (`major.minor`) is read first, so `0.3.0-rc1` is unsupported; a version in the
 /// supported series must then be a plain `major.minor.patch`, so `0.2` or `0.2.x` is invalid.
 fn check_version(meta: &Json) -> Result<(), Error> {
-    if text(meta, "format")? != super::SUPPORTED_FORMAT {
-        return Err(Error::UnsupportedVersion);
-    }
+    let series = match text(meta, "format")?.as_str() {
+        super::SUPPORTED_FORMAT => super::SUPPORTED_MODEL_SERIES,
+        "2" => (0, 3),
+        _ => return Err(Error::UnsupportedVersion),
+    };
     let version = text(meta, "model_version")?;
     let parts: Vec<&str> = version.split('.').collect();
     let plain = |p: &str| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit());
@@ -252,7 +272,7 @@ fn check_version(meta: &Json) -> Result<(), Error> {
             .ok_or(Error::BundleInvalid)
     };
     let (major, minor) = (number(parts.first())?, number(parts.get(1))?);
-    let (want_major, want_minor) = super::SUPPORTED_MODEL_SERIES;
+    let (want_major, want_minor) = series;
     let compatible = if want_major == 0 {
         major == 0 && minor == want_minor
     } else {
@@ -276,7 +296,12 @@ fn check_contracts(meta: &Json) -> Result<(), Error> {
         (Some(tokenizer), Some(decoder)) => {
             let tokenizer = tokenizer.as_str().ok_or(Error::BundleInvalid)?;
             let decoder = decoder.as_str().ok_or(Error::BundleInvalid)?;
-            if tokenizer == super::TOKENIZER_CONTRACT && decoder == super::DECODER_CONTRACT {
+            let expected_decoder = match text(meta, "format")?.as_str() {
+                "1" => super::DECODER_CONTRACT,
+                "2" => super::context::CONTEXT96_DECODER_CONTRACT,
+                _ => return Err(Error::UnsupportedVersion),
+            };
+            if tokenizer == super::TOKENIZER_CONTRACT && decoder == expected_decoder {
                 Ok(())
             } else {
                 Err(Error::UnsupportedVersion)
@@ -308,6 +333,11 @@ fn strings(j: &Json) -> Result<Vec<String>, Error> {
 
 impl Manifest {
     fn from_json(m: &Json) -> Result<Manifest, Error> {
+        if m.get("detector_architecture")
+            .is_some_and(|v| v.as_str().is_none())
+        {
+            return Err(Error::BundleInvalid);
+        }
         let fc = nested(m, "feature_config")?;
         let num = |key: &str| {
             fc.get(key)
@@ -353,6 +383,10 @@ impl Manifest {
             experimental_regions: strings(&nested(m, "experimental_regions")?)?,
             training_snapshot: text(m, "training_snapshot")?,
             report_url: text(m, "report_url")?,
+            context96_rms: super::context::from_manifest(
+                &text(m, "format")?,
+                m.get("detector_architecture").and_then(Json::as_str),
+            )?,
         })
     }
 
@@ -363,6 +397,9 @@ impl Manifest {
             && self.script_rows == super::SCRIPT_ROWS
             && self.shape_rows == super::SHAPE_ROWS
             && self.parser_labels.len() == super::PARSER_LABELS;
+        if self.context96_rms && !self.nets.iter().any(|net| net == "detector") {
+            return Err(Error::BundleInvalid);
+        }
         if !shapes_match {
             return Err(Error::UnsupportedVersion);
         }
@@ -427,5 +464,49 @@ mod tests {
         assert!(b.take_i8("parser.head.weight", &[96, 23], 0).is_err());
         assert!(b.take_f32("parser.head.weight", 23).is_err());
         assert!(b.take_f32("parser.missing", 1).is_err());
+    }
+    #[test]
+    fn context96_bundle_contract_rejects_wrong_series_decoder_and_block_count() {
+        let mut meta = serde_json::json!({"format":"2","model_version":"0.3.0","tokenizer_contract":super::super::TOKENIZER_CONTRACT,"decoder_contract":super::super::context::CONTEXT96_DECODER_CONTRACT});
+        let parse = |v: &serde_json::Value| Json::parse(&v.to_string()).unwrap();
+        check_version(&parse(&meta)).unwrap();
+        check_contracts(&parse(&meta)).unwrap();
+        meta["decoder_contract"] = serde_json::json!(super::super::DECODER_CONTRACT);
+        assert!(check_contracts(&parse(&meta)).is_err());
+        meta["model_version"] = serde_json::json!("0.2.1");
+        assert!(check_version(&parse(&meta)).is_err());
+        let mut bundle = Bundle {
+            manifest: Manifest {
+                format: "1".into(),
+                model_version: "0.2.1".into(),
+                nets: vec!["detector".into()],
+                detector_labels: vec![],
+                parser_labels: vec![],
+                feature_config: FeatureConfig::default(),
+                max_ngrams_per_token: crate::features::MAX_NGRAMS_PER_TOKEN,
+                flag_bits: super::super::FLAG_BITS,
+                script_rows: super::super::SCRIPT_ROWS,
+                shape_rows: super::super::SHAPE_ROWS,
+                phone_metadata_version: String::new(),
+                supported_regions: vec![],
+                experimental_regions: vec![],
+                training_snapshot: String::new(),
+                report_url: String::new(),
+                context96_rms: false,
+            },
+            data: &[],
+            entries: vec![],
+        };
+        bundle.entries.push(Entry {
+            name: "detector.block6.conv.weight".into(),
+            dtype: Dtype::I8,
+            shape: vec![96, 96, 3],
+            begin: 0,
+            end: 0,
+        });
+        assert!(bundle.check_block_count("detector", 6).is_err());
+        bundle.check_block_count("detector", 7).unwrap();
+        bundle.entries.last_mut().unwrap().name = "detector.block7.conv.weight".into();
+        assert!(bundle.check_block_count("detector", 7).is_err());
     }
 }

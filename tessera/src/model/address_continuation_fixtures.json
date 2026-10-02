@@ -1,0 +1,1389 @@
+[
+  {
+    "name": "valid_North Building",
+    "text": "Office delivery location\nNorth Building\n123 Main Street\nDenver, CO 80202",
+    "pieces": [
+      {
+        "kind": "address",
+        "start": 25,
+        "end": 39,
+        "confidence": 0.95
+      },
+      {
+        "kind": "address",
+        "start": 40,
+        "end": 72,
+        "confidence": 0.95
+      }
+    ],
+    "expected_join": true
+  },
+  {
+    "name": "valid_Room 12",
+    "text": "Office delivery location\nRoom 12\n123 Main Street\nDenver, CO 80202",
+    "pieces": [
+      {
+        "kind": "address",
+        "start": 25,
+        "end": 32,
+        "confidence": 0.95
+      },
+      {
+        "kind": "address",
+        "start": 33,
+        "end": 65,
+        "confidence": 0.95
+      }
+    ],
+    "expected_join": true
+  },
+  {
+    "name": "valid_Mail Stop F802",
+    "text": "Office delivery location\nMail Stop F802\n123 Main Street\nDenver, CO 80202",
+    "pieces": [
+      {
+        "kind": "address",
+        "start": 25,
+        "end": 39,
+        "confidence": 0.95
+      },
+      {
+        "kind": "address",
+        "start": 40,
+        "end": 72,
+        "confidence": 0.95
+      }
+    ],
+    "expected_join": true
+  },
+  {
+    "name": "valid_E231",
+    "text": "Office delivery location\nE231\n123 Main Street\nDenver, CO 80202",
+    "pieces": [
+      {
+        "kind": "address",
+        "start": 25,
+        "end": 29,
+        "confidence": 0.95
+      },
+      {
+        "kind": "address",
+        "start": 30,
+        "end": 62,
+        "confidence": 0.95
+      }
+    ],
+    "expected_join": true
+  },
+  {
+    "name": "valid_name_room",
+    "text": "Office delivery location\nTraynor Room 12, 123 Main Street\nDenver, CO 80202",
+    "pieces": [
+      {
+        "kind": "address",
+        "start": 25,
+        "end": 32,
+        "confidence": 0.95
+      },
+      {
+        "kind": "address",
+        "start": 33,
+        "end": 74,
+        "confidence": 0.95
+      }
+    ],
+    "expected_join": true
+  },
+  {
+    "name": "rejected_gap_'\\n\\n'",
+    "text": "Office delivery location\nNorth Building\n\n123 Main Street\nDenver, CO 80202",
+    "pieces": [
+      {
+        "kind": "address",
+        "start": 25,
+        "end": 39,
+        "confidence": 0.95
+      },
+      {
+        "kind": "address",
+        "start": 41,
+        "end": 73,
+        "confidence": 0.95
+      }
+    ],
+    "expected_join": false
+  },
+  {
+    "name": "rejected_gap_'\\n \\n'",
+    "text": "Office delivery location\nNorth Building\n \n123 Main Street\nDenver, CO 80202",
+    "pieces": [
+      {
+        "kind": "address",
+        "start": 25,
+        "end": 39,
+        "confidence": 0.95
+      },
+      {
+        "kind": "address",
+        "start": 42,
+        "end": 74,
+        "confidence": 0.95
+      }
+    ],
+    "expected_join": false
+  },
+  {
+    "name": "rejected_gap_'\\r\\n\\r\\n'",
+    "text": "Office delivery location\nNorth Building\r\n\r\n123 Main Street\nDenver, CO 80202",
+    "pieces": [
+      {
+        "kind": "address",
+        "start": 25,
+        "end": 39,
+        "confidence": 0.95
+      },
+      {
+        "kind": "address",
+        "start": 43,
+        "end": 75,
+        "confidence": 0.95
+      }
+    ],
+    "expected_join": false
+  },
+  {
+    "name": "rejected_gap_'\\u2028'",
+    "text": "Office delivery location\nNorth Building\u2028123 Main Street\nDenver, CO 80202",
+    "pieces": [
+      {
+        "kind": "address",
+        "start": 25,
+        "end": 39,
+        "confidence": 0.95
+      },
+      {
+        "kind": "address",
+        "start": 42,
+        "end": 74,
+        "confidence": 0.95
+      }
+    ],
+    "expected_join": false
+  },
+  {
+    "name": "rejected_gap_'; '",
+    "text": "Office delivery location\nNorth Building; 123 Main Street\nDenver, CO 80202",
+    "pieces": [
+      {
+        "kind": "address",
+        "start": 25,
+        "end": 39,
+        "confidence": 0.95
+      },
+      {
+        "kind": "address",
+        "start": 41,
+        "end": 73,
+        "confidence": 0.95
+      }
+    ],
+    "expected_join": false
+  },
+  {
+    "name": "rejected_gap_' and '",
+    "text": "Office delivery location\nNorth Building and 123 Main Street\nDenver, CO 80202",
+    "pieces": [
+      {
+        "kind": "address",
+        "start": 25,
+        "end": 39,
+        "confidence": 0.95
+      },
+      {
+        "kind": "address",
+        "start": 44,
+        "end": 76,
+        "confidence": 0.95
+      }
+    ],
+    "expected_join": false
+  },
+  {
+    "name": "rejected_gap_'\\nSeparate destination: '",
+    "text": "Office delivery location\nNorth Building\nSeparate destination: 123 Main Street\nDenver, CO 80202",
+    "pieces": [
+      {
+        "kind": "address",
+        "start": 25,
+        "end": 39,
+        "confidence": 0.95
+      },
+      {
+        "kind": "address",
+        "start": 62,
+        "end": 94,
+        "confidence": 0.95
+      }
+    ],
+    "expected_join": false
+  },
+  {
+    "name": "rejected_prefix_456 Other Street\nBoulder, CO 80301",
+    "text": "456 Other Street\nBoulder, CO 80301\n123 Main Street\nDenver, CO 80202",
+    "pieces": [
+      {
+        "kind": "address",
+        "start": 0,
+        "end": 34,
+        "confidence": 0.95
+      },
+      {
+        "kind": "address",
+        "start": 35,
+        "end": 67,
+        "confidence": 0.95
+      }
+    ],
+    "expected_join": false
+  },
+  {
+    "name": "rejected_prefix_12 North Road",
+    "text": "12 North Road\n123 Main Street\nDenver, CO 80202",
+    "pieces": [
+      {
+        "kind": "address",
+        "start": 0,
+        "end": 13,
+        "confidence": 0.95
+      },
+      {
+        "kind": "address",
+        "start": 14,
+        "end": 46,
+        "confidence": 0.95
+      }
+    ],
+    "expected_join": false
+  },
+  {
+    "name": "rejected_prefix_P.O. Box 99",
+    "text": "P.O. Box 99\n123 Main Street\nDenver, CO 80202",
+    "pieces": [
+      {
+        "kind": "address",
+        "start": 0,
+        "end": 11,
+        "confidence": 0.95
+      },
+      {
+        "kind": "address",
+        "start": 12,
+        "end": 44,
+        "confidence": 0.95
+      }
+    ],
+    "expected_join": false
+  },
+  {
+    "name": "rejected_prefix_Jane Doe",
+    "text": "Jane Doe\n123 Main Street\nDenver, CO 80202",
+    "pieces": [
+      {
+        "kind": "address",
+        "start": 0,
+        "end": 8,
+        "confidence": 0.95
+      },
+      {
+        "kind": "address",
+        "start": 9,
+        "end": 41,
+        "confidence": 0.95
+      }
+    ],
+    "expected_join": false
+  },
+  {
+    "name": "rejected_prefix_Reference ABC",
+    "text": "Reference ABC\n123 Main Street\nDenver, CO 80202",
+    "pieces": [
+      {
+        "kind": "address",
+        "start": 0,
+        "end": 13,
+        "confidence": 0.95
+      },
+      {
+        "kind": "address",
+        "start": 14,
+        "end": 46,
+        "confidence": 0.95
+      }
+    ],
+    "expected_join": false
+  },
+  {
+    "name": "code_without_postal_heading",
+    "text": "Reference:\nE231\n123 Main Street\nDenver, CO 80202",
+    "pieces": [
+      {
+        "kind": "address",
+        "start": 11,
+        "end": 15,
+        "confidence": 0.95
+      },
+      {
+        "kind": "address",
+        "start": 16,
+        "end": 48,
+        "confidence": 0.95
+      }
+    ],
+    "expected_join": false
+  },
+  {
+    "name": "inline_nonpostal_heading",
+    "text": "Nearby facility: North Building\n123 Main Street\nDenver, CO 80202",
+    "pieces": [
+      {
+        "kind": "address",
+        "start": 17,
+        "end": 31,
+        "confidence": 0.95
+      },
+      {
+        "kind": "address",
+        "start": 32,
+        "end": 64,
+        "confidence": 0.95
+      }
+    ],
+    "expected_join": false
+  },
+  {
+    "name": "org_never_merged",
+    "text": "North Building\n123 Main Street\nDenver, CO 80202",
+    "pieces": [
+      {
+        "kind": "org",
+        "start": 0,
+        "end": 14,
+        "confidence": 0.95
+      },
+      {
+        "kind": "address",
+        "start": 15,
+        "end": 47,
+        "confidence": 0.95
+      }
+    ],
+    "expected_join": false
+  },
+  {
+    "name": "rejected_tail_Something happened\nDenver, CO 80202",
+    "text": "North Building\nSomething happened\nDenver, CO 80202",
+    "pieces": [
+      {
+        "kind": "address",
+        "start": 0,
+        "end": 14,
+        "confidence": 0.95
+      },
+      {
+        "kind": "address",
+        "start": 15,
+        "end": 50,
+        "confidence": 0.95
+      }
+    ],
+    "expected_join": false
+  },
+  {
+    "name": "rejected_tail_123 Main Street\nDenver",
+    "text": "North Building\n123 Main Street\nDenver",
+    "pieces": [
+      {
+        "kind": "address",
+        "start": 0,
+        "end": 14,
+        "confidence": 0.95
+      },
+      {
+        "kind": "address",
+        "start": 15,
+        "end": 37,
+        "confidence": 0.95
+      }
+    ],
+    "expected_join": false
+  },
+  {
+    "name": "rejected_tail_123 Main Street\nDenver, CO 80202\n456 Oak Road\nBoulder, CO 80301",
+    "text": "North Building\n123 Main Street\nDenver, CO 80202\n456 Oak Road\nBoulder, CO 80301",
+    "pieces": [
+      {
+        "kind": "address",
+        "start": 0,
+        "end": 14,
+        "confidence": 0.95
+      },
+      {
+        "kind": "address",
+        "start": 15,
+        "end": 78,
+        "confidence": 0.95
+      }
+    ],
+    "expected_join": false
+  },
+  {
+    "name": "rejected_name_across_newline_room_Jane Doe",
+    "text": "Jane Doe\nRoom 12, 123 Main Street\nDenver, CO 80202",
+    "pieces": [
+      {
+        "kind": "address",
+        "start": 0,
+        "end": 8,
+        "confidence": 0.95
+      },
+      {
+        "kind": "address",
+        "start": 9,
+        "end": 50,
+        "confidence": 0.95
+      }
+    ],
+    "expected_join": false
+  },
+  {
+    "name": "rejected_name_across_newline_room_Privacy Office",
+    "text": "Privacy Office\nRoom 12, 123 Main Street\nDenver, CO 80202",
+    "pieces": [
+      {
+        "kind": "address",
+        "start": 0,
+        "end": 14,
+        "confidence": 0.95
+      },
+      {
+        "kind": "address",
+        "start": 15,
+        "end": 56,
+        "confidence": 0.95
+      }
+    ],
+    "expected_join": false
+  },
+  {
+    "name": "rejected_multiple_same_line_heads_123 Main Street or 456 Oak Road, Denver, CO 80202",
+    "text": "North Building\n123 Main Street or 456 Oak Road, Denver, CO 80202",
+    "pieces": [
+      {
+        "kind": "address",
+        "start": 0,
+        "end": 14,
+        "confidence": 0.95
+      },
+      {
+        "kind": "address",
+        "start": 15,
+        "end": 64,
+        "confidence": 0.95
+      }
+    ],
+    "expected_join": false
+  },
+  {
+    "name": "rejected_multiple_same_line_heads_123 Main Street, 456 Oak Road, Denver, CO 80202",
+    "text": "North Building\n123 Main Street, 456 Oak Road, Denver, CO 80202",
+    "pieces": [
+      {
+        "kind": "address",
+        "start": 0,
+        "end": 14,
+        "confidence": 0.95
+      },
+      {
+        "kind": "address",
+        "start": 15,
+        "end": 62,
+        "confidence": 0.95
+      }
+    ],
+    "expected_join": false
+  },
+  {
+    "name": "rejected_multiple_same_line_heads_P.O. Box 12 or P.O. Box 34, Denver, CO 80202",
+    "text": "North Building\nP.O. Box 12 or P.O. Box 34, Denver, CO 80202",
+    "pieces": [
+      {
+        "kind": "address",
+        "start": 0,
+        "end": 14,
+        "confidence": 0.95
+      },
+      {
+        "kind": "address",
+        "start": 15,
+        "end": 59,
+        "confidence": 0.95
+      }
+    ],
+    "expected_join": false
+  },
+  {
+    "name": "rejected_multiple_same_line_heads_123 Main Street or P.O. Box 34, Denver, CO 80202",
+    "text": "North Building\n123 Main Street or P.O. Box 34, Denver, CO 80202",
+    "pieces": [
+      {
+        "kind": "address",
+        "start": 0,
+        "end": 14,
+        "confidence": 0.95
+      },
+      {
+        "kind": "address",
+        "start": 15,
+        "end": 63,
+        "confidence": 0.95
+      }
+    ],
+    "expected_join": false
+  },
+  {
+    "name": "rejected_single_name_across_newline",
+    "text": "Traynor\nRoom 12, 123 Main Street\nDenver, CO 80202",
+    "pieces": [
+      {
+        "kind": "address",
+        "start": 0,
+        "end": 7,
+        "confidence": 0.95
+      },
+      {
+        "kind": "address",
+        "start": 8,
+        "end": 49,
+        "confidence": 0.95
+      }
+    ],
+    "expected_join": false
+  },
+  {
+    "name": "rejected_uppercase_name",
+    "text": "PRIVACY Room 12, 123 Main Street\nDenver, CO 80202",
+    "pieces": [
+      {
+        "kind": "address",
+        "start": 0,
+        "end": 7,
+        "confidence": 0.95
+      },
+      {
+        "kind": "address",
+        "start": 8,
+        "end": 49,
+        "confidence": 0.95
+      }
+    ],
+    "expected_join": false
+  },
+  {
+    "name": "rejected_normalized_paragraph_'\\r\\r'",
+    "text": "North Building\r\r123 Main Street\nDenver, CO 80202",
+    "pieces": [
+      {
+        "kind": "address",
+        "start": 0,
+        "end": 14,
+        "confidence": 0.95
+      },
+      {
+        "kind": "address",
+        "start": 16,
+        "end": 48,
+        "confidence": 0.95
+      }
+    ],
+    "expected_join": false
+  },
+  {
+    "name": "rejected_normalized_paragraph_'\\r \\r'",
+    "text": "North Building\r \r123 Main Street\nDenver, CO 80202",
+    "pieces": [
+      {
+        "kind": "address",
+        "start": 0,
+        "end": 14,
+        "confidence": 0.95
+      },
+      {
+        "kind": "address",
+        "start": 17,
+        "end": 49,
+        "confidence": 0.95
+      }
+    ],
+    "expected_join": false
+  },
+  {
+    "name": "rejected_normalized_paragraph_'\\r\\n\\r'",
+    "text": "North Building\r\n\r123 Main Street\nDenver, CO 80202",
+    "pieces": [
+      {
+        "kind": "address",
+        "start": 0,
+        "end": 14,
+        "confidence": 0.95
+      },
+      {
+        "kind": "address",
+        "start": 17,
+        "end": 49,
+        "confidence": 0.95
+      }
+    ],
+    "expected_join": false
+  },
+  {
+    "name": "rejected_normalized_paragraph_'\\x85\\x85'",
+    "text": "North Building\u0085\u0085123 Main Street\nDenver, CO 80202",
+    "pieces": [
+      {
+        "kind": "address",
+        "start": 0,
+        "end": 14,
+        "confidence": 0.95
+      },
+      {
+        "kind": "address",
+        "start": 18,
+        "end": 50,
+        "confidence": 0.95
+      }
+    ],
+    "expected_join": false
+  },
+  {
+    "name": "rejected_normalized_paragraph_'\\u2028\\u2028'",
+    "text": "North Building\u2028\u2028123 Main Street\nDenver, CO 80202",
+    "pieces": [
+      {
+        "kind": "address",
+        "start": 0,
+        "end": 14,
+        "confidence": 0.95
+      },
+      {
+        "kind": "address",
+        "start": 20,
+        "end": 52,
+        "confidence": 0.95
+      }
+    ],
+    "expected_join": false
+  },
+  {
+    "name": "rejected_normalized_paragraph_'\\u2029\\u2029'",
+    "text": "North Building\u2029\u2029123 Main Street\nDenver, CO 80202",
+    "pieces": [
+      {
+        "kind": "address",
+        "start": 0,
+        "end": 14,
+        "confidence": 0.95
+      },
+      {
+        "kind": "address",
+        "start": 20,
+        "end": 52,
+        "confidence": 0.95
+      }
+    ],
+    "expected_join": false
+  },
+  {
+    "name": "rejected_unsupported_destination_123 Main Street or 456 Oak Terrace, Denver, CO 80202",
+    "text": "North Building\n123 Main Street or 456 Oak Terrace, Denver, CO 80202",
+    "pieces": [
+      {
+        "kind": "address",
+        "start": 0,
+        "end": 14,
+        "confidence": 0.95
+      },
+      {
+        "kind": "address",
+        "start": 15,
+        "end": 67,
+        "confidence": 0.95
+      }
+    ],
+    "expected_join": false
+  },
+  {
+    "name": "rejected_unsupported_destination_123 Main Street or 456 Broadway, Denver, CO 80202",
+    "text": "North Building\n123 Main Street or 456 Broadway, Denver, CO 80202",
+    "pieces": [
+      {
+        "kind": "address",
+        "start": 0,
+        "end": 14,
+        "confidence": 0.95
+      },
+      {
+        "kind": "address",
+        "start": 15,
+        "end": 64,
+        "confidence": 0.95
+      }
+    ],
+    "expected_join": false
+  },
+  {
+    "name": "rejected_unsupported_destination_123 Main Street or PO Box No. 456, Denver, CO 80202",
+    "text": "North Building\n123 Main Street or PO Box No. 456, Denver, CO 80202",
+    "pieces": [
+      {
+        "kind": "address",
+        "start": 0,
+        "end": 14,
+        "confidence": 0.95
+      },
+      {
+        "kind": "address",
+        "start": 15,
+        "end": 66,
+        "confidence": 0.95
+      }
+    ],
+    "expected_join": false
+  },
+  {
+    "name": "rejected_unsupported_destination_123 Main Street and 456 Oak Terrace, Denver, CO 80202",
+    "text": "North Building\n123 Main Street and 456 Oak Terrace, Denver, CO 80202",
+    "pieces": [
+      {
+        "kind": "address",
+        "start": 0,
+        "end": 14,
+        "confidence": 0.95
+      },
+      {
+        "kind": "address",
+        "start": 15,
+        "end": 68,
+        "confidence": 0.95
+      }
+    ],
+    "expected_join": false
+  },
+  {
+    "name": "rejected_unsupported_destination_123 Main Street OR 456 Broadway, Denver, CO 80202",
+    "text": "North Building\n123 Main Street OR 456 Broadway, Denver, CO 80202",
+    "pieces": [
+      {
+        "kind": "address",
+        "start": 0,
+        "end": 14,
+        "confidence": 0.95
+      },
+      {
+        "kind": "address",
+        "start": 15,
+        "end": 64,
+        "confidence": 0.95
+      }
+    ],
+    "expected_join": false
+  },
+  {
+    "name": "rejected_unsupported_destination_123 Main Street, 456 Oak Terrace, Denver, CO 80202",
+    "text": "North Building\n123 Main Street, 456 Oak Terrace, Denver, CO 80202",
+    "pieces": [
+      {
+        "kind": "address",
+        "start": 0,
+        "end": 14,
+        "confidence": 0.95
+      },
+      {
+        "kind": "address",
+        "start": 15,
+        "end": 65,
+        "confidence": 0.95
+      }
+    ],
+    "expected_join": false
+  },
+  {
+    "name": "rejected_unsupported_destination_123 Main Street, 456 Broadway, Denver, CO 80202",
+    "text": "North Building\n123 Main Street, 456 Broadway, Denver, CO 80202",
+    "pieces": [
+      {
+        "kind": "address",
+        "start": 0,
+        "end": 14,
+        "confidence": 0.95
+      },
+      {
+        "kind": "address",
+        "start": 15,
+        "end": 62,
+        "confidence": 0.95
+      }
+    ],
+    "expected_join": false
+  },
+  {
+    "name": "rejected_unsupported_destination_123 Main Street, PO Box No. 456, Denver, CO 80202",
+    "text": "North Building\n123 Main Street, PO Box No. 456, Denver, CO 80202",
+    "pieces": [
+      {
+        "kind": "address",
+        "start": 0,
+        "end": 14,
+        "confidence": 0.95
+      },
+      {
+        "kind": "address",
+        "start": 15,
+        "end": 64,
+        "confidence": 0.95
+      }
+    ],
+    "expected_join": false
+  },
+  {
+    "name": "rejected_name_without_postal_heading",
+    "text": "Jane Room 12, 123 Main Street\nDenver, CO 80202",
+    "pieces": [
+      {
+        "kind": "address",
+        "start": 0,
+        "end": 4,
+        "confidence": 0.95
+      },
+      {
+        "kind": "address",
+        "start": 5,
+        "end": 46,
+        "confidence": 0.95
+      }
+    ],
+    "expected_join": false
+  },
+  {
+    "name": "rejected_named_unit_tail_Jane",
+    "text": "Office delivery location\nJane Doe Room 12, 123 Main Street\nDenver, CO 80202",
+    "pieces": [
+      {
+        "kind": "address",
+        "start": 25,
+        "end": 29,
+        "confidence": 0.95
+      },
+      {
+        "kind": "address",
+        "start": 30,
+        "end": 75,
+        "confidence": 0.95
+      }
+    ],
+    "expected_join": false
+  },
+  {
+    "name": "rejected_named_unit_tail_Privacy",
+    "text": "Office delivery location\nPrivacy Office Room 12, 123 Main Street\nDenver, CO 80202",
+    "pieces": [
+      {
+        "kind": "address",
+        "start": 25,
+        "end": 32,
+        "confidence": 0.95
+      },
+      {
+        "kind": "address",
+        "start": 33,
+        "end": 81,
+        "confidence": 0.95
+      }
+    ],
+    "expected_join": false
+  },
+  {
+    "name": "rejected_whole_named_unit_prefix",
+    "text": "Office delivery location\nJane Doe Room 12\n123 Main Street\nDenver, CO 80202",
+    "pieces": [
+      {
+        "kind": "address",
+        "start": 25,
+        "end": 41,
+        "confidence": 0.95
+      },
+      {
+        "kind": "address",
+        "start": 42,
+        "end": 74,
+        "confidence": 0.95
+      }
+    ],
+    "expected_join": false
+  },
+  {
+    "name": "valid_cr_single_line_gaps",
+    "text": "Office delivery location\rNorth Building\r123 Main Street\rDenver, CO 80202",
+    "pieces": [
+      {
+        "kind": "address",
+        "start": 25,
+        "end": 39,
+        "confidence": 0.95
+      },
+      {
+        "kind": "address",
+        "start": 40,
+        "end": 72,
+        "confidence": 0.95
+      }
+    ],
+    "expected_join": true
+  },
+  {
+    "name": "valid_oregon_state_not_conjunction",
+    "text": "Office delivery location\nNorth Building\n123 Main Street\nPortland, OR 97201",
+    "pieces": [
+      {
+        "kind": "address",
+        "start": 25,
+        "end": 39,
+        "confidence": 0.95
+      },
+      {
+        "kind": "address",
+        "start": 40,
+        "end": 74,
+        "confidence": 0.95
+      }
+    ],
+    "expected_join": true
+  },
+  {
+    "name": "rejected_unparsed_second_delivery_head_123 Main Street 456 Broadway, Denver, CO 80202",
+    "text": "North Building\n123 Main Street 456 Broadway, Denver, CO 80202",
+    "pieces": [
+      {
+        "kind": "address",
+        "start": 0,
+        "end": 14,
+        "confidence": 0.95
+      },
+      {
+        "kind": "address",
+        "start": 15,
+        "end": 61,
+        "confidence": 0.95
+      }
+    ],
+    "expected_join": false
+  },
+  {
+    "name": "rejected_unparsed_second_delivery_head_123 Main Street 456 Oak Terrace, Denver, CO 80202",
+    "text": "North Building\n123 Main Street 456 Oak Terrace, Denver, CO 80202",
+    "pieces": [
+      {
+        "kind": "address",
+        "start": 0,
+        "end": 14,
+        "confidence": 0.95
+      },
+      {
+        "kind": "address",
+        "start": 15,
+        "end": 64,
+        "confidence": 0.95
+      }
+    ],
+    "expected_join": false
+  },
+  {
+    "name": "rejected_unparsed_second_delivery_head_123 Main Street PO Box No. 456, Denver, CO 80202",
+    "text": "North Building\n123 Main Street PO Box No. 456, Denver, CO 80202",
+    "pieces": [
+      {
+        "kind": "address",
+        "start": 0,
+        "end": 14,
+        "confidence": 0.95
+      },
+      {
+        "kind": "address",
+        "start": 15,
+        "end": 63,
+        "confidence": 0.95
+      }
+    ],
+    "expected_join": false
+  },
+  {
+    "name": "rejected_any_numeric_following_field_456-B Broadway",
+    "text": "North Building\n123 Main Street, 456-B Broadway, Denver, CO 80202",
+    "pieces": [
+      {
+        "kind": "address",
+        "start": 0,
+        "end": 14,
+        "confidence": 0.95
+      },
+      {
+        "kind": "address",
+        "start": 15,
+        "end": 64,
+        "confidence": 0.95
+      }
+    ],
+    "expected_join": false
+  },
+  {
+    "name": "rejected_any_numeric_following_field_456B Broadway",
+    "text": "North Building\n123 Main Street, 456B Broadway, Denver, CO 80202",
+    "pieces": [
+      {
+        "kind": "address",
+        "start": 0,
+        "end": 14,
+        "confidence": 0.95
+      },
+      {
+        "kind": "address",
+        "start": 15,
+        "end": 63,
+        "confidence": 0.95
+      }
+    ],
+    "expected_join": false
+  },
+  {
+    "name": "rejected_any_numeric_following_field_456Broadway",
+    "text": "North Building\n123 Main Street, 456Broadway, Denver, CO 80202",
+    "pieces": [
+      {
+        "kind": "address",
+        "start": 0,
+        "end": 14,
+        "confidence": 0.95
+      },
+      {
+        "kind": "address",
+        "start": 15,
+        "end": 61,
+        "confidence": 0.95
+      }
+    ],
+    "expected_join": false
+  },
+  {
+    "name": "rejected_any_numeric_following_field_456/2 Oak Terrace",
+    "text": "North Building\n123 Main Street, 456/2 Oak Terrace, Denver, CO 80202",
+    "pieces": [
+      {
+        "kind": "address",
+        "start": 0,
+        "end": 14,
+        "confidence": 0.95
+      },
+      {
+        "kind": "address",
+        "start": 15,
+        "end": 67,
+        "confidence": 0.95
+      }
+    ],
+    "expected_join": false
+  },
+  {
+    "name": "rejected_any_numeric_following_field_456-B Oak Terrace",
+    "text": "North Building\n123 Main Street, 456-B Oak Terrace, Denver, CO 80202",
+    "pieces": [
+      {
+        "kind": "address",
+        "start": 0,
+        "end": 14,
+        "confidence": 0.95
+      },
+      {
+        "kind": "address",
+        "start": 15,
+        "end": 67,
+        "confidence": 0.95
+      }
+    ],
+    "expected_join": false
+  },
+  {
+    "name": "conservative_separate_numeric_zip_field_rejected",
+    "text": "North Building\n123 Main Street\nDenver, CO\n80202",
+    "pieces": [
+      {
+        "kind": "address",
+        "start": 0,
+        "end": 14,
+        "confidence": 0.95
+      },
+      {
+        "kind": "address",
+        "start": 15,
+        "end": 47,
+        "confidence": 0.95
+      }
+    ],
+    "expected_join": false
+  },
+  {
+    "name": "seen-authored-address-v2-positive-05-00",
+    "text": "Keep the completed record with its supporting pages. Send the paper copy to:\nNighthorse Campbell Native Health Building\n13055 East 17th Avenue\nMail Stop F802\nAurora, CO 80045\nUse a separate cover sheet for any questions about the submission. The reception coordinator records when each package arrives.",
+    "pieces": [
+      {
+        "kind": "address",
+        "start": 77,
+        "end": 119,
+        "confidence": 0.5946587920188904
+      },
+      {
+        "kind": "address",
+        "start": 120,
+        "end": 174,
+        "confidence": 0.9868423938751221
+      }
+    ],
+    "expected_join": true
+  },
+  {
+    "name": "seen-authored-address-v2-positive-05-02",
+    "text": "The records coordinator has signed the covering letter. Correspondence delivery location:\nNighthorse Campbell Native Health Building\n13055 East 17th Avenue\nMail Stop F802\nAurora, CO 80045\nSignature role: records coordinator\nThe signed covering letter stays with the enclosed material during review.",
+    "pieces": [
+      {
+        "kind": "address",
+        "start": 90,
+        "end": 132,
+        "confidence": 0.6035457849502563
+      },
+      {
+        "kind": "address",
+        "start": 133,
+        "end": 187,
+        "confidence": 0.9779676795005798
+      }
+    ],
+    "expected_join": true
+  },
+  {
+    "name": "seen-authored-address-v2-positive-05-03",
+    "text": "Reference code: REF/27-0042\nAttention: intake coordinator\nDelivery location:\nNighthorse Campbell Native Health Building\n13055 East 17th Avenue\nMail Stop F802\nAurora, CO 80045\nPlease repeat the reference code on the cover sheet. The intake coordinator checks the pages before passing the record to the review team.",
+    "pieces": [
+      {
+        "kind": "address",
+        "start": 77,
+        "end": 119,
+        "confidence": 0.676910400390625
+      },
+      {
+        "kind": "address",
+        "start": 120,
+        "end": 174,
+        "confidence": 0.9784791469573975
+      }
+    ],
+    "expected_join": true
+  },
+  {
+    "name": "seen-authored-address-v2-positive-05-05",
+    "text": "A staff member will meet visitors at the following location:\nNighthorse Campbell Native Health Building\n13055 East 17th Avenue\nMail Stop F802\nAurora, CO 80045\nThe meeting room will be confirmed at reception. The reception coordinator can answer questions about the visit schedule; the nearby facility is listed separately on the visitor map.",
+    "pieces": [
+      {
+        "kind": "address",
+        "start": 61,
+        "end": 103,
+        "confidence": 0.6942225098609924
+      },
+      {
+        "kind": "address",
+        "start": 104,
+        "end": 158,
+        "confidence": 0.9862729907035828
+      }
+    ],
+    "expected_join": true
+  },
+  {
+    "name": "seen-authored-address-v2-positive-08-01",
+    "text": "Office delivery location\nE231\n1301 North Columbia Road Stop 9037\nGrand Forks, ND 58202-9037\nNext contact: reception coordinator\nThe next contact field names the staff role responsible for acknowledging a delivery. Keep the delivery location and that field on separate lines.",
+    "pieces": [
+      {
+        "kind": "address",
+        "start": 25,
+        "end": 29,
+        "confidence": 0.6473782062530518
+      },
+      {
+        "kind": "address",
+        "start": 30,
+        "end": 91,
+        "confidence": 0.9650918245315552
+      }
+    ],
+    "expected_join": true
+  },
+  {
+    "name": "seen-authored-address-v2-positive-08-04",
+    "text": "Delivery list\nEntry reference: LIST-27-0068\nLocation:\nE231\n1301 North Columbia Road Stop 9037\nGrand Forks, ND 58202-9037\nRecord title: collection review\nEntry status: awaiting receipt\nThe list keeps the entry reference beside the delivery details so staff can follow the record through the process.",
+    "pieces": [
+      {
+        "kind": "address",
+        "start": 54,
+        "end": 58,
+        "confidence": 0.6944155693054199
+      },
+      {
+        "kind": "address",
+        "start": 59,
+        "end": 120,
+        "confidence": 0.9401745200157166
+      }
+    ],
+    "expected_join": true
+  },
+  {
+    "name": "seen-authored-address-v2-positive-18-01",
+    "text": "Office delivery location\nTraynor Room 2076, 7600 Sand Point Way NE, Building 4, Seattle, WA 98115\nNext contact: reception coordinator\nThe next contact field names the staff role responsible for acknowledging a delivery. Keep the delivery location and that field on separate lines.",
+    "pieces": [
+      {
+        "kind": "address",
+        "start": 25,
+        "end": 32,
+        "confidence": 0.6659850478172302
+      },
+      {
+        "kind": "address",
+        "start": 33,
+        "end": 97,
+        "confidence": 0.9680730104446411
+      }
+    ],
+    "expected_join": true
+  },
+  {
+    "name": "structural_unknown_middle_Jane Doe",
+    "text": "North Building\n123 Main Street\nJane Doe\nDenver, CO 80202",
+    "pieces": [
+      {
+        "kind": "address",
+        "start": 0,
+        "end": 14,
+        "confidence": 0.95
+      },
+      {
+        "kind": "address",
+        "start": 15,
+        "end": 56,
+        "confidence": 0.95
+      }
+    ],
+    "expected_join": false
+  },
+  {
+    "name": "structural_unknown_middle_Privacy Office",
+    "text": "North Building\n123 Main Street\nPrivacy Office\nDenver, CO 80202",
+    "pieces": [
+      {
+        "kind": "address",
+        "start": 0,
+        "end": 14,
+        "confidence": 0.95
+      },
+      {
+        "kind": "address",
+        "start": 15,
+        "end": 62,
+        "confidence": 0.95
+      }
+    ],
+    "expected_join": false
+  },
+  {
+    "name": "structural_unknown_middle_Please deliver here",
+    "text": "North Building\n123 Main Street\nPlease deliver here\nDenver, CO 80202",
+    "pieces": [
+      {
+        "kind": "address",
+        "start": 0,
+        "end": 14,
+        "confidence": 0.95
+      },
+      {
+        "kind": "address",
+        "start": 15,
+        "end": 67,
+        "confidence": 0.95
+      }
+    ],
+    "expected_join": false
+  },
+  {
+    "name": "structural_unknown_middle_Unspecified routing",
+    "text": "North Building\n123 Main Street\nUnspecified routing\nDenver, CO 80202",
+    "pieces": [
+      {
+        "kind": "address",
+        "start": 0,
+        "end": 14,
+        "confidence": 0.95
+      },
+      {
+        "kind": "address",
+        "start": 15,
+        "end": 67,
+        "confidence": 0.95
+      }
+    ],
+    "expected_join": false
+  },
+  {
+    "name": "structural_unknown_middle_456-B Broadway",
+    "text": "North Building\n123 Main Street\n456-B Broadway\nDenver, CO 80202",
+    "pieces": [
+      {
+        "kind": "address",
+        "start": 0,
+        "end": 14,
+        "confidence": 0.95
+      },
+      {
+        "kind": "address",
+        "start": 15,
+        "end": 62,
+        "confidence": 0.95
+      }
+    ],
+    "expected_join": false
+  },
+  {
+    "name": "structural_unknown_middle_PO Box No. 456",
+    "text": "North Building\n123 Main Street\nPO Box No. 456\nDenver, CO 80202",
+    "pieces": [
+      {
+        "kind": "address",
+        "start": 0,
+        "end": 14,
+        "confidence": 0.95
+      },
+      {
+        "kind": "address",
+        "start": 15,
+        "end": 62,
+        "confidence": 0.95
+      }
+    ],
+    "expected_join": false
+  }
+]

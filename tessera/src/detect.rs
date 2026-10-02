@@ -44,15 +44,32 @@ impl Tessera {
             &tokens,
             &retained,
             chunk::WINDOW_TOKENS,
-            chunk::OVERLAP_TOKENS,
+            detector.window_overlap(),
             mask.map(|_| outside_mask.as_slice()),
         )? {
             let range = w.tok_start..w.tok_end;
-            let mut probs = detector.forward(&feats[range.clone()]);
+            let mut probs = detector.forward(&feats[range.clone()])?;
             model::kernels::softmax_rows(&mut probs, detector.labels());
-            for s in model::bio::decode_detector(&probs, &masked[range.clone()], &breaks[range]) {
+            let decoded = if detector.uses_address_continuation() {
+                let bounds: Vec<_> = retained[range.clone()]
+                    .iter()
+                    .map(|&i| (tokens[i].start, tokens[i].end))
+                    .collect();
+                model::bio::decode_detector_with_text(
+                    text,
+                    &bounds,
+                    &probs,
+                    &masked[range.clone()],
+                    &breaks[range.clone()],
+                )
+            } else {
+                model::bio::decode_detector(&probs, &masked[range.clone()], &breaks[range.clone()])
+            };
+            for s in decoded {
                 let (first, last) = (w.tok_start + s.first, w.tok_start + s.last);
-                if chunk::trusted(&w, first, last) && s.confidence >= policy::detect_min(s.kind) {
+                if chunk::trusted_with_margin(&w, first, last, detector.context_margin())
+                    && s.confidence >= policy::detect_min(s.kind)
+                {
                     let mut entity =
                         span_entity(&tokens, &retained, s.kind, (first, last), s.confidence);
                     if s.kind == Kind::Address {
@@ -87,7 +104,7 @@ impl Tessera {
     pub(crate) fn detect_trace(&self, text: &str) -> Result<internal::DetectTrace, Error> {
         let (model, detector) = self.detector()?;
         let inputs = detector_inputs(text, &rules::scan(text, &[]), model, None);
-        let logits = detector.forward(&inputs.feats);
+        let logits = detector.forward(&inputs.feats)?;
         let mut probs = logits.clone();
         model::kernels::softmax_rows(&mut probs, detector.labels());
         let decoded = probs

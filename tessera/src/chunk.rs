@@ -320,9 +320,14 @@ fn make(
 /// within the margin of A's end) and in the next window B (its start within the margin of B's
 /// start) needs `L > OVERLAP_TOKENS - 2 * CONTEXT_MARGIN_TOKENS = MAX_ENTITY_TOKENS`, a
 /// contradiction; so every such span is trusted in at least one window.
+#[cfg(test)]
 pub(crate) fn trusted(w: &Window, first: usize, last: usize) -> bool {
-    (w.tok_start == w.piece_start || first >= w.tok_start + CONTEXT_MARGIN_TOKENS)
-        && (w.tok_end == w.piece_end || last + CONTEXT_MARGIN_TOKENS < w.tok_end)
+    trusted_with_margin(w, first, last, CONTEXT_MARGIN_TOKENS)
+}
+
+pub(crate) fn trusted_with_margin(w: &Window, first: usize, last: usize, margin: usize) -> bool {
+    (w.tok_start == w.piece_start || first >= w.tok_start + margin)
+        && (w.tok_end == w.piece_end || last + margin < w.tok_end)
 }
 
 /// Deduplicates predictions from overlapping windows and resolves overlaps: exact duplicates
@@ -682,5 +687,39 @@ mod tests {
         let out = super::merge(vec![m(2, 10), m(15, 25)], Some(&mask));
         assert_eq!(out.len(), 1);
         assert_eq!((out[0].start, out[0].end), (2, 10));
+    }
+    #[test]
+    fn context96_overlap_trusts_every_256_token_span_and_preserves_piece_edges() {
+        let text = "word ".repeat(4200);
+        let tokens = crate::token::tokenize(&text);
+        let retained: Vec<_> = tokens
+            .iter()
+            .enumerate()
+            .filter_map(|(i, t)| crate::features::is_content(t).then_some(i))
+            .collect();
+        let windows = super::windows(&tokens, &retained, WINDOW_TOKENS, 448, None).unwrap();
+        for first in 0..retained.len() {
+            for len in [1, 32, 96, 256] {
+                if first + len <= retained.len() {
+                    assert!(
+                        windows.iter().any(|w| first >= w.tok_start
+                            && first + len <= w.tok_end
+                            && trusted_with_margin(w, first, first + len - 1, 96)),
+                        "{first} {len}"
+                    );
+                }
+            }
+        }
+        let internal = Window {
+            start: 0,
+            end: 1000,
+            tok_start: 500,
+            tok_end: 1500,
+            piece_start: 0,
+            piece_end: 2000,
+        };
+        assert!(trusted(&internal, 564, 600));
+        assert!(!trusted_with_margin(&internal, 564, 600, 96));
+        assert!(trusted_with_margin(&internal, 596, 650, 96));
     }
 }

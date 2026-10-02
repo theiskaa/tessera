@@ -48,6 +48,40 @@ pub fn decode_detector(
     spans_of(probs, &labels, paragraph_break)
 }
 
+/// Decodes with conservative US postal continuation before confidence filtering.
+/// Token byte bounds correspond exactly to the probability rows; invalid bounds disable
+/// continuation. The legacy decoder and its contract remain unchanged.
+pub fn decode_detector_with_text(
+    text: &str,
+    token_spans: &[(usize, usize)],
+    probs: &[f32],
+    masked: &[bool],
+    paragraph_break: &[bool],
+) -> Vec<DetectedSpan> {
+    let labels = viterbi(probs, masked, paragraph_break);
+    let spans = spans_of(probs, &labels, paragraph_break);
+    if token_spans.len() != labels.len()
+        || token_spans.iter().any(|&(start, end)| {
+            start >= end
+                || end > text.len()
+                || !text.is_char_boundary(start)
+                || !text.is_char_boundary(end)
+        })
+        || token_spans.windows(2).any(|pair| pair[0].1 > pair[1].0)
+    {
+        return spans;
+    }
+    super::address_continuation::join(
+        text,
+        token_spans,
+        probs,
+        &labels,
+        masked,
+        paragraph_break,
+        spans,
+    )
+}
+
 /// The cost of label `to` after label `from` (`None` at the start or after a paragraph
 /// break): an `I-X` that does not continue an `X` span is impossible.
 fn transition(from: Option<usize>, to: usize) -> f32 {

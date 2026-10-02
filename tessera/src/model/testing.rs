@@ -210,7 +210,10 @@ mod tests {
         let text = "Nino Beridze, Tbilisi";
         let tokens = tokenize(text);
         let feats = featurize(text, &tokens, &[], None, &FeatureConfig::default(), None);
-        assert_eq!(wide.forward(&feats).len(), feats.len() * DETECTOR_LABELS);
+        assert_eq!(
+            wide.forward(&feats).unwrap().len(),
+            feats.len() * DETECTOR_LABELS
+        );
 
         let bytes = random_detector(3, 6, true, MAX_HIDDEN + 1);
         let bundle = Bundle::parse(&bytes, None).unwrap();
@@ -256,7 +259,7 @@ mod tests {
             .map(|(f, _)| f)
             .collect();
         assert_eq!(feats.len(), 37);
-        let mut probs = detector.forward(&feats);
+        let mut probs = detector.forward(&feats).unwrap();
         kernels::softmax_rows(&mut probs, DETECTOR_LABELS);
         assert_eq!(probs.len(), 37 * DETECTOR_LABELS);
         for row in probs.chunks(DETECTOR_LABELS) {
