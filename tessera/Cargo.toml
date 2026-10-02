@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 repository.workspace = true
+readme = "../README.md"
 description = "Find people, organizations, addresses, emails, and phone numbers in text and assemble them into contacts, locally"
 keywords = ["ner", "address", "contacts", "wasm", "extraction"]
 categories = ["text-processing", "wasm"]
