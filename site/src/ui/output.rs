@@ -13,11 +13,7 @@ use crate::protocol::{Found, FoundKind};
 /// `source` for the entity with its confidence.
 fn extra(found: &Found) -> String {
     match found.kind {
-        FoundKind::Phone => [found.normalized.as_deref(), found.region.as_deref()]
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>()
-            .join(" "),
+        FoundKind::Phone => found.normalized.clone().unwrap_or_default(),
         FoundKind::Email => format!("{} {:.2}", found.source, found.confidence),
         FoundKind::Person | FoundKind::Org | FoundKind::Address => {
             format!("{} {:.3}", found.source, found.confidence)
@@ -149,7 +145,7 @@ pub(crate) fn OutputPane(state: DemoState) -> impl IntoView {
                     </span>
                     <select
                         class="hint"
-                        aria-label="region for phone numbers without a country code"
+                        aria-label="phone number format"
                         on:change=move |ev| state.set_hint(event_target_value(&ev))
                     >
                         {HINTS
@@ -157,7 +153,7 @@ pub(crate) fn OutputPane(state: DemoState) -> impl IntoView {
                             .map(|&h| {
                                 view! {
                                     <option value=h prop:selected=move || state.hint.get() == h>
-                                        {h}
+                                        {if h == "US" { "national numbers" } else { h }}
                                     </option>
                                 }
                             })

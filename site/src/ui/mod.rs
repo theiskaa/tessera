@@ -25,14 +25,19 @@ use parse::ParseBox;
 const WORKER_URL: &str = "./worker_loader.js";
 
 const SOURCE_URL: &str = "https://github.com/theiskaa/tessera";
+const DOCS_URL: &str = "https://github.com/theiskaa/tessera/blob/main/docs/getting-started.md";
+const MODEL_URL: &str = "https://github.com/theiskaa/tessera/blob/main/docs/model.md";
 
 /// The JavaScript API as `tessera/js/index.d.ts` declares it. The import path is only an example
 /// of a relative import: this page runs the Rust crate in its own worker and does not serve the
 /// package. The field comments name the main fields, not all of them.
 const SNIPPET: &str = "import { createTessera } from './tessera/index.js'
 
-const tessera = await createTessera({ modelUrl, integrity })
-const found = await tessera.detect(text, { countryHint: ['US'] })
+const tessera = await createTessera({
+  modelUrl: './tessera-v1.safetensors',
+  worker: true,
+})
+const found = await tessera.detect(text)
 // [{ kind: 'person' | 'org' | 'address' | 'email' | 'phone',
 //    text, start, end, confidence, source, ... }]
 // addresses also carry components: [{ label, text, start, end, confidence }]
@@ -131,6 +136,7 @@ fn Header() -> impl IntoView {
             </div>
             <nav aria-label="Links">
                 <a href=SOURCE_URL>"[ source ]"</a>
+                <a href=DOCS_URL>"[ docs ]"</a>
                 <a href="#demo" class="wide-only">
                     "[ live demo ]"
                 </a>
@@ -143,13 +149,14 @@ fn Header() -> impl IntoView {
 fn Intro() -> impl IntoView {
     view! {
         <section class="intro">
-            <h1>"A tiny model that finds contact details in text"</h1>
+            <h1>"A tiny model for finding contact details in text"</h1>
             <pre class="code">{highlight::render(highlight::javascript(SNIPPET))}</pre>
             <p>
                 "Emails and phone numbers are found by validating rules, people, organizations and addresses by an int8 network, and each address is split into its parts by a second one, all in WebAssembly. Offsets are UTF-8 bytes from Rust and UTF-16 code units from JavaScript."
             </p>
             <p>
-                "US demo using the previous experimental model. A new US-only model and independent accuracy results are pending."
+                "An experimental model. Names, organizations and addresses can be missed or mislabeled. Your text is processed in this browser. "
+                <a href=MODEL_URL>"Read the model's results and limitations."</a>
             </p>
         </section>
     }
@@ -175,8 +182,10 @@ fn Footer(state: DemoState) -> impl IntoView {
                     .collect_view()}
             </span>
             <span>
+                "code MIT or Apache-2.0 · weights CC BY 4.0 · "
+                <a href="./NOTICE">"source notices"</a>
                 {format!(
-                    "code MIT or Apache-2.0 · model trained on © OpenStreetMap contributors, ODbL · v{}",
+                    " · © OpenStreetMap contributors, ODbL · v{}",
                     env!("CARGO_PKG_VERSION"),
                 )}
             </span>

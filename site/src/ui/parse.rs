@@ -14,7 +14,7 @@ use crate::protocol::{Found, Request};
 const DEBOUNCE: Duration = Duration::from_millis(250);
 
 /// US address used in the parser demo.
-const EXAMPLES: [(&str, &str); 1] = [("US", "742 Evergreen Terrace, Springfield, OR 97477, USA")];
+const EXAMPLES: [(&str, &str); 1] = [("example", "742 Evergreen Terrace, Springfield, OR 97477")];
 
 /// The parser's answer for one input, kept with that input.
 #[derive(Debug, Clone, PartialEq)]
