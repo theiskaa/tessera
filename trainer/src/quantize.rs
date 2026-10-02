@@ -315,6 +315,18 @@ pub fn load_best<B: Backend>(
     cfg: &crate::config::Config,
     device: &B::Device,
 ) -> anyhow::Result<TaggerNet<B>> {
+    let operator = crate::diagnostic_operator::require_deployable(run_dir, cfg)?;
+    load_best_for_operator(run_dir, cfg, device, operator)
+}
+
+/// Load weights only after the caller has verified their diagnostic forward operator.
+pub(crate) fn load_best_for_operator<B: Backend>(
+    run_dir: &Path,
+    cfg: &crate::config::Config,
+    device: &B::Device,
+    operator: crate::diagnostic_operator::ForwardOperator,
+) -> anyhow::Result<TaggerNet<B>> {
+    crate::diagnostic_operator::verify_binding(run_dir, cfg, operator)?;
     cfg.tagger_net_config()
         .init::<B>(device)
         .load_file(
@@ -355,6 +367,7 @@ fn artifact_hashes(run_dir: &Path, quantized: &Path) -> anyhow::Result<serde_jso
 
 /// Fail closed on legacy gates and on any changed run artifact. Used for both network tasks.
 pub(crate) fn verify_gate(run_dir: &Path) -> anyhow::Result<()> {
+    reject_diagnostic_run(run_dir)?;
     let path = run_dir.join("quantize.json");
     let gate: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&path).with_context(|| {
@@ -480,13 +493,20 @@ fn validation_scores<B: Backend>(
                 "detector quantization validation has no encoded documents"
             );
             let gold: Vec<_> = docs.iter().map(|d| d.gold.clone()).collect();
-            let score = |m: &TaggerNet<B>| {
-                detector::score(
+            let score = |m: &TaggerNet<B>| -> anyhow::Result<_> {
+                let raw = detector::predict_scored_with_operator(
+                    m,
+                    &docs,
+                    cfg.train.batch_size,
+                    device,
+                    crate::diagnostic_operator::deployable(cfg),
+                )?;
+                Ok(detector::score(
                     &gold,
-                    &detector::predict(m, &docs, cfg.train.batch_size, device),
-                )
+                    &detector::apply_confidence_policy(&raw),
+                ))
             };
-            let (f32_score, int8_score) = (score(model), score(int8_model));
+            let (f32_score, int8_score) = (score(model)?, score(int8_model)?);
             fields.insert(
                 "valid_f32_macro_exact_f1".into(),
                 f32_score.macro_exact_f1.into(),
@@ -505,6 +525,7 @@ fn validation_scores<B: Backend>(
 /// than the allowed margin.
 pub fn run<B: Backend>(run_dir: &Path, device: &B::Device) -> anyhow::Result<()> {
     invalidate_gate(run_dir)?;
+    reject_diagnostic_run(run_dir)?;
     crate::train::verify_input_snapshot(run_dir)?;
     let initial_hashes = serde_json::json!({
         "config_sha256": file_hash(&run_dir.join("config.toml"))?,
@@ -512,6 +533,7 @@ pub fn run<B: Backend>(run_dir: &Path, device: &B::Device) -> anyhow::Result<()>
         "input_snapshot_sha256": file_hash(&run_dir.join("input_snapshot.json"))?,
     });
     let cfg = crate::config::load(&run_dir.join("config.toml"))?;
+    verify_learning_result(run_dir, &cfg)?;
     let net = cfg.net_name();
     let model = load_best::<B>(run_dir, &cfg, device)?;
     let tensors = extract(&model, net);
@@ -555,6 +577,58 @@ pub fn run<B: Backend>(run_dir: &Path, device: &B::Device) -> anyhow::Result<()>
     Ok(())
 }
 
+fn reject_diagnostic_run(run_dir: &Path) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        !run_dir.join("diagnostic.json").try_exists()?
+            && !run_dir
+                .join(crate::diagnostic_operator::FILE)
+                .try_exists()?,
+        "bounded learning diagnostics cannot be quantized or exported"
+    );
+    let path = run_dir.join("summary.json");
+    if path.try_exists()? {
+        let summary: serde_json::Value = serde_json::from_slice(&std::fs::read(path)?)?;
+        anyhow::ensure!(
+            summary["training_complete"] != false,
+            "incomplete training cannot be quantized or exported"
+        );
+    }
+    Ok(())
+}
+
+pub(crate) fn verify_learning_result(
+    run_dir: &Path,
+    cfg: &crate::config::Config,
+) -> anyhow::Result<()> {
+    if cfg
+        .detector
+        .as_ref()
+        .is_some_and(|d| d.learning_check.is_some())
+    {
+        let summary: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(run_dir.join("summary.json"))
+                .context("learning-checked training requires a completed summary")?,
+        )?;
+        anyhow::ensure!(
+            summary["training_complete"] == true && summary["learning_check_passed"] == true,
+            "training did not complete and pass its enforced learning check"
+        );
+        let proof: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(run_dir.join("best_learning_check.json"))
+                .context("selected checkpoint has no learning check proof")?,
+        )?;
+        anyhow::ensure!(
+            proof["passed"] == true
+                && proof["checkpoint_sha256"].as_str()
+                    == Some(file_hash(&run_dir.join("best.mpk"))?.as_str())
+                && proof["config_sha256"].as_str()
+                    == Some(file_hash(&run_dir.join("config.toml"))?.as_str()),
+            "selected checkpoint or config differs from its passing learning check"
+        );
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use burn::backend::NdArray;
@@ -579,6 +653,70 @@ mod tests {
             .as_object()
             .unwrap()
             .clone()
+    }
+
+    #[test]
+    fn bounded_diagnostic_cannot_reuse_a_passing_quantization_gate() {
+        let dir = gate_run();
+        let pending = dir.path().join("quantized.pending.safetensors");
+        std::fs::write(&pending, b"new weights").unwrap();
+        let hashes = artifact_hashes(dir.path(), &pending).unwrap();
+        publish_validated(dir.path(), &pending, &hashes, &mut passing_summary()).unwrap();
+        verify_gate(dir.path()).unwrap();
+        std::fs::write(dir.path().join("diagnostic.json"), r#"{"max_steps":2000}"#).unwrap();
+        assert!(
+            verify_gate(dir.path())
+                .unwrap_err()
+                .to_string()
+                .contains("diagnostics")
+        );
+        assert!(
+            run::<NdArray>(dir.path(), &Default::default())
+                .unwrap_err()
+                .to_string()
+                .contains("diagnostics")
+        );
+        assert!(!dir.path().join("quantize.json").exists());
+    }
+
+    #[test]
+    fn incomplete_and_failed_learning_results_cannot_ship() {
+        let dir = gate_run();
+        std::fs::write(
+            dir.path().join("summary.json"),
+            r#"{"training_complete":false}"#,
+        )
+        .unwrap();
+        assert!(reject_diagnostic_run(dir.path()).is_err());
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let cfg = crate::config::load(&root.join("configs/detector-shared-v6.toml")).unwrap();
+        for value in [
+            serde_json::json!({"training_complete":true,"learning_check_passed":false}),
+            serde_json::json!({"training_complete":true}),
+            serde_json::json!({"training_complete":false,"learning_check_passed":true}),
+        ] {
+            std::fs::write(dir.path().join("summary.json"), value.to_string()).unwrap();
+            assert!(verify_learning_result(dir.path(), &cfg).is_err());
+        }
+        std::fs::write(
+            dir.path().join("summary.json"),
+            r#"{"training_complete":true,"learning_check_passed":true}"#,
+        )
+        .unwrap();
+        assert!(verify_learning_result(dir.path(), &cfg).is_err());
+        let proof = serde_json::json!({
+            "passed": true,
+            "checkpoint_sha256": file_hash(&dir.path().join("best.mpk")).unwrap(),
+            "config_sha256": file_hash(&dir.path().join("config.toml")).unwrap(),
+        });
+        std::fs::write(
+            dir.path().join("best_learning_check.json"),
+            proof.to_string(),
+        )
+        .unwrap();
+        verify_learning_result(dir.path(), &cfg).unwrap();
+        std::fs::write(dir.path().join("best.mpk"), b"changed checkpoint").unwrap();
+        assert!(verify_learning_result(dir.path(), &cfg).is_err());
     }
 
     #[test]

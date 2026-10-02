@@ -437,6 +437,11 @@ pub fn run_addresses_model<B: Backend>(
     device: &B::Device,
 ) -> anyhow::Result<()> {
     let cfg = crate::config::load(&run_dir.join("config.toml"))?;
+    anyhow::ensure!(
+        cfg.task == crate::config::Task::Parser,
+        "parser model evaluation requires a parser config"
+    );
+    crate::diagnostic_operator::require_standard(run_dir, &cfg)?;
     let fc = cfg.features.to_tessera();
     let (names, examples) = address_examples(dir)?;
     let (kept, items) = encode_examples(&examples, &fc);
@@ -533,6 +538,11 @@ pub fn run<B: Backend>(
     device: &B::Device,
 ) -> anyhow::Result<()> {
     let cfg = crate::config::load(&run_dir.join("config.toml"))?;
+    anyhow::ensure!(
+        cfg.task == crate::config::Task::Parser,
+        "parser model evaluation requires a parser config"
+    );
+    crate::diagnostic_operator::require_standard(run_dir, &cfg)?;
     let fc = cfg.features.to_tessera();
     let shard = PathBuf::from(&cfg.data.processed).join(format!("{}.parquet", split.name()));
     let examples: Vec<LabelledExample> = read_shard(&shard, split)?

@@ -1,31 +1,52 @@
 //! Data preparation, training, evaluation, quantization, and export.
 //! Depends on `tessera` for the tokenizer and features. Never ships.
 
+mod address_prefix;
 mod baselines;
 mod bench;
 mod bodies;
 mod check;
 mod config;
+mod context_sampling;
+mod context_views;
 mod data;
 mod dataset;
 mod detect_eval;
 mod detector;
+mod diagnostic_decode;
+mod diagnostic_operator;
+mod entity_context;
 mod eval;
 mod export;
 mod filler;
 mod fixtures;
+mod fullmix_exposure;
+mod fullmix_hard;
+mod fullmix_rms;
 mod generate;
 mod group_eval;
+mod hard_token_batch;
+mod hard_token_masks;
+mod hard_token_selection;
 mod inflect;
+mod learning_gate;
+mod learning_probe;
 mod local_templates;
+mod loss_diagnostic;
+mod loss_stability;
+mod memorization;
 mod model_eval;
 mod names;
 mod negatives;
 mod net;
 mod pool_filter;
 mod quantize;
+mod residual_rms;
 mod templates;
 mod train;
+mod training_audit;
+mod training_diagnostic;
+mod typed_synthetic;
 
 use std::path::PathBuf;
 
@@ -83,18 +104,77 @@ enum Command {
         /// Maximum epochs, overriding the config's.
         #[arg(long)]
         epochs: Option<usize>,
+        /// Stop a diagnostic run after this many updates; incomplete runs cannot be exported.
+        #[arg(long)]
+        max_steps: Option<usize>,
         #[arg(long, value_enum, default_value = "wgpu")]
         backend: train::BackendKind,
+    },
+    /// Run one pinned CPU mixed-data RMS diagnostic, or initialize it without updates.
+    DiagnoseFullmixRms {
+        #[arg(long)]
+        manifest: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+        /// Discover native initialization and probe identities without any forward or fit.
+        #[arg(long)]
+        preflight: bool,
+    },
+    /// Test learning on a small fixed training subset without scoring development data.
+    Memorize {
+        #[arg(long)]
+        config: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+        #[arg(long, default_value_t = 1000)]
+        steps: usize,
+        /// Diagnostic centered-logit penalty; zero preserves the original objective.
+        #[arg(long, default_value_t = 0.0)]
+        logit_penalty: f64,
+        /// Require the control's exact initial parameter identity before optimization.
+        #[arg(long)]
+        expected_initial_sha256: Option<String>,
+        /// Exact reviewed fifteen-row whole-original PERSON diagnostic manifest.
+        #[arg(long)]
+        cohort: Option<PathBuf>,
+        /// Parameter-free post-residual RMS; only for the frozen whole15 diagnostic.
+        #[arg(long)]
+        residual_rms: bool,
+        #[arg(long, value_enum, default_value = "ndarray")]
+        backend: train::BackendKind,
+    },
+    /// Compare frozen checkpoint loss with evaluation and seeded dropout-active forwards.
+    InspectLoss {
+        #[arg(long)]
+        run: PathBuf,
+        #[arg(long)]
+        gold: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+        #[arg(long, default_value_t = 8)]
+        samples: usize,
     },
     /// Validate detector silver labels and report distinct supervision before training.
     CheckSilver {
         #[arg(long)]
         config: PathBuf,
+        /// Inspect possible training windows without changing the data or sampler.
+        #[arg(long)]
+        context_windows: bool,
     },
     /// Validate all prepared detector inputs without starting training.
     CheckDetectorData {
         #[arg(long)]
         config: PathBuf,
+        /// Simulate verified context views without changing training or its configuration.
+        #[arg(long)]
+        context_views: bool,
+        /// Pin the five source biographies and a reference planned schedule audit.
+        #[arg(long, requires = "exposure_out", conflicts_with = "context_views")]
+        exposure_targets: Option<PathBuf>,
+        /// Write planned coefficients to a new JSON receipt; never starts a model.
+        #[arg(long, requires = "exposure_targets", conflicts_with = "context_views")]
+        exposure_out: Option<PathBuf>,
     },
     /// Score a run, the deterministic baselines, or external predictions.
     Eval(Box<EvalArgs>),
@@ -168,6 +248,15 @@ struct EvalArgs {
     /// With `--gold`: save the selected detector's spans for error analysis.
     #[arg(long)]
     dump_predictions: Option<PathBuf>,
+    /// With --run --gold: save all decoded candidates before confidence filtering.
+    #[arg(long, requires_all = ["run", "gold"], conflicts_with_all = ["grouper", "addresses"])]
+    dump_confidence: Option<PathBuf>,
+    /// Opt into the reviewed ADDRESS continuation diagnostic on final training-seen gold.
+    #[arg(
+        long, value_enum, requires_all = ["run", "gold"],
+        conflicts_with_all = ["baseline", "grouper", "addresses", "report", "errors"]
+    )]
+    diagnostic_decoder: Option<diagnostic_decode::Decoder>,
     /// The bundle `detect` loads for `--gold` and for a detector run's split.
     #[arg(long, default_value = "models/tessera-v1.safetensors")]
     bundle: PathBuf,
@@ -189,7 +278,9 @@ struct EvalArgs {
 }
 
 fn main() -> anyhow::Result<()> {
-    match Cli::parse().command {
+    let command = Cli::parse().command;
+    diagnostic_decode::validate_build_context(&command)?;
+    match command {
         Command::Prepare { config, date } => data::prepare(&config, &date),
         Command::Names {
             config,
@@ -206,16 +297,62 @@ fn main() -> anyhow::Result<()> {
             name,
             train_per_country,
             epochs,
+            max_steps,
             backend,
         } => train::run(train::TrainArgs {
             config: &config,
             name: name.as_deref(),
             train_per_country,
             epochs,
+            max_steps,
             backend,
         }),
-        Command::CheckSilver { config } => train::check_silver(&config),
-        Command::CheckDetectorData { config } => train::check_detector_data(&config),
+        Command::Memorize {
+            config,
+            out,
+            steps,
+            logit_penalty,
+            expected_initial_sha256,
+            cohort,
+            residual_rms,
+            backend,
+        } => train::memorize(
+            &config,
+            &out,
+            steps,
+            backend,
+            logit_penalty,
+            expected_initial_sha256.as_deref(),
+            train::MemorizeScope {
+                cohort: cohort.as_deref(),
+                residual_rms,
+            },
+        ),
+        Command::InspectLoss {
+            run,
+            gold,
+            out,
+            samples,
+        } => loss_diagnostic::run(&run, &gold, &out, samples),
+        Command::CheckSilver {
+            config,
+            context_windows,
+        } => train::check_silver(&config, context_windows),
+        Command::CheckDetectorData {
+            config,
+            context_views,
+            exposure_targets,
+            exposure_out,
+        } => train::check_detector_data(
+            &config,
+            context_views,
+            exposure_targets.as_deref().zip(exposure_out.as_deref()),
+        ),
+        Command::DiagnoseFullmixRms {
+            manifest,
+            out,
+            preflight,
+        } => train::diagnose_fullmix_rms(&manifest, &out, preflight),
         Command::Eval(args) => eval::run(*args),
         Command::Bench {
             model,
@@ -236,5 +373,64 @@ fn main() -> anyhow::Result<()> {
             out,
             date,
         } => export::run(&parser_run, &detector_run, &out, &date),
+    }
+}
+
+#[cfg(test)]
+mod exposure_cli_tests {
+    use super::*;
+
+    #[test]
+    fn planned_exposure_flags_are_paired_and_exclude_context_views() {
+        let prefix = ["trainer", "check-detector-data", "--config", "config.toml"];
+        assert!(Cli::try_parse_from(prefix).is_ok());
+        let mut targets_only = prefix.to_vec();
+        targets_only.extend(["--exposure-targets", "targets.json"]);
+        assert!(Cli::try_parse_from(targets_only).is_err());
+        let mut output_only = prefix.to_vec();
+        output_only.extend(["--exposure-out", "receipt.json"]);
+        assert!(Cli::try_parse_from(output_only).is_err());
+        let mut paired = prefix.to_vec();
+        paired.extend([
+            "--exposure-targets",
+            "targets.json",
+            "--exposure-out",
+            "receipt.json",
+        ]);
+        assert!(Cli::try_parse_from(&paired).is_ok());
+        paired.push("--context-views");
+        assert!(Cli::try_parse_from(paired).is_err());
+    }
+}
+
+#[cfg(test)]
+mod fullmix_cli_tests {
+    use super::*;
+
+    #[test]
+    fn fullmix_has_no_backend_budget_or_ordinary_train_overrides() {
+        let args = [
+            "trainer",
+            "diagnose-fullmix-rms",
+            "--manifest",
+            "plan.json",
+            "--out",
+            "new-run",
+        ];
+        assert!(Cli::try_parse_from(args).is_ok());
+        for override_arg in [
+            "--backend",
+            "--max-steps",
+            "--epochs",
+            "--config",
+            "--train-per-country",
+        ] {
+            let mut wrong = args.to_vec();
+            wrong.extend([override_arg, "1"]);
+            assert!(Cli::try_parse_from(wrong).is_err());
+        }
+        let mut preflight = args.to_vec();
+        preflight.push("--preflight");
+        assert!(Cli::try_parse_from(preflight).is_ok());
     }
 }

@@ -90,6 +90,9 @@ pub struct FeaturesConfig {
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct NetConfig {
+    /// Explicit versioned deployment graph; absence retains the legacy task architecture.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub architecture: Option<String>,
     pub hidden: usize,
     pub kernel: usize,
     pub dilations: Vec<usize>,
@@ -133,6 +136,26 @@ pub struct DetectorConfig {
     /// Number of distinct synthetic documents sampled each epoch from the full train shard.
     #[serde(default)]
     pub synthetic_per_epoch: Option<usize>,
+    /// Reviewed authored synthetic documents, accepted only by zero-update data checks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub typed_synthetic: Option<crate::typed_synthetic::Settings>,
+    /// Fixed training-example probe used to stop a run that fails to learn a class.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub learning_check: Option<LearningCheckConfig>,
+}
+
+/// A diagnostic check on training examples; its thresholds are not release targets.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct LearningCheckConfig {
+    /// Maximum whole training documents in the fixed probe.
+    pub documents: usize,
+    /// Optimizer updates between probe evaluations.
+    pub every_steps: usize,
+    /// First update at which every learned kind must meet the recall threshold.
+    pub start_step: usize,
+    /// Minimum exact-span recall for each of person, organization, and address.
+    pub minimum_recall: f64,
 }
 
 fn default_silver_repeat() -> usize {
@@ -207,6 +230,9 @@ pub struct TrainConfig {
     pub epochs: usize,
     pub batch_size: usize,
     pub learning_rate: f64,
+    /// Fixed learning-rate decay horizon for a bounded detector comparison.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diagnostic_schedule_steps: Option<usize>,
     /// Maximum per-parameter-tensor gradient norm before each optimizer step.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gradient_clip_norm: Option<f32>,
@@ -283,8 +309,14 @@ impl Config {
         );
         let dilations: &[usize] = match self.task {
             Task::Parser => &[1, 2, 4, 8],
+            Task::Detector if self.context96_rms() => &tessera::internal::CONTEXT96_RMS_DILATIONS,
             Task::Detector => &[1, 2, 4, 8, 16, 1],
         };
+        ensure!(
+            self.net.architecture.is_none()
+                || (self.task == Task::Detector && self.context96_rms() && self.net.hidden == 96),
+            "unknown or incompatible named network architecture"
+        );
         ensure!(
             self.net.kernel == 3
                 && self.net.dilations == dilations
@@ -306,6 +338,12 @@ impl Config {
                 && self.train.learning_rate.is_finite()
                 && self.train.learning_rate > 0.0,
             "training epochs, batch_size, and learning_rate must be positive"
+        );
+        ensure!(
+            self.train
+                .diagnostic_schedule_steps
+                .is_none_or(|steps| self.task == Task::Detector && steps > self.train.warmup_steps),
+            "train.diagnostic_schedule_steps requires a detector and must exceed warmup"
         );
         ensure!(
             self.train
@@ -340,6 +378,21 @@ impl Config {
                 detector.synthetic_per_epoch.is_none_or(|count| count > 0),
                 "detector.synthetic_per_epoch must be positive"
             );
+            if let Some(typed) = &detector.typed_synthetic {
+                typed.validate()?;
+            }
+            if let Some(check) = &detector.learning_check {
+                ensure!(
+                    check.documents >= 6
+                        && check.every_steps > 0
+                        && check.start_step > 0
+                        && check.start_step.is_multiple_of(check.every_steps)
+                        && check.minimum_recall.is_finite()
+                        && (0.0..=1.0).contains(&check.minimum_recall)
+                        && check.minimum_recall > 0.0,
+                    "detector.learning_check requires at least six documents, positive steps, an aligned start, and minimum_recall in (0, 1]"
+                );
+            }
         }
         Ok(())
     }
@@ -347,6 +400,20 @@ impl Config {
     /// The parser network these settings describe; script and shape each get half of `shape_dim`.
     pub fn parser_net_config(&self) -> crate::net::TaggerNetConfig {
         self.net_config(crate::dataset::PARSER_LABELS)
+    }
+
+    /// Whether this config selects the explicitly deployable seven-block RMS graph.
+    pub(crate) fn context96_rms(&self) -> bool {
+        self.net.architecture.as_deref() == Some(tessera::internal::CONTEXT96_RMS_NAME)
+    }
+
+    /// Decoder contract selected by the versioned architecture.
+    pub(crate) fn decoder_contract(&self) -> &'static str {
+        if self.context96_rms() {
+            tessera::internal::CONTEXT96_DECODER_CONTRACT
+        } else {
+            tessera::internal::DECODER_CONTRACT
+        }
     }
 
     /// The network this run trains, by its task.
@@ -486,5 +553,35 @@ mod tests {
         c.data.countries.pop();
         c.names.as_mut().unwrap().countries.push("GB".into());
         assert!(c.validate().unwrap_err().to_string().contains("only US"));
+    }
+    #[test]
+    fn context96_config_is_explicit_and_does_not_relax_legacy_graphs() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../configs/detector-shared.toml");
+        let mut cfg = load(&path).unwrap();
+        let legacy = toml::to_string(&cfg).unwrap();
+        assert!(!legacy.contains("architecture"));
+        cfg.net.dilations = tessera::internal::CONTEXT96_RMS_DILATIONS.to_vec();
+        assert!(cfg.validate().is_err());
+        cfg.net.architecture = Some(tessera::internal::CONTEXT96_RMS_NAME.into());
+        cfg.validate().unwrap();
+        assert_eq!(
+            cfg.detector_net_config().dilations,
+            vec![1, 2, 4, 8, 16, 1, 64]
+        );
+        assert_eq!(
+            cfg.decoder_contract(),
+            tessera::internal::CONTEXT96_DECODER_CONTRACT
+        );
+        cfg.net.hidden = 64;
+        assert!(cfg.validate().is_err());
+        cfg.net.hidden = 96;
+        cfg.net.dilations = vec![1, 2, 4, 8, 16, 1];
+        assert!(cfg.validate().is_err());
+        cfg.net.dilations = tessera::internal::CONTEXT96_RMS_DILATIONS.to_vec();
+        cfg.net.architecture = Some("unknown-rms-graph".into());
+        assert!(cfg.validate().is_err());
+        cfg.net.architecture = Some(tessera::internal::CONTEXT96_RMS_NAME.into());
+        cfg.task = Task::Parser;
+        assert!(cfg.validate().is_err());
     }
 }

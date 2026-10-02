@@ -25,7 +25,9 @@ use rand::SeedableRng;
 use rand::seq::SliceRandom;
 use rand_chacha::ChaCha8Rng;
 use serde::{Deserialize, Serialize};
-use tessera::internal::{DECODER_CONTRACT, TOKENIZER_CONTRACT};
+#[cfg(test)]
+use tessera::internal::DECODER_CONTRACT;
+use tessera::internal::TOKENIZER_CONTRACT;
 
 use crate::config::Config;
 use crate::data::{LabelledExample, Split, read_shard};
@@ -98,39 +100,370 @@ pub struct TrainArgs<'a> {
     pub train_per_country: Option<usize>,
     /// Maximum epochs overriding the config's.
     pub epochs: Option<usize>,
+    /// A bounded diagnostic stops after this many updates and cannot be exported.
+    pub max_steps: Option<usize>,
     /// Where to train.
     pub backend: BackendKind,
 }
 
 /// `trainer train`: trains the parser or the detector, as the config's `task` says.
 pub fn run(args: TrainArgs<'_>) -> anyhow::Result<()> {
+    crate::typed_synthetic::refuse_fit(&crate::config::load(args.config)?)?;
     match args.backend {
         BackendKind::Wgpu => train::<Autodiff<Wgpu>>(&args, &Default::default()),
         BackendKind::Ndarray => train::<Autodiff<NdArray>>(&args, &Default::default()),
     }
 }
 
+/// Initialize or fit exactly one reviewed CPU fullmix RMS diagnostic.
+pub(crate) fn diagnose_fullmix_rms(
+    manifest: &Path,
+    out: &Path,
+    preflight: bool,
+) -> anyhow::Result<()> {
+    let (request, cfg) = crate::fullmix_rms::Request::load(manifest, preflight)?;
+    request.validate_authored_route(&cfg)?;
+    anyhow::ensure!(
+        matches!(std::fs::symlink_metadata(out), Err(error) if error.kind() == std::io::ErrorKind::NotFound),
+        "fullmix output must be a new directory"
+    );
+    validate_ngram_source(&cfg)?;
+    validate_training_scope(&cfg)?;
+    verify_real_development_gold(&cfg)?;
+    verify_generation_manifest(&cfg)?;
+    initialize_run(out, &cfg)?;
+    capture_input_snapshot(&cfg, out)?;
+    request.bind(&cfg, out)?;
+    let device = Default::default();
+    <Autodiff<NdArray> as Backend>::seed(&device, cfg.seed);
+    let result = train_detector::<Autodiff<NdArray>>(
+        &cfg,
+        out,
+        Some(crate::fullmix_rms::STEPS),
+        Some(&request),
+        &device,
+    );
+    verify_input_snapshot(out)?;
+    result
+}
+
+/// Explicit cohort and optional forward intervention for the bounded diagnostic.
+pub(crate) struct MemorizeScope<'a> {
+    pub(crate) cohort: Option<&'a Path>,
+    pub(crate) residual_rms: bool,
+}
+
+struct VerifiedMemorizeScope<'a> {
+    cohort: Option<&'a Path>,
+    forward_operator: crate::diagnostic_operator::ForwardOperator,
+}
+
+/// Run a bounded memorization check using original training documents only.
+pub(crate) fn memorize(
+    config: &Path,
+    out: &Path,
+    steps: usize,
+    backend: BackendKind,
+    logit_penalty: f64,
+    expected_initial_sha256: Option<&str>,
+    scope: MemorizeScope<'_>,
+) -> anyhow::Result<()> {
+    let cfg = crate::config::load(config)?;
+    crate::typed_synthetic::refuse_fit(&cfg)?;
+    anyhow::ensure!(
+        !cfg.context96_rms(),
+        "context RMS uses its separately bound fit route, not legacy memorization"
+    );
+    let MemorizeScope {
+        cohort,
+        residual_rms,
+    } = scope;
+    anyhow::ensure!(
+        cohort.is_none() || matches!(backend, BackendKind::Ndarray),
+        "whole-original PERSON diagnostic requires the materialized CPU initialization"
+    );
+    let forward_operator = crate::diagnostic_operator::validate_request(
+        residual_rms,
+        cohort.is_some(),
+        matches!(backend, BackendKind::Ndarray),
+        steps,
+        logit_penalty,
+        expected_initial_sha256,
+    )?;
+    crate::loss_stability::validate(logit_penalty, expected_initial_sha256)?;
+    match backend {
+        BackendKind::Wgpu => memorize_with::<Autodiff<Wgpu>>(
+            config,
+            out,
+            steps,
+            logit_penalty,
+            expected_initial_sha256,
+            VerifiedMemorizeScope {
+                cohort,
+                forward_operator,
+            },
+            &Default::default(),
+        ),
+        BackendKind::Ndarray => memorize_with::<Autodiff<NdArray>>(
+            config,
+            out,
+            steps,
+            logit_penalty,
+            expected_initial_sha256,
+            VerifiedMemorizeScope {
+                cohort,
+                forward_operator,
+            },
+            &Default::default(),
+        ),
+    }
+}
+
+fn memorize_with<B: AutodiffBackend>(
+    config: &Path,
+    out: &Path,
+    steps: usize,
+    logit_penalty: f64,
+    expected_initial_sha256: Option<&str>,
+    scope: VerifiedMemorizeScope<'_>,
+    device: &B::Device,
+) -> anyhow::Result<()> {
+    let VerifiedMemorizeScope {
+        cohort,
+        forward_operator,
+    } = scope;
+    anyhow::ensure!(
+        matches!(std::fs::symlink_metadata(out), Err(e) if e.kind() == std::io::ErrorKind::NotFound),
+        "memorization output already exists or cannot be inspected"
+    );
+    let mut cfg = crate::config::load(config)?;
+    crate::typed_synthetic::refuse_fit(&cfg)?;
+    anyhow::ensure!(
+        cfg.task == crate::config::Task::Detector
+            && steps > cfg.train.warmup_steps
+            && (1000..=2000).contains(&steps),
+        "memorization needs a detector and 1000–2000 updates, above its warmup"
+    );
+    validate_ngram_source(&cfg)?;
+    validate_training_scope(&cfg)?;
+    verify_real_development_gold(&cfg)?;
+    verify_generation_manifest(&cfg)?;
+    let frozen = cohort.is_some();
+    anyhow::ensure!(
+        !frozen
+            || (steps == 2000
+                && logit_penalty == 0.0
+                && expected_initial_sha256 == Some(crate::memorization::exposure::INITIAL_SHA)),
+        "whole-original PERSON diagnostic requires fixed2000 native CE and exact initialization"
+    );
+    let mut prepared = match cohort {
+        Some(path) => crate::memorization::prepare_frozen(&cfg, path)?,
+        None => crate::memorization::prepare(&cfg, 32, 128)?,
+    };
+    anyhow::ensure!(
+        prepared.documents.len() == if frozen { 15 } else { 32 },
+        "memorization original training document count differs from its explicit scope"
+    );
+    let detector = cfg.detector.as_mut().context("missing detector settings")?;
+    let weights = detector.class_weights.clone();
+    detector.learning_check = None;
+    let items: Vec<_> = prepared
+        .documents
+        .iter()
+        .map(|doc| doc.enc.clone())
+        .collect();
+    let repeats = if frozen { 32 } else { 64 };
+    let draws: Vec<_> = (0..repeats).flat_map(|_| 0..items.len()).collect();
+    let batches_per_epoch = draws.len().div_ceil(cfg.train.batch_size);
+    cfg.train.epochs = steps.div_ceil(batches_per_epoch);
+    cfg.train.diagnostic_schedule_steps = Some(
+        cfg.train
+            .diagnostic_schedule_steps
+            .unwrap_or(steps)
+            .max(steps),
+    );
+    std::fs::create_dir(out)?;
+    initialize_run(out, &cfg)?;
+    std::fs::write(
+        out.join("diagnostic.json"),
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "max_steps": steps,
+            "scope": "fixed training-only memorization diagnostic; never export",
+            "source_config": config,
+            "source_config_sha256": hash_file(config)?,
+            "changes": ["32 original training documents repeated 64 times per epoch",
+                        "no development evaluation or checkpoint selection",
+                        "learning gate replaced by diagnostic scoring of every selected document"],
+            "release_quality_claim": false,
+            "logit_penalty": logit_penalty,
+            "expected_initial_sha256": expected_initial_sha256,
+        }))?,
+    )?;
+    if let Some(path) = cohort {
+        let marker_path = out.join("diagnostic.json");
+        let mut marker: serde_json::Value = serde_json::from_slice(&std::fs::read(&marker_path)?)?;
+        marker["frozen_cohort_scope"] = serde_json::json!(crate::memorization::FROZEN_SCOPE);
+        marker["frozen_cohort_path"] = serde_json::json!(path);
+        marker["frozen_cohort_sha256"] = serde_json::json!(hash_file(path)?);
+        marker["changes"] = serde_json::json!([
+            "15 reviewed whole original rows repeated32 times per complete epoch",
+            "fixed2000 updates; no in-loop scoring or best checkpoint selection",
+            "fixed preregistered checkpoints; all scoring occurs after training",
+        ]);
+        marker["observation_steps"] =
+            serde_json::json!(crate::memorization::exposure::OBSERVATIONS);
+        std::fs::write(marker_path, serde_json::to_vec_pretty(&marker)?)?;
+    }
+    if forward_operator == crate::diagnostic_operator::ForwardOperator::ResidualRmsV1 {
+        let marker_path = out.join("diagnostic.json");
+        let mut marker: serde_json::Value = serde_json::from_slice(&std::fs::read(&marker_path)?)?;
+        crate::diagnostic_operator::attach(out, &mut marker, &mut prepared.manifest)?;
+        std::fs::write(marker_path, serde_json::to_vec_pretty(&marker)?)?;
+    }
+    std::fs::write(
+        out.join("selection.json"),
+        serde_json::to_vec_pretty(&prepared.manifest)?,
+    )?;
+    let mut cases = File::create(out.join("cases.jsonl"))?;
+    for (index, doc) in prepared.documents.iter().enumerate() {
+        let expected = doc
+            .gold
+            .iter()
+            .map(|span| {
+                Ok(serde_json::json!({
+                    "kind": detector::KINDS[span.kind].as_str(),
+                    "start": span.start,
+                    "end": span.end,
+                    "text": doc.text.get(span.start as usize..span.end as usize)
+                        .context("memorization gold cuts source text")?,
+                }))
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        writeln!(
+            cases,
+            "{}",
+            serde_json::json!({
+                "name": if frozen { prepared.manifest["documents"][index]["name"].as_str()
+                    .context("frozen document name is missing")?.to_owned() }
+                    else { format!("memorization-{index}") }, "country": "US",
+                "doc_type": "training_memorization", "input": doc.text, "expected": expected,
+            })
+        )?;
+    }
+    capture_input_snapshot(&cfg, out)?;
+    B::seed(device, cfg.seed);
+    let mut model = cfg.detector_net_config().init::<B>(device);
+    if let Some(parser) = &cfg.net.ngram_from {
+        model.ngram = pretrained_ngram::<B>(&cfg, Path::new(parser), device)?;
+    }
+    let initial_sha256 = crate::training_diagnostic::parameter_sha256(&crate::quantize::extract(
+        &model.valid(),
+        cfg.net_name(),
+    ));
+    crate::loss_stability::verify_initial(&initial_sha256, expected_initial_sha256)?;
+    let diagnostic_path = out.join("diagnostic.json");
+    let mut diagnostic: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&diagnostic_path)?)?;
+    diagnostic["actual_initial_sha256"] = serde_json::json!(initial_sha256);
+    std::fs::write(diagnostic_path, serde_json::to_vec_pretty(&diagnostic)?)?;
+    let gold: Vec<_> = prepared
+        .documents
+        .iter()
+        .map(|doc| doc.gold.clone())
+        .collect();
+    let fit = fit::<B>(
+        &cfg,
+        out,
+        model,
+        TrainingData {
+            items: &items,
+            draws,
+            detector_epoch: None,
+            learning_probe: None,
+            max_steps: Some(steps),
+            diagnostic_logit_penalty: (logit_penalty > 0.0).then_some(logit_penalty),
+            forward_operator,
+            completed_exposure: None,
+        },
+        &weights,
+        device,
+        |model| {
+            if frozen {
+                return Ok((
+                    CheckpointScore::new(0., 0.),
+                    serde_json::json!({"scoring": "after-fit only"}),
+                ));
+            }
+            let candidates =
+                detector::predict_scored(model, &prepared.documents, cfg.train.batch_size, device);
+            let raw: Vec<_> = candidates
+                .iter()
+                .map(|spans| spans.iter().map(|s| s.span).collect())
+                .collect();
+            let kept = detector::apply_confidence_policy(&candidates);
+            let filtered = detector::score(&gold, &kept);
+            let unfiltered = detector::score(&gold, &raw);
+            Ok((
+                CheckpointScore::new(minimum_model_exact_f1(&filtered), filtered.macro_exact_f1),
+                serde_json::json!({"memorization_filtered": filtered, "memorization_unfiltered": unfiltered}),
+            ))
+        },
+    )?;
+    verify_input_snapshot(out)?;
+    std::fs::write(
+        out.join("memorization-result.json"),
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "steps": fit.steps,
+            "seconds": fit.seconds,
+            "checkpoint": format!("checkpoints/diagnostic-step-{steps}.mpk"),
+            "checkpoint_sha256": hash_file(&out.join(format!("checkpoints/diagnostic-step-{steps}.mpk")))?,
+            "selection_sha256": hash_file(&out.join("selection.json"))?,
+            "cases_sha256": hash_file(&out.join("cases.jsonl"))?,
+            "scope": "seen-example learnability only; not independent accuracy or release approval",
+        }))?,
+    )?;
+    Ok(())
+}
+
 fn train<B: AutodiffBackend>(args: &TrainArgs<'_>, device: &B::Device) -> anyhow::Result<()> {
     let mut cfg = crate::config::load(args.config)?;
+    crate::typed_synthetic::refuse_fit(&cfg)?;
     if let Some(name) = args.name {
         cfg.name = name.to_string();
     }
     if let Some(e) = args.epochs {
         cfg.train.epochs = e;
     }
+    crate::training_diagnostic::validate_launch(&cfg, args.max_steps)?;
     validate_ngram_source(&cfg)?;
     validate_training_scope(&cfg)?;
+    anyhow::ensure!(
+        args.max_steps.is_none_or(|steps| steps > 0)
+            && (args.max_steps.is_none() || matches!(cfg.task, crate::config::Task::Detector)),
+        "max-steps must be positive and is only supported for detector diagnostics"
+    );
     if matches!(cfg.task, crate::config::Task::Detector) {
         verify_real_development_gold(&cfg)?;
         verify_generation_manifest(&cfg)?;
     }
     let run_dir = PathBuf::from("runs").join(&cfg.name);
     initialize_run(&run_dir, &cfg)?;
+    if let Some(max_steps) = args.max_steps {
+        std::fs::write(
+            run_dir.join("diagnostic.json"),
+            serde_json::to_string_pretty(&serde_json::json!({
+                "max_steps": max_steps,
+                "scope": "bounded learning diagnostic; not exportable",
+            }))? + "\n",
+        )?;
+    }
     capture_input_snapshot(&cfg, &run_dir)?;
     B::seed(device, cfg.seed);
     let result = match cfg.task {
         crate::config::Task::Parser => train_parser::<B>(args, &cfg, &run_dir, device),
-        crate::config::Task::Detector => train_detector::<B>(&cfg, &run_dir, device),
+        crate::config::Task::Detector => {
+            train_detector::<B>(&cfg, &run_dir, args.max_steps, None, device)
+        }
     };
     result?;
     verify_input_snapshot(&run_dir)
@@ -198,6 +531,9 @@ const REAL_DEV_SOURCES: [&str; 4] = [
 ];
 
 fn repo_path(relative: &str) -> PathBuf {
+    if let Some(root) = crate::diagnostic_decode::compiled_input_root() {
+        return Path::new(root).join(relative);
+    }
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("trainer lives inside the repository")
@@ -498,7 +834,12 @@ fn hash_file(path: &Path) -> anyhow::Result<String> {
 }
 
 fn verify_generation_manifest(cfg: &Config) -> anyhow::Result<()> {
+    let amended_sources = crate::typed_synthetic::generation_sources(cfg)?;
     if !uses_v4_gold(cfg) && !uses_v5_gold(cfg) {
+        anyhow::ensure!(
+            amended_sources.is_none(),
+            "typed authored data needs the reviewed V4/V5 generation chain"
+        );
         return Ok(());
     }
     let (version, exclusions) = if uses_v5_gold(cfg) {
@@ -571,7 +912,8 @@ fn verify_generation_manifest(cfg: &Config) -> anyhow::Result<()> {
         silver_hashes.len() == detector.silver.len(),
         "{version} generator silver source set changed"
     );
-    for source in &detector.silver {
+    let generation_sources = amended_sources.as_ref().unwrap_or(&detector.silver);
+    for source in generation_sources {
         anyhow::ensure!(
             silver_hashes
                 .get(source)
@@ -727,8 +1069,20 @@ pub(crate) fn input_paths(cfg: &Config) -> Vec<(String, PathBuf)> {
     paths
 }
 
+/// Includes all configured sources and reviewed typed-input dependencies.
+pub(crate) fn checked_input_paths(cfg: &Config) -> anyhow::Result<Vec<(String, PathBuf)>> {
+    let mut paths = input_paths(cfg);
+    for (index, path) in crate::typed_synthetic::input_paths(cfg)?
+        .into_iter()
+        .enumerate()
+    {
+        paths.push((format!("typed_synthetic_input_{index:04}"), path));
+    }
+    Ok(paths)
+}
+
 pub(crate) fn capture_input_snapshot(cfg: &Config, run_dir: &Path) -> anyhow::Result<()> {
-    let inputs = input_paths(cfg)
+    let inputs = checked_input_paths(cfg)?
         .into_iter()
         .map(|(role, path)| {
             Ok((
@@ -744,7 +1098,7 @@ pub(crate) fn capture_input_snapshot(cfg: &Config, run_dir: &Path) -> anyhow::Re
         version: INPUT_SNAPSHOT_VERSION,
         config_sha256: hash_file(&run_dir.join("config.toml"))?,
         tokenizer_contract: TOKENIZER_CONTRACT.to_string(),
-        decoder_contract: DECODER_CONTRACT.to_string(),
+        decoder_contract: cfg.decoder_contract().to_string(),
         inputs,
     };
     std::fs::write(
@@ -769,9 +1123,10 @@ pub(crate) fn load_input_snapshot(run_dir: &Path) -> anyhow::Result<InputSnapsho
         "{} has an unsupported or empty input snapshot; retrain before export",
         run_dir.display()
     );
+    let cfg = crate::config::load(&run_dir.join("config.toml"))?;
     anyhow::ensure!(
         snapshot.tokenizer_contract == TOKENIZER_CONTRACT
-            && snapshot.decoder_contract == DECODER_CONTRACT,
+            && snapshot.decoder_contract == cfg.decoder_contract(),
         "{} tokenizer or decoder contract differs from the training snapshot; retrain before export",
         run_dir.display()
     );
@@ -780,8 +1135,7 @@ pub(crate) fn load_input_snapshot(run_dir: &Path) -> anyhow::Result<InputSnapsho
         "{} config changed after input snapshot; retrain before export",
         run_dir.display()
     );
-    let cfg = crate::config::load(&run_dir.join("config.toml"))?;
-    let expected: std::collections::BTreeMap<_, _> = input_paths(&cfg)
+    let expected: std::collections::BTreeMap<_, _> = checked_input_paths(&cfg)?
         .into_iter()
         .map(|(role, path)| (role, path.display().to_string()))
         .collect();
@@ -844,6 +1198,7 @@ fn initialize_run(run_dir: &Path, cfg: &Config) -> anyhow::Result<()> {
     // The effective config, overrides applied, so every later step reads what was trained.
     std::fs::write(run_dir.join("config.toml"), toml::to_string(&cfg)?)
         .context("writing the run config")?;
+    crate::diagnostic_operator::bind_deployable(run_dir, cfg)?;
     Ok(())
 }
 
@@ -919,18 +1274,23 @@ fn train_parser<B: AutodiffBackend>(
             items: &train_ds.items,
             draws: (0..train_ds.items.len()).collect(),
             detector_epoch: None,
+            learning_probe: None,
+            max_steps: None,
+            diagnostic_logit_penalty: None,
+            forward_operator: crate::diagnostic_operator::ForwardOperator::Standard,
+            completed_exposure: None,
         },
         &weights,
         device,
         |model| {
             let valid = quick_score(model, &valid_kept, &valid_items, batch_size, device);
-            (
+            Ok((
                 CheckpointScore::new(valid.component_f1, 0.0),
                 serde_json::json!({
                     "valid_component_f1": valid.component_f1,
                     "valid_exact": valid.exact,
                 }),
-            )
+            ))
         },
     )?;
     let summary = serde_json::json!({
@@ -957,7 +1317,7 @@ fn train_parser<B: AutodiffBackend>(
 const SILVER_MAX_TOKENS: usize = 900;
 
 /// Validate and count the complete detector silver input without creating a run or GPU state.
-pub fn check_silver(config: &Path) -> anyhow::Result<()> {
+pub fn check_silver(config: &Path, context_windows: bool) -> anyhow::Result<()> {
     let cfg = crate::config::load(config)?;
     anyhow::ensure!(
         matches!(cfg.task, crate::config::Task::Detector),
@@ -967,18 +1327,51 @@ pub fn check_silver(config: &Path) -> anyhow::Result<()> {
         .detector
         .as_ref()
         .context("a detector config needs a [detector] section")?;
-    let (_docs, counts) = detector::load_silver(
+    let (docs, counts) = detector::load_silver(
         &detector_cfg.silver,
         &cfg.features.to_tessera(),
         SILVER_MAX_TOKENS,
     )?;
-    println!("{}", serde_json::to_string_pretty(&counts)?);
+    if context_windows {
+        let radius = cfg
+            .net
+            .dilations
+            .iter()
+            .try_fold(0usize, |radius, &dilation| {
+                dilation
+                    .checked_mul((cfg.net.kernel - 1) / 2)
+                    .and_then(|padding| radius.checked_add(padding))
+                    .context("detector context radius overflow")
+            })?;
+        let audit = crate::entity_context::audit(&docs, &counts.source_pieces, radius)?;
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "silver": counts,
+                "source_paths": detector_cfg.silver,
+                "context_windows": audit,
+            }))?
+        );
+    } else {
+        println!("{}", serde_json::to_string_pretty(&counts)?);
+    }
     Ok(())
 }
 
 /// Validate the exact detector training inputs without creating a run or GPU state.
-pub fn check_detector_data(config: &Path) -> anyhow::Result<()> {
+pub fn check_detector_data(
+    config: &Path,
+    context_views: bool,
+    exposure: Option<(&Path, &Path)>,
+) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        exposure.is_none() || !context_views,
+        "planned exposure cannot substitute context views"
+    );
     let cfg = crate::config::load(config)?;
+    let exposure_request = exposure
+        .map(|(targets, out)| crate::fullmix_exposure::Request::load(config, &cfg, targets, out))
+        .transpose()?;
     anyhow::ensure!(
         matches!(cfg.task, crate::config::Task::Detector),
         "check-detector-data requires a detector config"
@@ -990,15 +1383,17 @@ pub fn check_detector_data(config: &Path) -> anyhow::Result<()> {
     let fc = cfg.features.to_tessera();
     let mut synthetic = BTreeMap::new();
     let mut training_lengths = Vec::new();
+    let mut synthetic_train_docs = Vec::new();
     for split in Split::ALL {
         let (docs, counts) = detector::load_split(Path::new(&cfg.data.processed), split, &fc)?;
         if split == Split::Train {
             training_lengths.extend(docs.iter().map(|doc| doc.enc.token_spans.len()));
+            synthetic_train_docs = docs;
         }
         synthetic.insert(
             split.name(),
             serde_json::json!({
-                "documents": docs.len(),
+                "documents": counts.encoded,
                 "encoding": counts,
             }),
         );
@@ -1009,35 +1404,139 @@ pub fn check_detector_data(config: &Path) -> anyhow::Result<()> {
         .context("a detector config needs a [detector] section")?;
     let (silver_docs, silver) =
         detector::load_silver(&detector_cfg.silver, &fc, SILVER_MAX_TOKENS)?;
+    let uniform_synthetic_count = synthetic_train_docs.len();
+    let typed = crate::typed_synthetic::load(&cfg, &fc, &synthetic_train_docs, &silver_docs)?;
+    anyhow::ensure!(
+        typed.docs.is_empty() || (exposure_request.is_none() && !context_views),
+        "typed authored inputs use the native data-check preview; frozen exposure/context routes are unchanged"
+    );
+    training_lengths.extend(typed.docs.iter().map(|doc| doc.enc.token_spans.len()));
+    let typed_metadata = typed.metadata;
+    let typed_pieces = typed.pieces;
+    let typed_repeats = typed.repeats;
+    synthetic_train_docs.extend(typed.docs);
+    let exposure_plan = exposure_request
+        .map(|request| {
+            request.resolve(
+                &cfg,
+                &silver_docs,
+                &silver.source_pieces,
+                synthetic_train_docs.len(),
+            )
+        })
+        .transpose()?;
     training_lengths.extend(silver_docs.iter().map(|doc| doc.enc.token_spans.len()));
-    let synthetic_count = synthetic["train"]["documents"]
-        .as_u64()
-        .context("synthetic train count is absent")? as usize;
+    let synthetic_count = synthetic_train_docs.len();
     let source_repeats = if detector_cfg.silver_repeats.is_empty() {
         vec![detector_cfg.silver_repeat; detector_cfg.silver.len()]
     } else {
         detector_cfg.silver_repeats.clone()
     };
-    let synthetic_per_epoch = detector_cfg.synthetic_per_epoch.unwrap_or(synthetic_count);
+    let synthetic_per_epoch = detector_cfg
+        .synthetic_per_epoch
+        .unwrap_or(uniform_synthetic_count);
+    let mut fixed_pieces = typed_pieces.clone();
+    fixed_pieces.extend(&silver.source_pieces);
+    let mut fixed_repeats = typed_repeats.clone();
+    fixed_repeats.extend(source_repeats);
     let plan = DetectorEpochDraws {
-        synthetic_count,
+        synthetic_count: uniform_synthetic_count,
         synthetic_per_epoch,
-        source_pieces: silver.source_pieces.clone(),
-        source_repeats,
+        source_pieces: fixed_pieces,
+        source_repeats: fixed_repeats,
         seed: cfg.seed,
     };
     let draws_per_epoch = plan.len()?;
     anyhow::ensure!(
-        training_lengths.len() == synthetic_count + plan.source_pieces.iter().sum::<usize>(),
+        training_lengths.len()
+            == uniform_synthetic_count + plan.source_pieces.iter().sum::<usize>(),
         "detector token counts do not match encoded pieces"
     );
     let batches_per_epoch = draws_per_epoch.div_ceil(cfg.train.batch_size);
+    let scheduled_steps = cfg
+        .train
+        .epochs
+        .checked_mul(batches_per_epoch)
+        .context("optimizer step count overflow")?;
+    let lr_horizon = crate::training_diagnostic::horizon(&cfg, scheduled_steps);
+    validate_learning_budget(&cfg, draws_per_epoch, None)?;
+    let probe_manifest = if let Some(check) = &detector_cfg.learning_check {
+        let probe = crate::learning_probe::select(
+            &synthetic_train_docs,
+            &silver_docs,
+            &silver.source_pieces,
+            &plan.indices(1)?,
+            check.documents,
+        )?;
+        crate::learning_probe::validate_groups(&probe)?;
+        Some(crate::learning_probe::manifest(&probe))
+    } else {
+        None
+    };
+    let views = if context_views {
+        let radius = cfg
+            .net
+            .dilations
+            .iter()
+            .try_fold(0usize, |radius, &dilation| {
+                dilation
+                    .checked_mul((cfg.net.kernel - 1) / 2)
+                    .and_then(|padding| radius.checked_add(padding))
+                    .context("detector context radius overflow")
+            })?;
+        crate::context_views::prepare(&silver_docs, &fc, radius)?
+    } else {
+        Vec::new()
+    };
+    let original_count = synthetic_train_docs.len() + silver_docs.len();
+    let mut replacements = vec![Vec::new(); silver_docs.len()];
+    let view_descriptions: Vec<_> = views.iter().enumerate().map(|(index, view)| {
+        replacements[view.parent].push(original_count + index);
+        serde_json::json!({
+            "parent_index": view.parent,
+            "parent_text_sha256": crate::export::sha256_hex(silver_docs[view.parent].text.as_bytes()),
+            "parent_byte_range": [view.start, view.end],
+            "text": view.doc.text,
+            "gold": view.doc.gold.iter().map(|span| serde_json::json!({
+                "kind": detector::KINDS[span.kind].as_str(),
+                "start": span.start,
+                "end": span.end,
+            })).collect::<Vec<_>>(),
+            "content_tokens": view.doc.enc.labels.len(),
+        })
+    }).collect();
+    let mut training_items: Vec<Encoded> = synthetic_train_docs
+        .into_iter()
+        .chain(silver_docs)
+        .map(|doc| doc.enc)
+        .collect();
+    training_items.extend(views.into_iter().map(|view| view.doc.enc));
     let mut epoch_tokens = Vec::new();
+    let mut epoch_exposure = Vec::new();
+    let mut learning_batches = Vec::new();
+    let mut context_epoch_exposure = Vec::new();
+    let mut context_learning_batches = Vec::new();
+    let learning_steps = detector_cfg
+        .learning_check
+        .as_ref()
+        .map_or(0, |check| check.start_step);
+    let uses_epoch_plan = !typed_metadata.is_empty()
+        || detector_cfg.synthetic_per_epoch.is_some()
+        || !detector_cfg.silver_repeats.is_empty();
+    let mut legacy_order = if uses_epoch_plan {
+        Vec::new()
+    } else {
+        detector_draw_indices(synthetic_count, silver.pieces, detector_cfg.silver_repeat)?
+    };
     for epoch in 1..=cfg.train.epochs {
-        let draws = plan.indices(epoch)?;
+        let draws = if uses_epoch_plan {
+            plan.indices(epoch)?
+        } else {
+            legacy_order.clone()
+        };
         let mut synthetic_tokens = 0usize;
         let mut real_tokens = 0usize;
-        for index in draws {
+        for &index in &draws {
             let tokens = training_lengths[index];
             if index < synthetic_count {
                 synthetic_tokens += tokens;
@@ -1050,19 +1549,144 @@ pub fn check_detector_data(config: &Path) -> anyhow::Result<()> {
             "synthetic_content_tokens": synthetic_tokens,
             "real_content_tokens": real_tokens,
         }));
+        let mut order = draws;
+        order.shuffle(&mut ChaCha8Rng::seed_from_u64(cfg.seed ^ epoch as u64));
+        let batches = if uses_epoch_plan {
+            length_bucket_batches(
+                &order,
+                &training_lengths,
+                cfg.train.batch_size,
+                cfg.seed ^ epoch as u64,
+            )
+        } else {
+            legacy_order = order.clone();
+            order
+                .chunks(cfg.train.batch_size)
+                .map(<[usize]>::to_vec)
+                .collect()
+        };
+        epoch_exposure.push(serde_json::json!({
+            "epoch": epoch,
+            "exposure": crate::training_audit::audit_epoch(
+                &training_items, &batches, synthetic_count, &detector_cfg.class_weights)?,
+        }));
+        if context_views {
+            let substituted = crate::context_sampling::substitute_batches(
+                &batches,
+                synthetic_count,
+                original_count,
+                &replacements,
+                epoch - 1,
+            )?;
+            context_epoch_exposure.push(serde_json::json!({
+                "epoch": epoch,
+                "exposure": crate::training_audit::audit_epoch(
+                    &training_items, &substituted, synthetic_count, &detector_cfg.class_weights)?,
+            }));
+            context_learning_batches.extend(
+                substituted
+                    .into_iter()
+                    .take(learning_steps.saturating_sub(context_learning_batches.len())),
+            );
+        }
+        learning_batches.extend(
+            batches
+                .into_iter()
+                .take(learning_steps.saturating_sub(learning_batches.len())),
+        );
     }
+    let learning_exposure = if learning_steps > 0 {
+        let mut presentations = BTreeMap::<usize, usize>::new();
+        for &index in learning_batches.iter().flatten() {
+            *presentations.entry(index).or_default() += 1;
+        }
+        Some(serde_json::json!({
+            "optimizer_steps": learning_batches.len(),
+            "exposure": crate::training_audit::audit_epoch(
+                &training_items, &learning_batches, synthetic_count, &detector_cfg.class_weights)?,
+            "max_real_piece_presentations": presentations.iter().filter(|(index, _)| **index >= synthetic_count)
+                .map(|(_, count)| *count).max().unwrap_or(0),
+            "max_synthetic_piece_presentations": presentations.iter().filter(|(index, _)| **index < synthetic_count)
+                .map(|(_, count)| *count).max().unwrap_or(0),
+        }))
+    } else {
+        None
+    };
+    let context_simulation = if context_views {
+        Some(serde_json::json!({
+            "training_enabled": false,
+            "scope": "candidate views and hypothetical loss coefficients only; not predictions, gradients, or accuracy",
+            "substitution": "alternate whole/view per eligible parent, within existing parent budgets and finalized original batches",
+            "address_policy": "every parent containing ADDRESS gold remains whole",
+            "probe_policy": "unchanged original whole-document probe selected before any views",
+            "candidate_views": view_descriptions,
+            "epoch_training_exposure": context_epoch_exposure,
+            "learning_check_exposure": if learning_steps > 0 {
+                Some(crate::training_audit::audit_epoch(
+                    &training_items, &context_learning_batches, synthetic_count, &detector_cfg.class_weights)?)
+            } else { None },
+        }))
+    } else {
+        None
+    };
+    if let Some(exposure_plan) = exposure_plan {
+        exposure_plan.write(
+            &cfg,
+            &training_items,
+            &learning_batches,
+            synthetic_count,
+            lr_horizon,
+            learning_exposure
+                .as_ref()
+                .context("planned exposure needs the existing learning audit")?,
+        )?;
+    }
+    let typed_preview = if typed_metadata.is_empty() {
+        None
+    } else {
+        Some(crate::typed_synthetic::preview(
+            &cfg,
+            &training_items,
+            &learning_batches,
+            uniform_synthetic_count,
+            synthetic_count,
+            &typed_metadata,
+            lr_horizon,
+        )?)
+    };
     println!(
         "{}",
         serde_json::to_string_pretty(&serde_json::json!({
             "synthetic": synthetic,
             "silver": silver,
+            "typed_synthetic": typed_preview,
+            "uniform_synthetic_pool": uniform_synthetic_count,
+            "full_synthetic_boundary": synthetic_count,
+            "input_snapshot_paths": crate::typed_synthetic::input_paths(&cfg)?,
             "draws_per_epoch": draws_per_epoch,
-            "synthetic_draws_per_epoch": synthetic_per_epoch,
-            "real_draws_per_epoch": draws_per_epoch - synthetic_per_epoch,
+            "synthetic_draws_per_epoch": synthetic_per_epoch + typed_pieces.iter().zip(&typed_repeats).map(|(n,r)| n*r).sum::<usize>(),
+            "real_draws_per_epoch": silver.source_pieces.iter().zip(&plan.source_repeats[typed_pieces.len()..]).map(|(n,r)| n*r).sum::<usize>(),
             "batches_per_epoch": batches_per_epoch,
-            "scheduled_optimizer_steps": cfg.train.epochs * batches_per_epoch,
+            "scheduled_optimizer_steps": scheduled_steps,
+            "learning_rate_horizon_steps": lr_horizon,
             "warmup_steps": cfg.train.warmup_steps,
             "epoch_content_tokens": epoch_tokens,
+            "epoch_training_exposure": epoch_exposure,
+            "detector_initialization": "fresh detector; optional parser n-gram transfer only",
+            "ngram_trainable": cfg.net.ngram_from.is_none() || cfg.net.finetune_ngram,
+            "scheduled_learning_rate_sum_scope": "hypothetical configured epochs; not the bounded diagnostic budget",
+            "scheduled_learning_rate_sum": (0..scheduled_steps)
+                .map(|step| lr_at(step, lr_horizon,
+                    cfg.train.learning_rate, cfg.train.warmup_steps)).sum::<f64>(),
+            "learning_check": detector_cfg.learning_check,
+            "learning_probe": probe_manifest,
+            "learning_check_exposure": learning_exposure,
+            "learning_check_learning_rate_sum": (0..learning_steps)
+                .map(|step| lr_at(step, lr_horizon, cfg.train.learning_rate,
+                    cfg.train.warmup_steps)).sum::<f64>(),
+            "config_sha256": hash_file(config)?,
+            "context_view_simulation": context_simulation,
+            "scope": "input validity and planned supervision only; passing does not prove learning or 95% quality",
         }))?
     );
     Ok(())
@@ -1145,8 +1769,14 @@ impl DetectorEpochDraws {
 fn train_detector<B: AutodiffBackend>(
     cfg: &Config,
     run_dir: &Path,
+    max_steps: Option<usize>,
+    fullmix: Option<&crate::fullmix_rms::Request>,
     device: &B::Device,
 ) -> anyhow::Result<()> {
+    match fullmix {
+        Some(request) => request.validate_authored_route(cfg)?,
+        None => crate::typed_synthetic::refuse_fit(cfg)?,
+    }
     let detector_cfg = cfg
         .detector
         .as_ref()
@@ -1157,7 +1787,7 @@ fn train_detector<B: AutodiffBackend>(
     );
     let fc = cfg.features.to_tessera();
     let dir = PathBuf::from(&cfg.data.processed);
-    let (train_docs, train_counts) = detector::load_split(&dir, Split::Train, &fc)?;
+    let (mut train_docs, train_counts) = detector::load_split(&dir, Split::Train, &fc)?;
     let (valid_docs, valid_counts) = detector::load_split(&dir, Split::Valid, &fc)?;
     let (gold_path, gold_sha256) = real_dev_gold(cfg);
     let real_dev_docs = detector::load_development_gold(&repo_path(gold_path), &fc)?;
@@ -1170,34 +1800,44 @@ fn train_detector<B: AutodiffBackend>(
         "pinned real development set must have 196 cases"
     );
     eprintln!("train {train_counts:?}, valid {valid_counts:?}");
-    let mut train_items: Vec<Encoded> = train_docs.into_iter().map(|d| d.enc).collect();
     let (silver_docs, silver_counts) =
         detector::load_silver(&detector_cfg.silver, &fc, SILVER_MAX_TOKENS)?;
-    let synthetic_count = train_items.len();
+    let uniform_synthetic_count = train_docs.len();
+    let typed = crate::typed_synthetic::load(cfg, &fc, &train_docs, &silver_docs)?;
+    let typed_metadata = typed.metadata;
+    let mut fixed_pieces = typed.pieces;
+    let mut fixed_repeats = typed.repeats;
+    train_docs.extend(typed.docs);
+    let synthetic_count = train_docs.len();
     let source_repeats = if detector_cfg.silver_repeats.is_empty() {
         vec![detector_cfg.silver_repeat; detector_cfg.silver.len()]
     } else {
         detector_cfg.silver_repeats.clone()
     };
-    let synthetic_per_epoch = detector_cfg.synthetic_per_epoch.unwrap_or(synthetic_count);
-    let epoch_plan =
-        if detector_cfg.synthetic_per_epoch.is_some() || !detector_cfg.silver_repeats.is_empty() {
-            let plan = DetectorEpochDraws {
-                synthetic_count,
-                synthetic_per_epoch,
-                source_pieces: silver_counts.source_pieces.clone(),
-                source_repeats: source_repeats.clone(),
-                seed: cfg.seed,
-            };
-            anyhow::ensure!(
-                plan.source_pieces.iter().sum::<usize>() == silver_docs.len(),
-                "detector silver source pieces do not match encoded pieces"
-            );
-            plan.len()?;
-            Some(plan)
-        } else {
-            None
+    fixed_pieces.extend(&silver_counts.source_pieces);
+    fixed_repeats.extend(&source_repeats);
+    let synthetic_per_epoch = detector_cfg
+        .synthetic_per_epoch
+        .unwrap_or(uniform_synthetic_count);
+    let epoch_plan = if detector_cfg.synthetic_per_epoch.is_some()
+        || !detector_cfg.silver_repeats.is_empty()
+    {
+        let plan = DetectorEpochDraws {
+            synthetic_count: uniform_synthetic_count,
+            synthetic_per_epoch,
+            source_pieces: fixed_pieces,
+            source_repeats: fixed_repeats,
+            seed: cfg.seed,
         };
+        anyhow::ensure!(
+            plan.source_pieces.iter().sum::<usize>() == typed_metadata.len() + silver_docs.len(),
+            "detector silver source pieces do not match encoded pieces"
+        );
+        plan.len()?;
+        Some(plan)
+    } else {
+        None
+    };
     let draws = if epoch_plan.is_some() {
         Vec::new()
     } else {
@@ -1207,6 +1847,63 @@ fn train_detector<B: AutodiffBackend>(
             detector_cfg.silver_repeat,
         )?
     };
+    let learning_probe = if let Some(check) = &detector_cfg.learning_check {
+        let first_draws = match &epoch_plan {
+            Some(plan) => plan.indices(1)?,
+            None => draws.clone(),
+        };
+        validate_learning_budget(cfg, first_draws.len(), max_steps)?;
+        Some(crate::learning_probe::select(
+            &train_docs,
+            &silver_docs,
+            &silver_counts.source_pieces,
+            &first_draws,
+            check.documents,
+        )?)
+    } else {
+        None
+    };
+    if let Some(probe) = &learning_probe {
+        crate::learning_probe::validate_groups(probe)?;
+        std::fs::write(
+            run_dir.join("learning_probe.json"),
+            serde_json::to_string_pretty(&crate::learning_probe::manifest(probe))? + "\n",
+        )?;
+    }
+    if let Some(request) = fullmix {
+        request.verify_training_membership(
+            cfg,
+            &train_docs[uniform_synthetic_count..],
+            &silver_docs,
+            &typed_metadata,
+        )?;
+        request.verify_probe_against_typed_preview(run_dir)?;
+    }
+    let actual_probe = fullmix
+        .map(|request| request.verify_probe(run_dir))
+        .transpose()?;
+    let completed_exposure = fullmix
+        .filter(|request| !request.preflight || request.hard_objective().is_some())
+        .map(|request| {
+            request.accounting(
+                cfg,
+                run_dir,
+                &silver_docs,
+                &train_docs,
+                &silver_counts.source_pieces,
+                synthetic_count,
+                &typed_metadata,
+            )
+        })
+        .transpose()?;
+    let forward_operator = if fullmix.is_some() {
+        fullmix
+            .context("missing bounded RMS request")?
+            .forward_operator()?
+    } else {
+        crate::diagnostic_operator::deployable(cfg)
+    };
+    let mut train_items: Vec<Encoded> = train_docs.into_iter().map(|d| d.enc).collect();
     if !silver_docs.is_empty() {
         eprintln!(
             "silver {silver_counts:?}, source repeats {source_repeats:?}, synthetic per epoch {synthetic_per_epoch}"
@@ -1219,6 +1916,50 @@ fn train_detector<B: AutodiffBackend>(
     if let Some(run) = &cfg.net.ngram_from {
         model.ngram = pretrained_ngram::<B>(cfg, Path::new(run), device)?;
     }
+    if let Some(request) = fullmix {
+        let tensors = crate::quantize::extract(&model.valid(), cfg.net_name());
+        let initial = crate::training_diagnostic::parameter_sha256(&tensors);
+        let probe = actual_probe
+            .as_deref()
+            .context("fullmix probe not initialized")?;
+        let recorder = NamedMpkFileRecorder::<FullPrecisionSettings>::new();
+        model
+            .clone()
+            .save_file(run_dir.join("checkpoints/diagnostic-step-0"), &recorder)?;
+        model.clone().save_file(run_dir.join("best"), &recorder)?;
+        request.initialized(run_dir, &initial, probe)?;
+        if request.preflight {
+            let restored = model
+                .clone()
+                .load_file(run_dir.join("best"), &recorder, device)?;
+            let restored_tensors = crate::quantize::extract(&restored.valid(), cfg.net_name());
+            anyhow::ensure!(
+                crate::training_diagnostic::parameter_sha256(&restored_tensors) == initial,
+                "native preflight checkpoint round-trip changes initialization"
+            );
+            crate::diagnostic_operator::load(run_dir, cfg)?;
+        }
+        crate::fullmix_rms::checkpoint(
+            &model.valid(),
+            cfg,
+            run_dir,
+            &run_dir.join("checkpoints/diagnostic-step-0.mpk"),
+            0,
+            crate::fullmix_rms::CheckpointKind::Snapshot,
+        )?;
+        crate::fullmix_rms::checkpoint(
+            &model.valid(),
+            cfg,
+            run_dir,
+            &run_dir.join("best.mpk"),
+            0,
+            crate::fullmix_rms::CheckpointKind::DevelopmentSelected,
+        )?;
+        if request.preflight {
+            request.write_preflight(cfg, run_dir, &initial, probe)?;
+            return Ok(());
+        }
+    }
     let batch_size = cfg.train.batch_size.max(1);
     let fit = fit::<B>(
         cfg,
@@ -1228,13 +1969,25 @@ fn train_detector<B: AutodiffBackend>(
             items: &train_items,
             draws,
             detector_epoch: epoch_plan,
+            learning_probe: learning_probe.as_ref(),
+            max_steps,
+            diagnostic_logit_penalty: None,
+            forward_operator,
+            completed_exposure,
         },
         &detector_cfg.class_weights,
         device,
         |model| {
-            let valid_pred = detector::predict(model, &valid_docs, batch_size, device);
+            let valid_pred =
+                diagnostic_predictions(model, &valid_docs, batch_size, device, forward_operator)?;
             let valid_scores = detector::score(&valid_gold, &valid_pred);
-            let real_dev_pred = detector::predict(model, &real_dev_docs, batch_size, device);
+            let real_dev_pred = diagnostic_predictions(
+                model,
+                &real_dev_docs,
+                batch_size,
+                device,
+                forward_operator,
+            )?;
             let real_dev_scores = detector::score(&real_dev_gold, &real_dev_pred);
             let min_f1 = minimum_model_exact_f1(&real_dev_scores);
             eprintln!(
@@ -1245,16 +1998,59 @@ fn train_detector<B: AutodiffBackend>(
                 min_f1,
                 valid_scores.macro_exact_f1,
             );
-            (
+            Ok((
                 CheckpointScore::new(min_f1, real_dev_scores.macro_exact_f1),
                 serde_json::json!({
                     "real_dev": real_dev_scores,
                     "real_dev_min_exact_f1": min_f1,
                     "valid": valid_scores,
                 }),
-            )
+            ))
         },
     )?;
+    let selected_learning_check = if max_steps.is_none()
+        && let (Some(check), Some(probe)) = (&detector_cfg.learning_check, &learning_probe)
+    {
+        let selected = crate::quantize::load_best::<B::InnerBackend>(run_dir, cfg, device)?;
+        let predicted =
+            diagnostic_predictions(&selected, probe, batch_size, device, forward_operator)?;
+        let gold: Vec<_> = probe.iter().map(|doc| doc.gold.clone()).collect();
+        let mut groups = BTreeMap::new();
+        for (group, range) in [
+            ("real", 0..probe.real_count),
+            ("synthetic", probe.real_count..probe.len()),
+        ] {
+            let scores = detector::score(&gold[range.clone()], &predicted[range]);
+            groups.insert(
+                group,
+                crate::learning_gate::evaluate(
+                    &scores,
+                    check.minimum_recall,
+                    fit.steps,
+                    check.start_step,
+                )?,
+            );
+        }
+        let passed = groups.values().all(|check| check.enforced && check.passed);
+        std::fs::write(
+            run_dir.join("best_learning_check.json"),
+            serde_json::to_string_pretty(&serde_json::json!({
+                "checkpoint": "best.mpk",
+                "checkpoint_sha256": hash_file(&run_dir.join("best.mpk"))?,
+                "config_sha256": hash_file(&run_dir.join("config.toml"))?,
+                "passed": passed,
+                "source_groups": groups,
+                "scope": "selected checkpoint learning on seen training examples; not release quality",
+            }))? + "\n",
+        )?;
+        anyhow::ensure!(
+            passed,
+            "selected best checkpoint failed the training learning check"
+        );
+        Some(passed)
+    } else {
+        None
+    };
     let summary = serde_json::json!({
         "best_epoch": fit.best_epoch,
         "best_real_dev_min_exact_f1": fit.best_score,
@@ -1271,6 +2067,10 @@ fn train_detector<B: AutodiffBackend>(
         "synthetic_per_epoch": synthetic_per_epoch,
         "epochs": cfg.train.epochs,
         "steps": fit.steps,
+        "training_complete": max_steps.is_none(),
+        "learning_check_passed": if max_steps.is_some() { fit.learning_check_passed } else { selected_learning_check },
+        "learning_check_scope": if max_steps.is_some() { "final bounded checkpoint" } else { "selected best checkpoint" },
+        "last_training_learning_check_passed": fit.learning_check_passed,
         "dense_parameters": fit.dense,
         "embedding_parameters": fit.embedding,
         "class_weights": detector_cfg.class_weights,
@@ -1291,6 +2091,22 @@ fn minimum_model_exact_f1(scores: &detector::SpanScores) -> f64 {
 
 /// Initialize the detector from the parser's n-gram table. Its features must match, or the
 /// same ids would mean different n-grams. The default freezes it to allow bundle sharing.
+fn diagnostic_predictions<B: Backend>(
+    model: &TaggerNet<B>,
+    docs: &[detector::DetectorDoc],
+    batch_size: usize,
+    device: &B::Device,
+    operator: crate::diagnostic_operator::ForwardOperator,
+) -> anyhow::Result<Vec<Vec<KindSpan>>> {
+    if operator == crate::diagnostic_operator::ForwardOperator::Standard {
+        Ok(detector::predict(model, docs, batch_size, device))
+    } else {
+        let scored =
+            detector::predict_scored_with_operator(model, docs, batch_size, device, operator)?;
+        Ok(detector::apply_confidence_policy(&scored))
+    }
+}
+
 fn pretrained_ngram<B: AutodiffBackend>(
     cfg: &Config,
     run: &Path,
@@ -1326,6 +2142,35 @@ struct FitSummary {
     seconds: u64,
     dense: usize,
     embedding: usize,
+    learning_check_passed: Option<bool>,
+}
+
+fn validate_learning_budget(
+    cfg: &Config,
+    draws_per_epoch: usize,
+    max_steps: Option<usize>,
+) -> anyhow::Result<()> {
+    if let Some(check) = cfg
+        .detector
+        .as_ref()
+        .and_then(|d| d.learning_check.as_ref())
+    {
+        let batches = draws_per_epoch.div_ceil(cfg.train.batch_size);
+        let scheduled = cfg
+            .train
+            .epochs
+            .checked_mul(batches)
+            .context("optimizer step count overflow")?;
+        anyhow::ensure!(
+            check.start_step > batches,
+            "learning check must start after every first-epoch probe document has been trained on"
+        );
+        anyhow::ensure!(
+            max_steps.unwrap_or(scheduled).min(scheduled) >= check.start_step,
+            "training schedule ends before the enforced learning check"
+        );
+    }
+    Ok(())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
@@ -1348,6 +2193,11 @@ struct TrainingData<'a> {
     items: &'a [Encoded],
     draws: Vec<usize>,
     detector_epoch: Option<DetectorEpochDraws>,
+    learning_probe: Option<&'a crate::learning_probe::SelectedProbe>,
+    max_steps: Option<usize>,
+    diagnostic_logit_penalty: Option<f64>,
+    forward_operator: crate::diagnostic_operator::ForwardOperator,
+    completed_exposure: Option<crate::fullmix_rms::Accounting>,
 }
 
 fn length_bucket_batches(
@@ -1378,13 +2228,69 @@ fn fit<B: AutodiffBackend>(
     data: TrainingData<'_>,
     weights: &[f32],
     device: &B::Device,
-    mut validate: impl FnMut(&TaggerNet<B::InnerBackend>) -> (CheckpointScore, serde_json::Value),
+    mut validate: impl FnMut(
+        &TaggerNet<B::InnerBackend>,
+    ) -> anyhow::Result<(CheckpointScore, serde_json::Value)>,
 ) -> anyhow::Result<FitSummary> {
     let TrainingData {
         items,
         draws: mut order,
         detector_epoch,
+        learning_probe,
+        max_steps,
+        diagnostic_logit_penalty,
+        forward_operator,
+        mut completed_exposure,
     } = data;
+    if matches!(
+        forward_operator,
+        crate::diagnostic_operator::ForwardOperator::ResidualRmsV1
+            | crate::diagnostic_operator::ForwardOperator::ContextRmsV2
+    ) && completed_exposure.is_some()
+        || forward_operator == crate::diagnostic_operator::ForwardOperator::ResidualRmsV1
+    {
+        let whole = max_steps == Some(2000)
+            && diagnostic_logit_penalty.is_none()
+            && detector_epoch.is_none()
+            && learning_probe.is_none()
+            && items.len() == 15
+            && completed_exposure.is_none();
+        let mixed = max_steps == Some(crate::fullmix_rms::STEPS)
+            && diagnostic_logit_penalty.is_none()
+            && detector_epoch.is_some()
+            && learning_probe.is_some()
+            && completed_exposure.is_some();
+        anyhow::ensure!(
+            whole || mixed,
+            "residual RMS is outside its explicit bounded diagnostic loop"
+        );
+        anyhow::ensure!(
+            crate::diagnostic_operator::load(run_dir, cfg)? == forward_operator,
+            "training forward operator metadata differs"
+        );
+    } else {
+        anyhow::ensure!(
+            completed_exposure.is_none(),
+            "standard fit refuses mixed RMS accounting"
+        );
+        anyhow::ensure!(
+            crate::diagnostic_operator::load(run_dir, cfg)? == forward_operator,
+            "standard training refuses a candidate forward operator"
+        );
+    }
+    if let Some(coefficient) = diagnostic_logit_penalty {
+        crate::loss_stability::validate(coefficient, None)?;
+    }
+    if let Some(coefficient) = diagnostic_logit_penalty.filter(|value| *value > 0.0) {
+        let marker: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(run_dir.join("diagnostic.json"))?)?;
+        anyhow::ensure!(
+            max_steps.is_some()
+                && marker["scope"] == "fixed training-only memorization diagnostic; never export"
+                && marker["logit_penalty"].as_f64() == Some(coefficient),
+            "logit penalty requires a bounded training-only memorization diagnostic"
+        );
+    }
     anyhow::ensure!(cfg.train.epochs > 0, "training requires at least one epoch");
     let epoch_draw_count = match &detector_epoch {
         Some(plan) => plan.len()?,
@@ -1411,8 +2317,65 @@ fn fit<B: AutodiffBackend>(
     let mut optim = optim_config.init::<B, TaggerNet<B>>();
     let recorder = NamedMpkFileRecorder::<FullPrecisionSettings>::new();
     let batch_size = cfg.train.batch_size.max(1);
-    let total_steps = cfg.train.epochs * epoch_draw_count.div_ceil(batch_size);
+    let scheduled_steps = cfg
+        .train
+        .epochs
+        .checked_mul(epoch_draw_count.div_ceil(batch_size))
+        .context("optimizer step count overflow")?;
+    anyhow::ensure!(
+        max_steps.is_none_or(|cap| cap <= scheduled_steps),
+        "training epochs cannot reach the diagnostic update limit"
+    );
+    crate::training_diagnostic::validate_launch(cfg, max_steps)?;
+    let total_steps = crate::training_diagnostic::horizon(cfg, scheduled_steps);
+    if max_steps.is_some() {
+        let tensors = crate::quantize::extract(&model.valid(), cfg.net_name());
+        std::fs::write(
+            run_dir.join("diagnostic_initial.json"),
+            serde_json::to_string_pretty(&serde_json::json!({
+                "parameter_sha256": crate::training_diagnostic::parameter_sha256(&tensors),
+                "learning_rate_horizon_steps": total_steps,
+                "scheduled_optimizer_steps": scheduled_steps,
+                "max_steps": max_steps,
+            }))? + "\n",
+        )?;
+    }
+    let mut exposure = crate::memorization::exposure::Exposure::new(
+        cfg,
+        run_dir,
+        items,
+        &order,
+        max_steps,
+        detector_epoch.is_some(),
+    )?;
+    if let Some(accounting) = &exposure {
+        model
+            .clone()
+            .save_file(run_dir.join("checkpoints/diagnostic-step-0"), &recorder)?;
+        accounting.write(run_dir, items, weights)?;
+    }
     let mut metrics = File::create(run_dir.join("metrics.jsonl"))?;
+    let mut fullmix_progress = completed_exposure
+        .as_ref()
+        .map(|_| File::create(run_dir.join("fullmix-progress.jsonl")))
+        .transpose()?;
+    if let Some(accounting) = &completed_exposure {
+        accounting.write(weights)?;
+    }
+    let mut probe_metrics = learning_probe
+        .map(|_| File::create(run_dir.join("learning_metrics.jsonl")))
+        .transpose()?;
+    let probe_gold =
+        learning_probe.map(|docs| docs.iter().map(|doc| doc.gold.clone()).collect::<Vec<_>>());
+    let learning_check = cfg
+        .detector
+        .as_ref()
+        .and_then(|d| d.learning_check.as_ref());
+    anyhow::ensure!(
+        learning_check.is_some() == learning_probe.is_some(),
+        "learning check and training probe must be configured together"
+    );
+    let mut last_learning_check = None;
     let mut best = (
         CheckpointScore::new(f64::MIN, f64::MIN),
         0usize,
@@ -1443,17 +2406,71 @@ fn fit<B: AutodiffBackend>(
             None => order.chunks(batch_size).map(<[usize]>::to_vec).collect(),
         };
         let (mut epoch_loss, mut batches) = (0f64, 0usize);
+        let (mut epoch_cross_entropy, mut epoch_penalty) = (0f64, 0f64);
+        let mut reached_limit = false;
         for chunk in epoch_batches {
+            let scheduled_lr = lr_at(
+                step,
+                total_steps,
+                cfg.train.learning_rate,
+                cfg.train.warmup_steps,
+            );
+            let hard_batch = completed_exposure
+                .as_ref()
+                .map(|accounting| accounting.prepare_hard(&chunk, weights, scheduled_lr))
+                .transpose()?
+                .flatten();
+            if let Some(accounting) = &completed_exposure
+                && hard_batch.is_none()
+            {
+                accounting.verify_next(cfg, items, &chunk, weights, scheduled_lr)?;
+            }
             let batch_items: Vec<Encoded> = chunk.iter().map(|&i| items[i].clone()).collect();
             let batch: ParserBatch<B> = ParserBatcher.batch(batch_items, device);
-            let logits = model.forward(
+            let logits = forward_operator.forward(
+                &model,
                 batch.ngram_ids,
                 batch.script,
                 batch.shape,
                 batch.flags,
                 batch.mask.clone(),
-            );
-            let loss = masked_loss(logits, batch.labels, batch.mask, class_weights.clone());
+            )?;
+            let (loss, components) = if let Some(prepared) = &hard_batch {
+                anyhow::ensure!(
+                    diagnostic_logit_penalty.is_none(),
+                    "hard objective refuses a second penalty"
+                );
+                (crate::hard_token_batch::loss(logits, prepared)?, None)
+            } else if let Some(coefficient) = diagnostic_logit_penalty.filter(|value| *value > 0.0)
+            {
+                let cross_entropy = masked_loss(
+                    logits.clone(),
+                    batch.labels.clone(),
+                    batch.mask.clone(),
+                    class_weights.clone(),
+                );
+                let penalty = crate::loss_stability::centered_penalty(
+                    logits,
+                    batch.labels,
+                    batch.mask,
+                    class_weights.clone(),
+                );
+                let ce_value: f64 = cross_entropy.clone().into_scalar().elem();
+                let penalty_value: f64 = penalty.clone().into_scalar().elem();
+                anyhow::ensure!(
+                    ce_value.is_finite() && penalty_value.is_finite(),
+                    "epoch {epoch} step {step}: non-finite diagnostic loss component"
+                );
+                (
+                    cross_entropy + penalty * coefficient,
+                    Some((ce_value, penalty_value)),
+                )
+            } else {
+                (
+                    masked_loss(logits, batch.labels, batch.mask, class_weights.clone()),
+                    None,
+                )
+            };
             let value: f64 = loss.clone().into_scalar().elem();
             anyhow::ensure!(
                 value.is_finite() && value < 100.0,
@@ -1467,17 +2484,193 @@ fn fit<B: AutodiffBackend>(
                 cfg.train.warmup_steps,
             );
             model = optim.step(lr, model, grads);
+            if let Some(accounting) = &mut completed_exposure {
+                if let Some(prepared) = &hard_batch {
+                    accounting.record_hard(prepared)?;
+                } else {
+                    accounting.record(cfg, items, &chunk, weights, lr)?;
+                }
+            }
+            if let Some(accounting) = &mut exposure {
+                accounting.record(&chunk, items, weights, lr)?;
+            }
             epoch_loss += value;
+            if let Some((cross_entropy, penalty)) = components {
+                epoch_cross_entropy += cross_entropy;
+                epoch_penalty += penalty;
+            }
             batches += 1;
             step += 1;
+            if let Some(progress) = &mut fullmix_progress {
+                writeln!(
+                    progress,
+                    "{}",
+                    serde_json::to_string(&{
+                        let mut record = serde_json::json!({"optimizer_updates_executed":step,
+                            "epoch":epoch,"scheduled_learning_rate":lr,"elapsed_seconds":started.elapsed().as_secs_f64()});
+                        record[if hard_batch.is_some() {
+                            "native_batch_objective"
+                        } else {
+                            "native_batch_cross_entropy"
+                        }] = serde_json::json!(value);
+                        record
+                    })?
+                )?;
+                progress.flush()?;
+                if step == 1 || step.is_multiple_of(25) {
+                    eprintln!(
+                        "fullmix RMS step {step}/4000, native CE {value:.5}, elapsed {:.0}s",
+                        started.elapsed().as_secs_f64()
+                    );
+                }
+            }
+            if max_steps == Some(step)
+                || (completed_exposure.is_some() && crate::fullmix_rms::SNAPSHOTS.contains(&step))
+                || (exposure.is_some()
+                    && crate::memorization::exposure::OBSERVATIONS.contains(&step))
+            {
+                model.clone().save_file(
+                    run_dir.join(format!("checkpoints/diagnostic-step-{step}")),
+                    &recorder,
+                )?;
+                if let Some(accounting) = &exposure {
+                    accounting.write(run_dir, items, weights)?;
+                }
+                if let Some(accounting) = &completed_exposure {
+                    if hard_batch.is_some() {
+                        accounting.write(weights)?;
+                    }
+                    crate::fullmix_rms::checkpoint(
+                        &model.valid(),
+                        cfg,
+                        run_dir,
+                        &run_dir.join(format!("checkpoints/diagnostic-step-{step}.mpk")),
+                        step,
+                        crate::fullmix_rms::CheckpointKind::Snapshot,
+                    )?;
+                }
+            }
+            if let (Some(check), Some(probe), Some(gold), Some(log)) = (
+                learning_check,
+                learning_probe,
+                &probe_gold,
+                &mut probe_metrics,
+            ) && (step.is_multiple_of(check.every_steps)
+                || max_steps == Some(step)
+                || step == total_steps)
+            {
+                let candidates = detector::predict_scored_with_operator(
+                    &model.valid(),
+                    probe,
+                    batch_size,
+                    device,
+                    forward_operator,
+                )?;
+                let predicted = detector::apply_confidence_policy(&candidates);
+                let unfiltered: Vec<Vec<KindSpan>> = candidates
+                    .iter()
+                    .map(|document| document.iter().map(|candidate| candidate.span).collect())
+                    .collect();
+                let mut group_results = BTreeMap::new();
+                let mut candidate_results = BTreeMap::new();
+                let mut filtered_results = BTreeMap::new();
+                for (group, range) in [
+                    ("real", 0..probe.real_count),
+                    ("synthetic", probe.real_count..probe.len()),
+                ] {
+                    let scores = detector::score(&gold[range.clone()], &predicted[range.clone()]);
+                    let candidate_scores =
+                        detector::score(&gold[range.clone()], &unfiltered[range.clone()]);
+                    let diagnostic = crate::learning_gate::evaluate(
+                        &scores,
+                        check.minimum_recall,
+                        step,
+                        check.start_step,
+                    )?;
+                    eprintln!(
+                        "training candidates {group} step {step}: person precision {:.3} recall {:.3}, org precision {:.3} recall {:.3}, address precision {:.3} recall {:.3}; before confidence filtering, not the stopping criterion",
+                        candidate_scores.per_kind["person"].exact.precision,
+                        candidate_scores.per_kind["person"].exact.recall,
+                        candidate_scores.per_kind["org"].exact.precision,
+                        candidate_scores.per_kind["org"].exact.recall,
+                        candidate_scores.per_kind["address"].exact.precision,
+                        candidate_scores.per_kind["address"].exact.recall,
+                    );
+                    eprintln!(
+                        "training probe {group} step {step}: person recall {:.3}, org {:.3}, address {:.3}; enforced {}, passed {}",
+                        scores.per_kind["person"].exact.recall,
+                        scores.per_kind["org"].exact.recall,
+                        scores.per_kind["address"].exact.recall,
+                        diagnostic.enforced,
+                        diagnostic.passed
+                    );
+                    group_results.insert(group, diagnostic);
+                    candidate_results.insert(group, candidate_scores);
+                    if completed_exposure.is_some() {
+                        filtered_results.insert(group, scores);
+                    }
+                }
+                let passed = group_results.values().all(|diagnostic| diagnostic.passed);
+                let enforced = step >= check.start_step;
+                let mut probe_record = serde_json::json!({
+                    "step": step, "source_groups": group_results,
+                    "candidate_source_groups": candidate_results,
+                    "candidate_scope": "unfiltered decoded exact-span precision/recall/F1; diagnostic only, no change to confidence policy or learning enforcement",
+                    "passed": passed, "enforced": enforced,
+                });
+                if completed_exposure.is_some() {
+                    probe_record["filtered_source_groups"] =
+                        serde_json::to_value(filtered_results)?;
+                    let marker: serde_json::Value =
+                        serde_json::from_slice(&std::fs::read(run_dir.join("diagnostic.json"))?)?;
+                    probe_record["diagnostic_scope"] =
+                        serde_json::json!(crate::fullmix_rms::diagnostic_scope(&marker)?);
+                    probe_record["seen_quality_goal_exact_f1"] = serde_json::json!(0.95);
+                }
+                writeln!(log, "{}", serde_json::to_string(&probe_record)?)?;
+                log.flush()?;
+                if !passed {
+                    model.clone().save_file(
+                        run_dir.join(format!("checkpoints/learning-failed-step-{step}")),
+                        &recorder,
+                    )?;
+                    if completed_exposure.is_some() {
+                        crate::fullmix_rms::checkpoint(
+                            &model.valid(),
+                            cfg,
+                            run_dir,
+                            &run_dir.join(format!("checkpoints/learning-failed-step-{step}.mpk")),
+                            step,
+                            crate::fullmix_rms::CheckpointKind::LearningFailure,
+                        )?;
+                    }
+                    anyhow::bail!(
+                        "training probe failed at step {step}; diagnostic checkpoint retained, review learning_metrics.jsonl before another run"
+                    );
+                }
+                last_learning_check = Some(enforced && passed);
+            }
             if step % 200 == 0 {
                 eprintln!(
                     "epoch {epoch} step {step}/{total_steps} loss {:.4} lr {lr:.2e}",
                     epoch_loss / batches as f64
                 );
             }
+            if max_steps.is_some_and(|limit| step >= limit) {
+                reached_limit = true;
+                break;
+            }
         }
-        let (score, logged) = validate(&model.valid());
+        let (score, logged) = if exposure.is_some() {
+            (
+                CheckpointScore::new(0.0, 0.0),
+                serde_json::json!({
+                    "scope": "whole-original PERSON diagnostic; scoring only after fixed snapshots",
+                }),
+            )
+        } else {
+            validate(&model.valid())?
+        };
         anyhow::ensure!(
             score.is_finite(),
             "epoch {epoch} produced a non-finite validation score; refusing to select a checkpoint"
@@ -1485,6 +2678,8 @@ fn fit<B: AutodiffBackend>(
         let train_loss = epoch_loss / batches.max(1) as f64;
         let mut line = serde_json::json!({
             "epoch": epoch,
+            "optimizer_steps": step,
+            "partial_epoch": reached_limit,
             "train_loss": train_loss,
             "lr": lr_at(
                 step.saturating_sub(1),
@@ -1493,33 +2688,87 @@ fn fit<B: AutodiffBackend>(
                 cfg.train.warmup_steps
             ),
         });
+        if let Some(coefficient) = diagnostic_logit_penalty.filter(|value| *value > 0.0) {
+            line["train_cross_entropy"] = (epoch_cross_entropy / batches.max(1) as f64).into();
+            line["train_logit_penalty_unscaled"] = (epoch_penalty / batches.max(1) as f64).into();
+            line["train_objective"] = train_loss.into();
+            line["diagnostic_logit_penalty"] = coefficient.into();
+        }
         if let (Some(line), serde_json::Value::Object(fields)) = (line.as_object_mut(), &logged) {
             line.extend(fields.clone());
         }
         writeln!(metrics, "{line}")?;
+        metrics.flush()?;
         eprintln!(
             "epoch {epoch}: loss {train_loss:.4}, validation score {:.4}, tie break {:.4}",
             score.primary, score.secondary
         );
-        model.clone().save_file(
-            run_dir.join(format!("checkpoints/epoch-{epoch}")),
-            &recorder,
-        )?;
-        if score > best.0 {
-            best = (score, epoch, logged);
-            since_best = 0;
-            model.clone().save_file(run_dir.join("best"), &recorder)?;
-        } else {
-            since_best += 1;
-            if since_best >= cfg.train.patience {
-                eprintln!(
-                    "early stop at epoch {epoch}; best epoch {}, score {:.4}",
-                    best.1, best.0.primary
-                );
-                break;
+        if exposure.is_none() {
+            model.clone().save_file(
+                run_dir.join(format!("checkpoints/epoch-{epoch}")),
+                &recorder,
+            )?;
+            if completed_exposure.is_some() {
+                crate::fullmix_rms::checkpoint(
+                    &model.valid(),
+                    cfg,
+                    run_dir,
+                    &run_dir.join(format!("checkpoints/epoch-{epoch}.mpk")),
+                    step,
+                    crate::fullmix_rms::CheckpointKind::Epoch,
+                )?;
+            }
+            if score > best.0 {
+                best = (score, epoch, logged);
+                since_best = 0;
+                model.clone().save_file(run_dir.join("best"), &recorder)?;
+                if completed_exposure.is_some() {
+                    crate::fullmix_rms::checkpoint(
+                        &model.valid(),
+                        cfg,
+                        run_dir,
+                        &run_dir.join("best.mpk"),
+                        step,
+                        crate::fullmix_rms::CheckpointKind::DevelopmentSelected,
+                    )?;
+                }
+            } else {
+                since_best += 1;
+                if since_best >= cfg.train.patience
+                    && max_steps.is_none()
+                    && learning_check.is_none_or(|check| step >= check.start_step)
+                {
+                    eprintln!(
+                        "early stop at epoch {epoch}; best epoch {}, score {:.4}",
+                        best.1, best.0.primary
+                    );
+                    break;
+                }
             }
         }
+        if reached_limit {
+            break;
+        }
     }
+    if let Some(accounting) = &exposure {
+        anyhow::ensure!(
+            step == 2000,
+            "whole-original PERSON diagnostic did not reach its fixed cap"
+        );
+        accounting.write(run_dir, items, weights)?;
+    }
+    if let Some(accounting) = &completed_exposure {
+        anyhow::ensure!(
+            step == crate::fullmix_rms::STEPS,
+            "fullmix did not reach its fixed cap"
+        );
+        accounting.write(weights)?;
+    }
+    let learning_check_passed = last_learning_check;
+    anyhow::ensure!(
+        learning_check.is_none() || learning_check_passed == Some(true),
+        "run ended without passing the enforced training learning check"
+    );
     Ok(FitSummary {
         best_epoch: best.1,
         best_score: best.0.primary,
@@ -1528,12 +2777,387 @@ fn fit<B: AutodiffBackend>(
         seconds: started.elapsed().as_secs(),
         dense,
         embedding,
+        learning_check_passed,
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn checked_validation_route_cannot_fall_back_to_standard_forward() {
+        let mut cfg = crate::config::load(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../configs/detector-shared-v6.toml"),
+        )
+        .unwrap();
+        cfg.features.hash_buckets = 64;
+        cfg.features.ngram_dim = 4;
+        cfg.features.shape_dim = 4;
+        cfg.net.hidden = 4;
+        cfg.net.dilations = vec![1];
+        let gold = vec![KindSpan {
+            kind: 0,
+            start: 0,
+            end: 4,
+        }];
+        let enc = detector::encode_document("Anna", &gold, &cfg.features.to_tessera()).unwrap();
+        let docs = vec![detector::DetectorDoc {
+            text: "Anna".into(),
+            enc,
+            gold,
+            breaks: vec![true],
+        }];
+        let device = Default::default();
+        let mut model = cfg.detector_net_config().init::<NdArray>(&device);
+        assert!(
+            diagnostic_predictions(
+                &model,
+                &docs,
+                32,
+                &device,
+                crate::diagnostic_operator::ForwardOperator::Standard
+            )
+            .is_ok()
+        );
+        model.blocks[0].conv.bias = Some(burn::module::Param::from_tensor(Tensor::from_data(
+            [1e20_f32; 4],
+            &device,
+        )));
+        assert!(
+            diagnostic_predictions(
+                &model,
+                &docs,
+                32,
+                &device,
+                crate::diagnostic_operator::ForwardOperator::ResidualRmsV1
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn learning_failure_retains_evidence_without_completing_the_run() {
+        use burn::backend::{Autodiff, NdArray};
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let mut cfg = crate::config::load(&root.join("configs/detector-shared-v6.toml")).unwrap();
+        cfg.net.hidden = 4;
+        cfg.net.dropout = 0.0;
+        cfg.train.epochs = 3;
+        cfg.train.batch_size = 6;
+        cfg.train.warmup_steps = 0;
+        let check = cfg
+            .detector
+            .as_mut()
+            .unwrap()
+            .learning_check
+            .as_mut()
+            .unwrap();
+        check.documents = 6;
+        check.every_steps = 1;
+        check.start_step = 2;
+        check.minimum_recall = 1.0;
+        // Identical input features with three gold kinds cannot satisfy every recall gate.
+        let docs: Vec<_> = (0..6)
+            .map(|index| {
+                let text = format!("entity{index}");
+                let kind = index % 3;
+                let end = text.len() as u32;
+                detector::DetectorDoc {
+                    text,
+                    enc: Encoded {
+                        token_spans: vec![(0, end)],
+                        ngram_ids: vec![vec![1]],
+                        script: vec![1],
+                        shape: vec![1],
+                        flags: vec![0],
+                        labels: vec![(kind * 2 + 1) as u8],
+                        country: "US".into(),
+                    },
+                    gold: vec![detector::KindSpan {
+                        kind,
+                        start: 0,
+                        end,
+                    }],
+                    breaks: vec![true],
+                }
+            })
+            .collect();
+        let items: Vec<_> = docs.iter().map(|doc| doc.enc.clone()).collect();
+        let probe = crate::learning_probe::SelectedProbe {
+            documents: docs,
+            real_count: 3,
+        };
+        let run = tempfile::tempdir().unwrap();
+        initialize_run(run.path(), &cfg).unwrap();
+        let device = Default::default();
+        let model = cfg.detector_net_config().init::<Autodiff<NdArray>>(&device);
+        let result = fit(
+            &cfg,
+            run.path(),
+            model,
+            TrainingData {
+                items: &items,
+                draws: Vec::new(),
+                detector_epoch: Some(DetectorEpochDraws {
+                    synthetic_count: 3,
+                    synthetic_per_epoch: 3,
+                    source_pieces: vec![3],
+                    source_repeats: vec![1],
+                    seed: 42,
+                }),
+                learning_probe: Some(&probe),
+                max_steps: Some(2),
+                diagnostic_logit_penalty: None,
+                forward_operator: crate::diagnostic_operator::ForwardOperator::Standard,
+                completed_exposure: None,
+            },
+            &[1.0; 7],
+            &device,
+            |_| Ok((CheckpointScore::new(1.0, 1.0), serde_json::json!({}))),
+        );
+        assert!(
+            result
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("training probe failed at step 2")
+        );
+        assert!(run.path().join("best.mpk").exists());
+        assert!(run.path().join("diagnostic_initial.json").exists());
+        assert!(
+            run.path()
+                .join("checkpoints/diagnostic-step-2.mpk")
+                .exists()
+        );
+        assert!(
+            !run.path()
+                .join("checkpoints/diagnostic-step-3.mpk")
+                .exists()
+        );
+        assert!(
+            run.path()
+                .join("checkpoints/learning-failed-step-2.mpk")
+                .exists()
+        );
+        assert!(!run.path().join("summary.json").exists());
+        let rows: Vec<serde_json::Value> =
+            std::fs::read_to_string(run.path().join("learning_metrics.jsonl"))
+                .unwrap()
+                .lines()
+                .map(|line| serde_json::from_str(line).unwrap())
+                .collect();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[1]["step"], 2);
+        assert_eq!(rows[1]["enforced"], true);
+        assert_eq!(rows[1]["passed"], false);
+        for row in &rows {
+            for group in ["real", "synthetic"] {
+                for kind in ["person", "org", "address"] {
+                    let kept = &row["source_groups"][group]["per_kind"][kind];
+                    let raw = &row["candidate_source_groups"][group]["per_kind"][kind];
+                    assert_eq!(raw["gold"], kept["gold"]);
+                    assert!(
+                        raw["exact"]["recall"].as_f64().unwrap()
+                            >= kept["exact"]["recall"].as_f64().unwrap()
+                    );
+                    assert!((0.0..=1.0).contains(&raw["exact"]["precision"].as_f64().unwrap()));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn diagnostic_logit_penalty_is_scoped_and_zero_preserves_updates() {
+        type B = Autodiff<NdArray>;
+        let mut cfg = crate::config::load(&repo_path("configs/detector-shared-v6.toml")).unwrap();
+        cfg.features.hash_buckets = 16;
+        cfg.net.hidden = 4;
+        cfg.net.ngram_from = None;
+        cfg.net.finetune_ngram = false;
+        cfg.net.dropout = 0.0;
+        cfg.train.epochs = 2;
+        cfg.train.batch_size = 1;
+        cfg.train.warmup_steps = 0;
+        cfg.train.diagnostic_schedule_steps = Some(2);
+        cfg.detector.as_mut().unwrap().learning_check = None;
+        let items = vec![Encoded {
+            token_spans: vec![(0, 4)],
+            ngram_ids: vec![vec![1]],
+            script: vec![1],
+            shape: vec![1],
+            flags: vec![0],
+            labels: vec![1],
+            country: "US".into(),
+        }];
+        let device = Default::default();
+        B::seed(&device, 42);
+        let model = cfg.detector_net_config().init::<B>(&device);
+        // Burn clones unmaterialized parameters with independent lazy initialization.
+        let _ = crate::quantize::extract(&model.valid(), cfg.net_name());
+        let refused = tempfile::tempdir().unwrap();
+        initialize_run(refused.path(), &cfg).unwrap();
+        let data = |coefficient| TrainingData {
+            items: &items,
+            draws: vec![0],
+            detector_epoch: None,
+            learning_probe: None,
+            max_steps: Some(2),
+            diagnostic_logit_penalty: coefficient,
+            forward_operator: crate::diagnostic_operator::ForwardOperator::Standard,
+            completed_exposure: None,
+        };
+        assert!(
+            fit(
+                &cfg,
+                refused.path(),
+                model.clone(),
+                data(Some(1e-4)),
+                &[1.; 7],
+                &device,
+                |_| Ok((CheckpointScore::new(1., 1.), serde_json::json!({})))
+            )
+            .is_err()
+        );
+        assert!(!refused.path().join("diagnostic_initial.json").exists());
+        assert!(!refused.path().join("metrics.jsonl").exists());
+        let mut controls = Vec::new();
+        for coefficient in [None, Some(0.0), Some(1e-4)] {
+            let run = tempfile::tempdir().unwrap();
+            initialize_run(run.path(), &cfg).unwrap();
+            if let Some(value) = coefficient {
+                std::fs::write(
+                    run.path().join("diagnostic.json"),
+                    serde_json::to_vec(&serde_json::json!({
+                        "scope": "fixed training-only memorization diagnostic; never export",
+                        "logit_penalty": value,
+                    }))
+                    .unwrap(),
+                )
+                .unwrap();
+            }
+            fit(
+                &cfg,
+                run.path(),
+                model.clone(),
+                data(coefficient),
+                &[1.; 7],
+                &device,
+                |_| Ok((CheckpointScore::new(1., 1.), serde_json::json!({}))),
+            )
+            .unwrap();
+            let metrics = std::fs::read_to_string(run.path().join("metrics.jsonl")).unwrap();
+            if coefficient == Some(1e-4) {
+                for line in metrics.lines() {
+                    let row: serde_json::Value = serde_json::from_str(line).unwrap();
+                    let objective = row["train_objective"].as_f64().unwrap();
+                    let ce = row["train_cross_entropy"].as_f64().unwrap();
+                    let penalty = row["train_logit_penalty_unscaled"].as_f64().unwrap();
+                    assert!(penalty >= 0.0);
+                    assert!((objective - ce - 1e-4 * penalty).abs() < 1e-6);
+                }
+            } else {
+                let recorder = NamedMpkFileRecorder::<FullPrecisionSettings>::new();
+                let final_model = model
+                    .clone()
+                    .load_file(
+                        run.path().join("checkpoints/diagnostic-step-2"),
+                        &recorder,
+                        &device,
+                    )
+                    .unwrap();
+                controls.push((
+                    metrics,
+                    crate::training_diagnostic::parameter_sha256(&crate::quantize::extract(
+                        &final_model.valid(),
+                        cfg.net_name(),
+                    )),
+                ));
+            }
+        }
+        assert_eq!(controls[0], controls[1]);
+    }
+
+    #[test]
+    fn bounded_diagnostic_reaches_its_cap_despite_epoch_patience() {
+        let mut cfg = crate::config::load(&repo_path("configs/detector-shared-v6.toml")).unwrap();
+        cfg.features.hash_buckets = 16;
+        cfg.net.hidden = 4;
+        cfg.net.ngram_from = None;
+        cfg.net.finetune_ngram = false;
+        cfg.net.dropout = 0.0;
+        cfg.train.epochs = 5;
+        cfg.train.batch_size = 1;
+        cfg.train.warmup_steps = 0;
+        cfg.train.patience = 1;
+        cfg.train.diagnostic_schedule_steps = Some(10);
+        cfg.detector.as_mut().unwrap().learning_check = None;
+        let items = vec![Encoded {
+            token_spans: vec![(0, 4)],
+            ngram_ids: vec![vec![1]],
+            script: vec![1],
+            shape: vec![1],
+            flags: vec![0],
+            labels: vec![1],
+            country: "US".into(),
+        }];
+        let run = tempfile::tempdir().unwrap();
+        initialize_run(run.path(), &cfg).unwrap();
+        let device = Default::default();
+        let model = cfg.detector_net_config().init::<Autodiff<NdArray>>(&device);
+        let result = fit(
+            &cfg,
+            run.path(),
+            model,
+            TrainingData {
+                items: &items,
+                draws: vec![0],
+                detector_epoch: None,
+                learning_probe: None,
+                max_steps: Some(3),
+                diagnostic_logit_penalty: None,
+                forward_operator: crate::diagnostic_operator::ForwardOperator::Standard,
+                completed_exposure: None,
+            },
+            &[1.0; 7],
+            &device,
+            |_| Ok((CheckpointScore::new(1.0, 1.0), serde_json::json!({}))),
+        )
+        .unwrap();
+        assert_eq!(result.steps, 3);
+        assert_eq!(result.best_epoch, 1);
+        assert!(
+            run.path()
+                .join("checkpoints/diagnostic-step-3.mpk")
+                .exists()
+        );
+        assert!(!run.path().join("checkpoints/epoch-4.mpk").exists());
+        let initial: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(run.path().join("diagnostic_initial.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(initial["learning_rate_horizon_steps"], 10);
+        assert_eq!(initial["scheduled_optimizer_steps"], 5);
+    }
+
+    #[test]
+    fn learning_check_requires_exposure_and_an_enforced_check_before_stopping() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let mut cfg = crate::config::load(&root.join("configs/detector-shared-v6.toml")).unwrap();
+        validate_learning_budget(&cfg, 8856, Some(2000)).unwrap();
+        assert!(validate_learning_budget(&cfg, 8856, Some(1999)).is_err());
+        cfg.train.epochs = 3;
+        assert!(validate_learning_budget(&cfg, 8856, None).is_err());
+        cfg.train.epochs = 25;
+        cfg.detector
+            .as_mut()
+            .unwrap()
+            .learning_check
+            .as_mut()
+            .unwrap()
+            .start_step = 277;
+        assert!(validate_learning_budget(&cfg, 8856, None).is_err());
+    }
 
     #[test]
     #[ignore = "requires the locally prepared US training corpus"]
@@ -2169,6 +3793,64 @@ mod tests {
             .into_scalar()
             .elem();
         assert!((loss - (PARSER_LABELS as f32).ln()).abs() < 1e-4, "{loss}");
+    }
+
+    #[test]
+    fn weighted_loss_gradients_match_cross_entropy_and_ignore_padding() {
+        type B = Autodiff<NdArray>;
+        let device = Default::default();
+        let values = vec![
+            0.0f32, 1.0, 2.0, 1000.0, 1001.0, 998.0, -1000.0, -999.0, -1002.0, 4.0, 0.0, -3.0, 8.0,
+            -2.0, 1.0, 1000.0, -1000.0, 0.0,
+        ];
+        let targets = [2usize, 1, 0, 0, 2, 1];
+        let active = [1.0f32, 1.0, 1.0, 0.0, 1.0, 0.0];
+        let weights = [1.0f32, 3.0, 5.0];
+        let denominator: f64 = targets
+            .iter()
+            .zip(active)
+            .map(|(&target, mask)| f64::from(weights[target] * mask))
+            .sum();
+        let logits = Tensor::<B, 3>::from_data(TensorData::new(values.clone(), [2, 3, 3]), &device)
+            .require_grad();
+        let loss = masked_loss(
+            logits.clone(),
+            Tensor::from_data(
+                TensorData::new(targets.map(|target| target as i64).to_vec(), [2, 3]),
+                &device,
+            ),
+            Tensor::from_data(TensorData::new(active.to_vec(), [2, 3]), &device),
+            Tensor::from_data(TensorData::new(weights.to_vec(), [3]), &device),
+        );
+        let actual_loss: f32 = loss.clone().into_scalar();
+        let gradients = loss.backward();
+        let actual = logits
+            .grad(&gradients)
+            .unwrap()
+            .into_data()
+            .to_vec::<f32>()
+            .unwrap();
+        let mut expected_loss = 0.0;
+        for (token, scores) in values.chunks_exact(3).enumerate() {
+            let maximum = scores.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+            let shifted: Vec<f64> = scores
+                .iter()
+                .map(|&score| f64::from(score - maximum))
+                .collect();
+            let sum: f64 = shifted.iter().map(|score| score.exp()).sum();
+            let factor = f64::from(weights[targets[token]] * active[token]) / denominator;
+            expected_loss += (sum.ln() - shifted[targets[token]]) * factor;
+            for (label, score) in shifted.iter().enumerate() {
+                let target = if label == targets[token] { 1.0 } else { 0.0 };
+                let expected = (score.exp() / sum - target) * factor;
+                assert!(
+                    (f64::from(actual[token * 3 + label]) - expected).abs() < 2e-5,
+                    "token {token}, label {label}: expected {expected}, got {}",
+                    actual[token * 3 + label]
+                );
+            }
+        }
+        assert!((f64::from(actual_loss) - expected_loss).abs() < 2e-5);
     }
 
     #[test]

@@ -145,6 +145,24 @@ fn parse_gold(path: &Path, text: &str) -> anyhow::Result<Vec<Case>> {
     Ok(cases)
 }
 
+fn parse_bound_training_seen_gold(path: &Path, text: &str) -> anyhow::Result<Vec<Case>> {
+    let mut normalized = String::new();
+    for line in text.lines().filter(|l| !l.trim().is_empty()) {
+        let mut row: Value = serde_json::from_str(line)?;
+        let fields = row
+            .as_object_mut()
+            .context("training-seen row must be an object")?;
+        anyhow::ensure!(
+            !fields.contains_key("doc_type"),
+            "bound training-seen schema unexpectedly has doc_type"
+        );
+        fields.insert("doc_type".to_owned(), json!("training_seen"));
+        normalized.push_str(&serde_json::to_string(&row)?);
+        normalized.push('\n');
+    }
+    parse_gold(path, &normalized)
+}
+
 fn gold_text_stats(cases: &[Case]) -> anyhow::Result<Value> {
     let mut seen: BTreeMap<&str, (&Case, usize)> = BTreeMap::new();
     for case in cases {
@@ -906,6 +924,8 @@ pub fn run_gold_model<B: Backend>(
     run: &Path,
     device: &B::Device,
 ) -> anyhow::Result<()> {
+    crate::diagnostic_decode::validate_route(args)?;
+    let producer = crate::diagnostic_decode::producer_binary()?;
     let gold_path = args.gold.as_deref().context("--gold is required")?;
     anyhow::ensure!(
         args.predictions.is_empty() && args.external.is_empty(),
@@ -920,23 +940,206 @@ pub fn run_gold_model<B: Backend>(
     anyhow::ensure!(cfg.net_name() == "detector", "--run is not a detector run");
     let gold_bytes =
         std::fs::read(gold_path).with_context(|| format!("reading {}", gold_path.display()))?;
-    let cases = parse_gold(gold_path, std::str::from_utf8(&gold_bytes)?)?;
+    let operator = crate::diagnostic_operator::load(run, &cfg)?;
+    let bounded_rms = matches!(
+        operator,
+        crate::diagnostic_operator::ForwardOperator::ResidualRmsV1
+            | crate::diagnostic_operator::ForwardOperator::ContextRmsV2
+    ) && run.join("diagnostic.json").try_exists()?;
+    let seen_role = if bounded_rms {
+        crate::fullmix_rms::training_seen_role(run, &cfg, gold_path)?
+    } else {
+        None
+    };
+    crate::diagnostic_decode::validate_seen(args.diagnostic_decoder, seen_role.as_deref())?;
+    let cases = if seen_role.is_some() {
+        parse_bound_training_seen_gold(gold_path, std::str::from_utf8(&gold_bytes)?)?
+    } else {
+        parse_gold(gold_path, std::str::from_utf8(&gold_bytes)?)?
+    };
     anyhow::ensure!(
         cases.iter().all(|case| case.country == "US"),
         "checkpoint gold scoring currently requires US cases"
     );
-    let docs = crate::detector::load_development_gold(gold_path, &cfg.features.to_tessera())?;
+    let docs = if bounded_rms {
+        anyhow::ensure!(
+            matches!(args.backend, crate::train::BackendKind::Ndarray),
+            "RMS diagnostic scoring requires NdArray"
+        );
+        let selection: Value = serde_json::from_slice(&std::fs::read(run.join("selection.json"))?)?;
+        let marker: Value = serde_json::from_slice(&std::fs::read(run.join("diagnostic.json"))?)?;
+        if crate::fullmix_rms::is_fullmix(&marker) {
+            crate::fullmix_rms::checkpoint_provenance(run)?;
+            crate::fullmix_rms::scoring_docs(run, &cfg, gold_path, &selection)?
+        } else {
+            let (names, docs) = crate::loss_diagnostic::load_cases_with_limits(
+                gold_path, &cfg, &selection, 15, 900,
+            )?;
+            anyhow::ensure!(
+                names
+                    .iter()
+                    .zip(&cases)
+                    .all(|(name, case)| *name == case.name),
+                "RMS diagnostic case names differ"
+            );
+            anyhow::ensure!(
+                names
+                    .iter()
+                    .zip(
+                        selection["documents"]
+                            .as_array()
+                            .context("missing frozen documents")?
+                    )
+                    .all(|(name, row)| row["name"] == *name),
+                "RMS diagnostic source names differ"
+            );
+            docs
+        }
+    } else {
+        crate::detector::load_development_gold(gold_path, &cfg.features.to_tessera())?
+    };
     anyhow::ensure!(cases.len() == docs.len(), "gold case alignment changed");
-    let model = crate::quantize::load_best::<B>(run, &cfg, device)?;
-    let predicted = crate::detector::predict(&model, &docs, cfg.train.batch_size, device);
+    let model = crate::quantize::load_best_for_operator::<B>(run, &cfg, device, operator)?;
+    let mut loaded_parameter_sha256 = None;
+    if bounded_rms {
+        let marker: Value = serde_json::from_slice(&std::fs::read(run.join("diagnostic.json"))?)?;
+        if crate::fullmix_rms::is_fullmix(&marker) {
+            let actual = crate::training_diagnostic::parameter_sha256(&crate::quantize::extract(
+                &model,
+                cfg.net_name(),
+            ));
+            crate::fullmix_rms::verify_checkpoint_parameters(run, &actual)?;
+            loaded_parameter_sha256 = Some(actual);
+        }
+    }
+    let candidate_spans = crate::detector::predict_scored_with_operator_and_decoder(
+        &model,
+        &docs,
+        cfg.train.batch_size,
+        device,
+        operator,
+        args.diagnostic_decoder,
+    )?;
+    let predicted = crate::detector::apply_confidence_policy(&candidate_spans);
+    let raw: Vec<Vec<_>> = candidate_spans
+        .iter()
+        .map(|doc| doc.iter().map(|s| s.span).collect())
+        .collect();
+    let candidates = args.dump_confidence.as_ref().map(|_| candidate_spans);
     let gold: Vec<_> = docs.iter().map(|doc| doc.gold.clone()).collect();
+    let seen_metrics = if seen_role.is_some() {
+        crate::fullmix_rms::training_seen_metrics(run, &cfg, gold_path, &gold, &raw, &predicted)?
+    } else {
+        None
+    };
     let scores = crate::detector::score(&gold, &predicted);
-    let provenance = json!({
+    let mut provenance = json!({
         "gold_sha256": crate::export::sha256_hex(&gold_bytes),
         "config_sha256": crate::export::sha256_hex(&std::fs::read(&cfg_path)?),
         "best_sha256": crate::export::sha256_hex(&std::fs::read(run.join("best.mpk"))?),
         "evaluator_sha256": evaluator_sha256()?,
     });
+    crate::diagnostic_decode::record_producer(producer.as_ref(), &mut provenance)?;
+    if cfg.context96_rms() {
+        provenance["architecture"] = json!(tessera::internal::CONTEXT96_RMS_NAME);
+        provenance["decoder_contract"] = json!(cfg.decoder_contract());
+        provenance["detector_decoder"] = json!("address-continuation-v1");
+        if bounded_rms {
+            provenance["loaded_parameter_sha256"] = json!(
+                loaded_parameter_sha256
+                    .as_deref()
+                    .context("context decoder requires verified loaded checkpoint parameters")?
+            );
+        }
+        provenance["operator_sha256"] = json!(crate::export::sha256_hex(
+            tessera::internal::CONTEXT96_RMS_CONTRACT.as_bytes()
+        ));
+    }
+    if let Some(decoder) = args.diagnostic_decoder {
+        provenance["diagnostic_decoder"] = json!(decoder.identifier());
+        if let Some(root) = crate::diagnostic_decode::compiled_input_root() {
+            provenance["diagnostic_input_root"] = json!(root);
+        }
+        provenance["loaded_parameter_sha256"] = json!(
+            loaded_parameter_sha256
+                .context("diagnostic decoder requires verified loaded checkpoint parameters")?
+        );
+    }
+    if bounded_rms {
+        provenance["operator_sha256"] =
+            json!(crate::export::sha256_hex(&std::fs::read(run.join(
+                if operator == crate::diagnostic_operator::ForwardOperator::ContextRmsV2 {
+                    crate::diagnostic_operator::CONTEXT_FILE
+                } else {
+                    crate::diagnostic_operator::FILE
+                }
+            ))?));
+        provenance["diagnostic_sha256"] = json!(crate::export::sha256_hex(&std::fs::read(
+            run.join("diagnostic.json")
+        )?));
+        provenance["selection_sha256"] = json!(crate::export::sha256_hex(&std::fs::read(
+            run.join("selection.json")
+        )?));
+        let marker: Value = serde_json::from_slice(&std::fs::read(run.join("diagnostic.json"))?)?;
+        if crate::fullmix_rms::is_fullmix(&marker) {
+            provenance["fullmix_manifest_sha256"] = json!(crate::export::sha256_hex(
+                &std::fs::read(run.join(crate::fullmix_rms::FILE))?
+            ));
+            provenance["diagnostic_scope"] = marker["diagnostic_scope"].clone();
+            provenance["preflight"] = marker["preflight"].clone();
+            provenance["checkpoint"] = crate::fullmix_rms::checkpoint_provenance(run)?;
+            provenance["checkpoint_receipt_sha256"] = json!(crate::export::sha256_hex(
+                &std::fs::read(run.join("checkpoint.json"))?
+            ));
+            provenance["release_quality_claim"] = json!(false);
+            provenance["evaluation_role"] = json!(if seen_role.is_some() {
+                "TRAINING-SEEN final4000 fitting diagnostic"
+            } else if cases.iter().all(|case| case
+                .slices
+                .get("doc_type")
+                .is_some_and(|role| role == "training_memorization"))
+            {
+                "seen source-backed inspection"
+            } else {
+                "development used for checkpoint selection"
+            });
+        }
+    }
+    if let (Some(path), Some(candidates)) = (&args.dump_confidence, &candidates) {
+        let unfiltered: Vec<Vec<_>> = candidates
+            .iter()
+            .map(|doc| doc.iter().map(|s| s.span).collect())
+            .collect();
+        let predictions: Vec<_> = cases
+            .iter()
+            .zip(candidates)
+            .map(|(case, spans)| {
+                json!({
+                    "name": case.name,
+                    "entities": spans.iter().map(|s| json!({
+                        "kind": crate::detector::KINDS[s.span.kind].as_str(),
+                        "start": s.span.start,
+                        "end": s.span.end,
+                        "confidence": s.confidence,
+                    })).collect::<Vec<_>>(),
+                })
+            })
+            .collect();
+        write_json(
+            path,
+            &crate::diagnostic_decode::record(
+                args.diagnostic_decoder,
+                json!({
+                    "scope": "diagnostic only; decoder candidates before confidence filtering",
+                    "provenance": provenance,
+                    "policy_scores": scores,
+                    "unfiltered_scores": crate::detector::score(&gold, &unfiltered),
+                    "training_seen": seen_metrics,
+                    "predictions": predictions,
+                }),
+            ),
+        )?;
+    }
     if let Some(path) = &args.dump_predictions {
         let predictions: Vec<_> = cases
             .iter()
@@ -954,21 +1157,29 @@ pub fn run_gold_model<B: Backend>(
             .collect();
         write_json(
             path,
-            &json!({
-                "system": "detector_f32_model_only",
-                "provenance": provenance,
-                "predictions": predictions,
-            }),
+            &crate::diagnostic_decode::record(
+                args.diagnostic_decoder,
+                json!({
+                    "system": "detector_f32_model_only",
+                    "provenance": provenance,
+                    "predictions": predictions,
+                }),
+            ),
         )?;
     }
-    let result = json!({
-        "system": "detector_f32_model_only",
-        "scope": "person, org, and address model spans; no runtime rules or export",
-        "gold": gold_path,
-        "cases": docs.len(),
-        "provenance": provenance,
-        "scores": scores,
-    });
+    let result = crate::diagnostic_decode::record(
+        args.diagnostic_decoder,
+        json!({
+            "system": "detector_f32_model_only",
+            "scope": "person, org, and address model spans; no runtime rules or export",
+            "gold": gold_path,
+            "cases": docs.len(),
+            "provenance": provenance,
+            "scores": scores,
+            "unfiltered_scores": crate::detector::score(&gold,&raw),
+            "training_seen": seen_metrics,
+        }),
+    );
     write_json(&args.out.join("eval").join("review-model.json"), &result)?;
     println!("{}", serde_json::to_string_pretty(&result)?);
     Ok(())
@@ -1058,6 +1269,30 @@ fn finish(report: Option<&Path>, tables: &[(String, String)]) -> anyhow::Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bound_training_seen_schema_preserves_declared_kinds_and_refuses_role_substitution() {
+        let row = json!({"name":"schema-control","country":"US","input":"Anna BLS 12 Oak a@b.co 555","expected":[
+            {"kind":"person","start":0,"end":4,"text":"Anna"},
+            {"kind":"org","start":5,"end":8,"text":"BLS"},
+            {"kind":"address","start":9,"end":15,"text":"12 Oak"},
+            {"kind":"email","start":16,"end":22,"text":"a@b.co"},
+            {"kind":"phone","start":23,"end":26,"text":"555"}
+        ]});
+        let path = Path::new("training-seen-schema.jsonl");
+        let text = serde_json::to_string(&row).unwrap();
+        assert!(parse_gold(path, &text).is_err());
+        let cases = parse_bound_training_seen_gold(path, &text).unwrap();
+        assert_eq!(cases.len(), 1);
+        assert_eq!(cases[0].expected.len(), 5);
+        assert_eq!(cases[0].slices["doc_type"], "training_seen");
+        let mut substituted = row;
+        substituted["doc_type"] = json!("development");
+        assert!(
+            parse_bound_training_seen_gold(path, &serde_json::to_string(&substituted).unwrap())
+                .is_err()
+        );
+    }
 
     #[test]
     fn synthetic_gold_rejects_invalid_kind_and_offsets() {

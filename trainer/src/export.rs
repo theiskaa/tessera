@@ -92,7 +92,7 @@ pub fn metadata(cfg: &Config, snapshot: &str, date: &str) -> BTreeMap<String, St
         "shape_rows": SHAPE_ROWS,
     });
     let experimental: Vec<&str> = cfg.data.countries.iter().map(String::as_str).collect();
-    BTreeMap::from([
+    let mut metadata = BTreeMap::from([
         ("model_name".to_string(), "Tessera".to_string()),
         (
             "description".to_string(),
@@ -122,7 +122,24 @@ pub fn metadata(cfg: &Config, snapshot: &str, date: &str) -> BTreeMap<String, St
         ("training_snapshot".to_string(), snapshot.to_string()),
         ("report_url".to_string(), String::new()),
         ("created".to_string(), date.to_string()),
-    ])
+    ]);
+    bind_architecture(&mut metadata, cfg);
+    metadata
+}
+
+fn bind_architecture(metadata: &mut BTreeMap<String, String>, detector: &Config) {
+    if detector.context96_rms() {
+        metadata.insert("format".into(), "2".into());
+        metadata.insert("model_version".into(), "0.3.0".into());
+        metadata.insert(
+            "decoder_contract".into(),
+            detector.decoder_contract().into(),
+        );
+        metadata.insert(
+            "detector_architecture".into(),
+            tessera::internal::CONTEXT96_RMS_CONTRACT.into(),
+        );
+    }
 }
 
 /// A label or region list as the manifest stores it, a JSON array in a string.
@@ -172,9 +189,11 @@ fn check_library_shape(cfg: &Config) -> anyhow::Result<()> {
     let net = cfg.tagger_net_config();
     let dilations: &[usize] = match cfg.task {
         Task::Parser => &[1, 2, 4, 8],
+        Task::Detector if cfg.context96_rms() => &tessera::internal::CONTEXT96_RMS_DILATIONS,
         Task::Detector => &[1, 2, 4, 8, 16, 1],
     };
-    let ok = net.dilations == dilations
+    let ok = (!cfg.context96_rms() || net.hidden == 96)
+        && net.dilations == dilations
         && net.kernel == 3
         && (1..=1024).contains(&net.hidden)
         && net.ngram_dim == 48
@@ -207,6 +226,7 @@ fn load_run(dir: &Path, task: Task) -> anyhow::Result<ShippedRun> {
     crate::quantize::verify_gate(dir)?;
     crate::train::verify_input_snapshot(dir)?;
     let cfg = crate::config::load(&dir.join("config.toml"))?;
+    crate::quantize::verify_learning_result(dir, &cfg)?;
     anyhow::ensure!(
         cfg.task == task,
         "{} is a {:?} run, not a {task:?} run",
@@ -214,6 +234,7 @@ fn load_run(dir: &Path, task: Task) -> anyhow::Result<ShippedRun> {
         cfg.task
     );
     check_library_shape(&cfg)?;
+    crate::diagnostic_operator::require_deployable(dir, &cfg)?;
     let (q, biases) = read_quantized(&dir.join("quantized.safetensors"))?;
     Ok(ShippedRun {
         dir: dir.to_path_buf(),
@@ -326,7 +347,12 @@ pub fn run(parser_run: &Path, detector_run: &Path, out: &Path, date: &str) -> an
         &training_snapshot(parser_run, detector_run)?,
         date,
     );
+    bind_architecture(&mut meta, &detector.cfg);
     bind_artifact_hashes(&mut meta, parser_run, detector_run)?;
+    let bundle_version = meta
+        .get("model_version")
+        .context("bundle metadata missing model_version")?
+        .clone();
     std::fs::create_dir_all(out)?;
     let bundle = out.join("tessera-v1.safetensors");
     let shared = shares_parser_ngram(&parser, &detector)?;
@@ -361,13 +387,15 @@ pub fn run(parser_run: &Path, detector_run: &Path, out: &Path, date: &str) -> an
     for (name, text) in golden_cases(&parser.cfg, &fc)? {
         let enc = encode(&text, &[], &fc).map_err(|e| anyhow::anyhow!("{name}: {e}"))?;
         let case = golden_case(
+            &bundle_version,
             Task::Parser,
+            crate::diagnostic_operator::ForwardOperator::Standard,
             &f32_parser,
             &int8_parser,
             &text,
             &enc,
             &device,
-        );
+        )?;
         std::fs::write(
             golden_dir.join(format!("{name}.json")),
             golden_json(&case, 0) + "\n",
@@ -381,13 +409,15 @@ pub fn run(parser_run: &Path, detector_run: &Path, out: &Path, date: &str) -> an
         let enc = detector::encode_document(text, &[], &fc)
             .map_err(|e| anyhow::anyhow!("{name}: {e}"))?;
         let case = golden_case(
+            &bundle_version,
             Task::Detector,
+            crate::diagnostic_operator::deployable(&detector.cfg),
             &f32_detector,
             &int8_detector,
             text,
             &enc,
             &device,
-        );
+        )?;
         std::fs::write(
             golden_dir.join(format!("{name}.json")),
             golden_json(&case, 0) + "\n",
@@ -527,42 +557,48 @@ fn golden_cases(
 
 fn logits<B: Backend>(
     model: &TaggerNet<B>,
+    operator: crate::diagnostic_operator::ForwardOperator,
     labels: usize,
     enc: &Encoded,
     device: &B::Device,
-) -> Vec<Vec<f32>> {
+) -> anyhow::Result<Vec<Vec<f32>>> {
     let batch: ParserBatch<B> = ParserBatcher.batch(vec![enc.clone()], device);
-    let out = model.forward(
+    let out = operator.forward(
+        model,
         batch.ngram_ids,
         batch.script,
         batch.shape,
         batch.flags,
         batch.mask.clone(),
-    );
-    let flat: Vec<f32> = out.into_data().to_vec().expect("logits are f32");
-    flat.chunks(labels)
+    )?;
+    let flat: Vec<f32> = out.into_data().to_vec()?;
+    Ok(flat
+        .chunks(labels)
         .take(enc.token_spans.len())
         .map(<[f32]>::to_vec)
-        .collect()
+        .collect())
 }
 
 /// One golden case. The parser's decoded labels are its transition-masked decode; the
 /// detector's are the most probable label per position, `O` where the rule-span mask is set,
 /// which the file also records.
+#[allow(clippy::too_many_arguments)]
 fn golden_case(
+    bundle_version: &str,
     task: Task,
+    operator: crate::diagnostic_operator::ForwardOperator,
     f32_model: &TaggerNet<NdArray>,
     int8_model: &TaggerNet<NdArray>,
     text: &str,
     enc: &Encoded,
     device: &burn::tensor::Device<NdArray>,
-) -> serde_json::Value {
+) -> anyhow::Result<serde_json::Value> {
     let labels = match task {
         Task::Detector => DETECTOR_LABELS,
         Task::Parser => PARSER_LABELS,
     };
-    let f32_logits = logits(f32_model, labels, enc, device);
-    let int8_logits = logits(int8_model, labels, enc, device);
+    let f32_logits = logits(f32_model, operator, labels, enc, device)?;
+    let int8_logits = logits(int8_model, operator, labels, enc, device)?;
     let probs: Vec<Vec<f32>> = int8_logits
         .iter()
         .map(|row| {
@@ -594,7 +630,7 @@ fn golden_case(
         .collect();
     let mut case = serde_json::json!({
         "net": task.name(),
-        "bundle_version": MODEL_VERSION,
+        "bundle_version": bundle_version,
         "input": {
             "text": text,
             "tokens": enc.token_spans.iter().map(|(a, b)| [a, b]).collect::<Vec<_>>(),
@@ -606,10 +642,40 @@ fn golden_case(
         "tolerance": GOLDEN_TOLERANCE,
     });
     if task == Task::Detector {
+        if operator == crate::diagnostic_operator::ForwardOperator::ContextRmsV2 {
+            let tokens = tessera::internal::tokenize(text);
+            let retained: Vec<_> = tokens
+                .iter()
+                .enumerate()
+                .filter_map(|(i, t)| tessera::internal::is_content(t).then_some(i))
+                .collect();
+            let breaks = tessera::internal::paragraph_breaks(&tokens, &retained);
+            anyhow::ensure!(
+                breaks.len() == enc.token_spans.len(),
+                "context golden token boundaries differ"
+            );
+            let flat: Vec<_> = probs.iter().flatten().copied().collect();
+            let candidates = crate::diagnostic_decode::decode(
+                operator.decoder(None),
+                text,
+                &enc.token_spans,
+                &flat,
+                &masked,
+                &breaks,
+            );
+            case["detector_spans"] = serde_json::json!(candidates.iter().map(|s| serde_json::json!({"kind":s.kind.as_str(),"first":s.first,"last":s.last,"confidence":s.confidence})).collect::<Vec<_>>());
+            case["forward_operator"] = serde_json::json!(crate::diagnostic_operator::CONTEXT_NAME);
+            case["decoder_contract"] =
+                serde_json::json!(tessera::internal::CONTEXT96_DECODER_CONTRACT);
+        }
         case["masked"] = serde_json::json!(masked);
     }
-    case
+    Ok(case)
 }
+
+#[cfg(test)]
+#[path = "context96_tests.rs"]
+mod context96_tests;
 
 #[cfg(test)]
 mod tests {
@@ -912,5 +978,42 @@ mod tests {
                 assert_eq!(meta[&format!("{net}_{key}")], expected);
             }
         }
+    }
+    #[test]
+    fn context96_metadata_and_export_shape_bind_graph_operator_and_decoder() {
+        let mut cfg = crate::config::load(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../configs/detector-shared.toml"),
+        )
+        .unwrap();
+        let legacy = metadata(&cfg, "unchanged", "unchanged");
+        assert_eq!(legacy["format"], "1");
+        assert_eq!(legacy["model_version"], "0.2.1");
+        assert_eq!(legacy["decoder_contract"], DECODER_CONTRACT);
+        assert!(!legacy.contains_key("detector_architecture"));
+        cfg.net.architecture = Some(tessera::internal::CONTEXT96_RMS_NAME.into());
+        cfg.net.dilations = tessera::internal::CONTEXT96_RMS_DILATIONS.to_vec();
+        cfg.validate().unwrap();
+        check_library_shape(&cfg).unwrap();
+        let context = metadata(&cfg, "unchanged", "unchanged");
+        assert_eq!(context["format"], "2");
+        assert_eq!(context["model_version"], "0.3.0");
+        assert_eq!(
+            context["decoder_contract"],
+            tessera::internal::CONTEXT96_DECODER_CONTRACT
+        );
+        assert_eq!(
+            context["detector_architecture"],
+            tessera::internal::CONTEXT96_RMS_CONTRACT
+        );
+        let parser_cfg = crate::config::load(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../configs/parser-small.toml"),
+        )
+        .unwrap();
+        let mut combined = metadata(&parser_cfg, "unchanged", "unchanged");
+        assert_eq!(combined["model_version"], MODEL_VERSION);
+        bind_architecture(&mut combined, &cfg);
+        assert_eq!(combined["model_version"], context["model_version"]);
+        cfg.net.dilations[6] = 32;
+        assert!(check_library_shape(&cfg).is_err());
     }
 }

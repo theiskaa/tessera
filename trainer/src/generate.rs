@@ -386,13 +386,18 @@ pub struct PoolOrg {
 /// An unaugmented address from the parser shards, with one-line and multi-line renderings.
 #[derive(Debug, Clone)]
 pub struct PoolAddress {
+    /// The complete postal text after venue filtering and country normalization.
     pub text: String,
+    delivery_boundary: Option<usize>,
 }
 
 impl PoolAddress {
     fn from_example(e: &LabelledExample) -> PoolAddress {
+        let text = pool_filter::with_local_country(e, &pool_filter::without_venue_lines(e));
+        let delivery_boundary = crate::address_prefix::street_boundary(e, &text);
         PoolAddress {
-            text: pool_filter::with_local_country(e, &pool_filter::without_venue_lines(e)),
+            text,
+            delivery_boundary,
         }
     }
 
@@ -407,6 +412,25 @@ impl PoolAddress {
             .filter(|l| !l.is_empty())
             .collect::<Vec<_>>()
             .join(", ")
+    }
+
+    fn delivery(&self, multiline: bool, rng: &mut ChaCha8Rng) -> String {
+        if multiline {
+            return crate::address_prefix::augment(&self.text, self.delivery_boundary, rng);
+        }
+        let boundary = self.delivery_boundary.and_then(|at| {
+            let before = self.text.get(..at)?;
+            Some(
+                before
+                    .lines()
+                    .map(str::trim)
+                    .filter(|line| !line.is_empty())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+                    .len(),
+            )
+        });
+        crate::address_prefix::augment(&self.one_line(), boundary, rng)
     }
 }
 
@@ -506,7 +530,11 @@ impl GoldExclusions {
     }
 
     fn add(&mut self, kind: &str, text: &str) -> anyhow::Result<()> {
-        let surface = normalize_surface(text);
+        let surface = if kind == "org" {
+            normalize_org_surface(text)
+        } else {
+            normalize_surface(text)
+        };
         anyhow::ensure!(!surface.is_empty(), "empty exclusion surface");
         match kind {
             "person" => {
@@ -557,12 +585,12 @@ impl GoldExclusions {
 
     fn expand_public_body_aliases(&mut self) -> anyhow::Result<()> {
         for body in bodies::public_bodies()? {
-            let name = normalize_surface(&body.name);
+            let name = normalize_org_surface(&body.name);
             let acronym = body
                 .acronym
                 .as_deref()
                 .context("validated public body lacks acronym")?;
-            let acronym = normalize_surface(acronym);
+            let acronym = normalize_org_surface(acronym);
             if self.orgs.contains(&name) || self.orgs.contains(&acronym) {
                 self.orgs.insert(name);
                 self.orgs.insert(acronym);
@@ -590,8 +618,13 @@ impl GoldExclusions {
                 std::str::from_utf8(bytes.get(span.start..span.end).with_context(|| {
                     format!("generated {} span has invalid offsets", span.kind)
                 })?)?;
+            let surface_key = if span.kind == "org" {
+                normalize_org_surface(surface)
+            } else {
+                normalize_surface(surface)
+            };
             anyhow::ensure!(
-                !excluded.contains(&normalize_surface(surface)),
+                !excluded.contains(&surface_key),
                 "generated {} span overlaps excluded data: {surface}",
                 span.kind
             );
@@ -663,6 +696,24 @@ fn normalize_surface(text: &str) -> String {
         .join(" ")
 }
 
+fn normalize_org_surface(text: &str) -> String {
+    let normalized = normalize_surface(text);
+    normalized
+        .strip_prefix("the ")
+        .unwrap_or(&normalized)
+        .to_string()
+}
+
+fn org_value_start(value: &str) -> usize {
+    match value
+        .strip_prefix("The ")
+        .or_else(|| value.strip_prefix("the "))
+    {
+        Some(name) => value.len() - name.trim_start().len(),
+        None => 0,
+    }
+}
+
 fn person_key(text: &str) -> Option<(String, String)> {
     let folded: String = text
         .nfkd()
@@ -692,25 +743,6 @@ fn person_key(text: &str) -> Option<(String, String)> {
         parts.first()?.to_string(),
         parts.get(1..)?.last()?.to_string(),
     ))
-}
-
-fn prefixed_address(address: String, rng: &mut ChaCha8Rng) -> String {
-    let room = rng.random_range(100..1000);
-    let code = rng.random_range(1000..10000);
-    let floor = rng.random_range(1..20);
-    let prefix = match rng.random_range(0..10) {
-        0 => format!("Room {room}, "),
-        1 => format!("Room {room}\n"),
-        2 => format!("Mail Code {code}, "),
-        3 => format!("Mail Stop {code}\n"),
-        4 => format!("North Office Building, Room {room}, "),
-        5 => format!("Administrative Building\nRoom {room}\n"),
-        6 => format!("Suite {room}, "),
-        7 => format!("MS: {code}, "),
-        8 => format!("Floor {floor}, Room {room}, "),
-        _ => format!("West Building, Room W12-{room}, "),
-    };
-    format!("{prefix}{address}")
 }
 
 /// Per-document fill state: the pools of the document's split and country, and the values
@@ -886,31 +918,34 @@ impl<'a> Ctx<'a> {
             Slot::OrgMedia => Filled::plain(self.pools.bodies.media(rng)),
             Slot::OrgParty => Filled::plain(self.pools.bodies.party(rng)),
             Slot::Address => {
-                let a = self.address(false, rng)?.one_line();
-                let address = self.shaped(a, ", ", rng);
-                Filled::plain(if self.country == "US" && rng.random_bool(0.15) {
-                    prefixed_address(address, rng)
+                let source = self.address(false, rng)?;
+                let address = if self.country == "US" && rng.random_bool(0.15) {
+                    source.delivery(false, rng)
                 } else {
-                    address
-                })
+                    source.one_line()
+                };
+                Filled::plain(self.shaped(address, ", ", rng))
             }
             Slot::AddressMultiline => {
-                let a = self.address(true, rng)?.text.clone();
-                let address = self.shaped(a, "\n", rng);
-                Filled::plain(if self.country == "US" && rng.random_bool(0.15) {
-                    prefixed_address(address, rng)
+                let source = self.address(true, rng)?;
+                let address = if self.country == "US" && rng.random_bool(0.15) {
+                    source.delivery(true, rng)
                 } else {
-                    address
-                })
+                    source.text.clone()
+                };
+                Filled::plain(self.shaped(address, "\n", rng))
             }
             Slot::AddressPrefixed => {
                 let source = self.address(true, rng)?;
-                let address = if rng.random_bool(0.5) {
+                let multiline = rng.random_bool(0.5);
+                let address = if self.country == "US" {
+                    source.delivery(multiline, rng)
+                } else if multiline {
                     source.text.clone()
                 } else {
                     source.one_line()
                 };
-                Filled::plain(prefixed_address(address, rng))
+                Filled::plain(self.shaped(address, if multiline { "\n" } else { ", " }, rng))
             }
             Slot::Email => Filled::plain(self.email(group, rng)),
             Slot::Phone => {
@@ -1503,7 +1538,16 @@ pub fn render(template: &Template, ctx: &mut Ctx, rng: &mut ChaCha8Rng) -> anyho
             text.push_str(prefix);
             text.push(' ');
         }
-        let start = text.len();
+        let name_offset = if slot.kind() == Some(Kind::Org) {
+            org_value_start(&filled.value)
+        } else {
+            0
+        };
+        anyhow::ensure!(
+            slot.kind() != Some(Kind::Org) || !filled.value[name_offset..].trim().is_empty(),
+            "rendered organization slot has an empty entity value"
+        );
+        let start = text.len() + name_offset;
         text.push_str(&filled.value);
         let end = text.len();
         if let Some(suffix) = filled.suffix {
@@ -2091,7 +2135,7 @@ fn load_pools(
             row[0].clone()
         };
         let name = pool_filter::without_article(&name).to_string();
-        if exclusions.orgs.contains(&normalize_surface(&name)) {
+        if exclusions.orgs.contains(&normalize_org_surface(&name)) {
             continue;
         }
         if imported_org_collides_with_listed(&name, &row[2], &reserved_listed) {
@@ -2113,7 +2157,7 @@ fn load_pools(
         }
         if let Some(p) = pool_mut(&mut pools, &row[1], &row[3]) {
             let split = Split::ALL.into_iter().find(|s| s.name() == row[3]);
-            if split != Some(Split::Train) && silver.orgs.contains(&normalize_surface(&name)) {
+            if split != Some(Split::Train) && silver.orgs.contains(&normalize_org_surface(&name)) {
                 continue;
             }
             p.orgs.push(PoolOrg {
@@ -2491,6 +2535,191 @@ fn print_summary(rows: &[Row], dropped: &Dropped) {
 mod tests {
     use super::*;
 
+    fn delivery_example(text: &str, components: &[(AddressLabel, &str)]) -> LabelledExample {
+        LabelledExample {
+            id: 1,
+            group_id: 1,
+            country: "US".into(),
+            language: "en".into(),
+            text: text.into(),
+            spans: components
+                .iter()
+                .map(|&(label, component)| {
+                    let start = text.find(component).unwrap();
+                    crate::data::Span {
+                        label,
+                        start: start as u32,
+                        end: (start + component.len()) as u32,
+                    }
+                })
+                .collect(),
+            split: Split::Train,
+            augmented: false,
+        }
+    }
+
+    #[test]
+    fn delivery_boundary_maps_native_components_after_venue_and_country_filtering() {
+        use AddressLabel::*;
+        let example = delivery_example(
+            "Café des Arts\n10 Élan Street\nNew Haven, CT 06510\nÉtats-Unis\nRear entrance",
+            &[
+                (HouseNumber, "10"),
+                (Road, "Élan Street"),
+                (City, "New Haven"),
+                (Region, "CT"),
+                (Postcode, "06510"),
+                (Country, "États-Unis"),
+            ],
+        );
+        let address = PoolAddress::from_example(&example);
+        assert_eq!(
+            address.text,
+            "10 Élan Street\nNew Haven, CT 06510\nUnited States"
+        );
+        assert_eq!(address.delivery_boundary, Some("10 Élan Street".len()));
+        assert!(
+            crate::address_prefix::street_boundary(&example, "11 Élan Street\nNew Haven, CT 06510")
+                .is_none()
+        );
+        let po_box = delivery_example(
+            "PO Box 250\nNew Haven, CT 06510",
+            &[
+                (PoBox, "PO Box 250"),
+                (City, "New Haven"),
+                (Region, "CT"),
+                (Postcode, "06510"),
+            ],
+        );
+        assert_eq!(
+            PoolAddress::from_example(&po_box).delivery_boundary,
+            Some("PO Box 250".len())
+        );
+    }
+
+    #[test]
+    fn delivery_boundaries_require_a_distinct_complete_and_unique_native_line() {
+        use AddressLabel::*;
+        for text in [
+            "10 Élan Street, New Haven, CT 06510",
+            "10 Élan Street, New Haven\nCT 06510",
+            "Café 10 Élan Street\nNew Haven, CT 06510",
+            "10 Élan Street\n10 Élan Street\nNew Haven, CT 06510",
+        ] {
+            let example = delivery_example(
+                text,
+                &[
+                    (HouseNumber, "10"),
+                    (Road, "Élan Street"),
+                    (City, "New Haven"),
+                    (Region, "CT"),
+                    (Postcode, "06510"),
+                ],
+            );
+            let address = PoolAddress::from_example(&example);
+            assert_eq!(address.delivery_boundary, None, "{text}");
+            let mut rng = ChaCha8Rng::seed_from_u64(4);
+            assert!(
+                address
+                    .delivery(false, &mut rng)
+                    .ends_with(&address.one_line())
+            );
+        }
+        let mut example = delivery_example(
+            "10 Élan Street\nNew Haven, CT 06510",
+            &[
+                (HouseNumber, "10"),
+                (Road, "Élan Street"),
+                (City, "New Haven"),
+                (Region, "CT"),
+                (Postcode, "06510"),
+            ],
+        );
+        example.country = "CA".into();
+        assert!(crate::address_prefix::street_boundary(&example, &example.text).is_none());
+        example.country = "US".into();
+        example.augmented = true;
+        assert!(crate::address_prefix::street_boundary(&example, &example.text).is_none());
+        example.augmented = false;
+        example.spans.retain(|span| span.label != Postcode);
+        assert!(crate::address_prefix::street_boundary(&example, &example.text).is_none());
+        example.spans[1].start += 1;
+        assert!(crate::address_prefix::street_boundary(&example, &example.text).is_none());
+    }
+
+    #[test]
+    fn generated_delivery_slots_label_street_details_and_locality_together() {
+        use crate::detector::{DETECTOR_LABELS, KindSpan, breaks_of, encode_document};
+        use AddressLabel::*;
+        use tessera::internal::{FeatureConfig, decode_detector};
+
+        let example = delivery_example(
+            "10 Élan Street\nNew Haven, CT 06510",
+            &[
+                (HouseNumber, "10"),
+                (Road, "Élan Street"),
+                (City, "New Haven"),
+                (Region, "CT"),
+                (Postcode, "06510"),
+            ],
+        );
+        let mut pools = stub_pools(&[("Maya Johnson", "latin")]);
+        pools.addresses = vec![PoolAddress::from_example(&example)];
+        let mut infix_one_line = 0;
+        let mut infix_multiline = 0;
+        for template_text in [
+            "Café contact: {address}. Questions welcome.",
+            "Café contact: {address_ml}. Questions welcome.",
+            "Café contact: {address_prefixed}. Questions welcome.",
+        ] {
+            for seed in 0..200 {
+                let mut ctx = Ctx::new("US", &pools);
+                let doc = render(
+                    &template(template_text),
+                    &mut ctx,
+                    &mut ChaCha8Rng::seed_from_u64(seed),
+                )
+                .unwrap();
+                assert_eq!(doc.entities.len(), 1);
+                let span = &doc.entities[0];
+                let address = &doc.text[span.start..span.end];
+                assert!(address.ends_with("New Haven, CT 06510"));
+                if address.starts_with("10 Élan Street") {
+                    let separator = if address.contains('\n') { "\n" } else { ", " };
+                    let base = example.text.replace('\n', separator);
+                    if address != base {
+                        assert!(address.starts_with(&format!("10 Élan Street{separator}")));
+                        assert!(address.ends_with(&format!("{separator}New Haven, CT 06510")));
+                        if separator == "\n" {
+                            infix_multiline += 1;
+                        } else {
+                            infix_one_line += 1;
+                        }
+                    }
+                }
+                let gold = KindSpan {
+                    kind: 2,
+                    start: span.start as u32,
+                    end: span.end as u32,
+                };
+                let enc = encode_document(&doc.text, &[gold], &FeatureConfig::default()).unwrap();
+                let mut probs = vec![0.0; enc.labels.len() * DETECTOR_LABELS];
+                for (index, &label) in enc.labels.iter().enumerate() {
+                    probs[index * DETECTOR_LABELS + usize::from(label)] = 1.0;
+                }
+                let decoded = decode_detector(
+                    &probs,
+                    &vec![false; enc.labels.len()],
+                    &breaks_of(&doc.text),
+                );
+                assert_eq!(decoded.len(), 1, "{address}");
+                assert_eq!(enc.token_spans[decoded[0].first].0, gold.start);
+                assert_eq!(enc.token_spans[decoded[0].last].1, gold.end);
+            }
+        }
+        assert!(infix_one_line > 0 && infix_multiline > 0);
+    }
+
     #[test]
     fn wrapping_keeps_person_free_categories_person_free() {
         let pools = stub_pools(&[("Maya Johnson", "Latin")]);
@@ -2672,9 +2901,11 @@ mod tests {
             addresses: vec![
                 PoolAddress {
                     text: "1200 Market Street\nPhiladelphia, PA 19107".into(),
+                    delivery_boundary: None,
                 },
                 PoolAddress {
                     text: "4 Misty Wood Circle, Austin, TX 78701".into(),
+                    delivery_boundary: None,
                 },
             ],
             multiline_addresses: vec![0],
@@ -2688,6 +2919,7 @@ mod tests {
         let mut pools = stub_pools(&[("Maya Johnson", "latin")]);
         pools.addresses.push(PoolAddress {
             text: "1200 Market Street\nSuite 2".into(),
+            delivery_boundary: None,
         });
         pools.multiline_addresses.push(2);
         let ctx = Ctx::new("US", &pools);
@@ -2742,6 +2974,162 @@ mod tests {
     }
 
     #[test]
+    fn org_articles_stay_in_text_outside_linked_unicode_spans() {
+        let pools = stub_pools(&[("Maya Johnson", "latin")]);
+        for article in ["The", "the"] {
+            for seed in 0..32 {
+                let mut ctx = Ctx::new("US", &pools);
+                ctx.bound
+                    .insert((Kind::Org, 1), format!("{article} Dépôt Fictionnel"));
+                let mut rng = ChaCha8Rng::seed_from_u64(seed);
+                let doc = render(
+                    &template("Résumé: {org#1}; Agency: {org_gov#1}."),
+                    &mut ctx,
+                    &mut rng,
+                )
+                .unwrap();
+                assert_eq!(
+                    doc.text,
+                    format!(
+                        "Résumé: {article} Dépôt Fictionnel; Agency: {article} Dépôt Fictionnel."
+                    )
+                );
+                for span in &doc.entities {
+                    assert_eq!(&doc.text[span.start..span.end], "Dépôt Fictionnel");
+                }
+                assert_eq!(doc.links.len(), 2);
+                assert!(
+                    doc.links
+                        .iter()
+                        .all(|link| link.kind == "org" && link.group == 1)
+                );
+                assert_eq!(doc.links[0].index, 0);
+                assert_eq!(doc.links[1].index, 1);
+                let wrapped = wrapped(doc, &ctx, 900, &mut rng).unwrap();
+                for span in &wrapped.entities {
+                    if span.kind == "org" {
+                        assert_eq!(&wrapped.text[span.start..span.end], "Dépôt Fictionnel");
+                    }
+                }
+                assert_eq!(wrapped.links[0].group, 1);
+                assert_eq!(wrapped.links[1].group, 1);
+                let spans: Vec<_> = wrapped
+                    .entities
+                    .iter()
+                    .filter(|span| span.kind == "org")
+                    .map(|span| crate::detector::KindSpan {
+                        kind: 1,
+                        start: span.start as u32,
+                        end: span.end as u32,
+                    })
+                    .collect();
+                crate::detector::encode_document(
+                    &wrapped.text,
+                    &spans,
+                    &tessera::internal::FeatureConfig::default(),
+                )
+                .unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn separately_generated_org_articles_remain_outside_the_span() {
+        let pools = stub_pools(&[("Maya Johnson", "latin")]);
+        let mut articles = 0;
+        for seed in 0..32 {
+            let mut ctx = Ctx::new("US", &pools);
+            ctx.bound
+                .insert((Kind::Org, 1), "Fictional Research Office".into());
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            let doc = render(&template("write to {org_gov#1}."), &mut ctx, &mut rng).unwrap();
+            let span = &doc.entities[0];
+            assert_eq!(&doc.text[span.start..span.end], "Fictional Research Office");
+            if doc.text.starts_with("write to the ") {
+                articles += 1;
+                assert_eq!(span.start, "write to the ".len());
+            }
+        }
+        assert!(articles > 0);
+    }
+
+    #[test]
+    fn org_article_exclusions_are_symmetric_and_empty_names_fail_closed() {
+        let pools = stub_pools(&[("Maya Johnson", "latin")]);
+        for excluded in [
+            "Fictional Research Office",
+            "The Fictional Research Office",
+            "the Fictional Research Office",
+        ] {
+            let mut exclusions = GoldExclusions::default();
+            exclusions.add("org", excluded).unwrap();
+            for displayed in [
+                "Fictional Research Office",
+                "The Fictional Research Office",
+                "the Fictional Research Office",
+            ] {
+                let mut ctx = Ctx::new("US", &pools);
+                ctx.bound.insert((Kind::Org, 1), displayed.into());
+                let mut rng = ChaCha8Rng::seed_from_u64(0);
+                let doc = render(&template("Agency: {org#1}."), &mut ctx, &mut rng).unwrap();
+                assert!(exclusions.check(&doc).is_err());
+            }
+        }
+        for value in ["The ", "the  ", ""] {
+            let mut ctx = Ctx::new("US", &pools);
+            ctx.bound.insert((Kind::Org, 1), value.into());
+            let mut rng = ChaCha8Rng::seed_from_u64(0);
+            assert!(render(&template("Agency: {org#1}."), &mut ctx, &mut rng).is_err());
+        }
+        assert_eq!(org_value_start("THE Fictional Research Office"), 0);
+    }
+
+    #[test]
+    fn speech_subjects_are_people_and_calendar_months_are_not() {
+        let all = templates::all().unwrap();
+        let pools = stub_pools(&[("Maya Johnson", "latin")]);
+        for (id, prefix, suffix) in [
+            (3, ", and ", " said sales doubled."),
+            (109, ". ", " disagreed."),
+            (703, "Comment: ", " said the "),
+        ] {
+            let template = all.iter().find(|template| template.id == id).unwrap();
+            for seed in 0..32 {
+                let mut ctx = Ctx::new("US", &pools);
+                ctx.plain = true;
+                let mut rng = ChaCha8Rng::seed_from_u64(seed);
+                let doc = render(template, &mut ctx, &mut rng).unwrap();
+                let end = doc.text.find(suffix).unwrap();
+                let start = doc.text[..end].rfind(prefix).unwrap() + prefix.len();
+                assert_eq!(&doc.text[start..end], "Maya", "template {id}");
+                assert!(doc.entities.contains(&Gold {
+                    kind: "person",
+                    start,
+                    end
+                }));
+                if id == 3 {
+                    let month = doc.text.find("May is their busiest month").unwrap();
+                    assert!(
+                        !doc.entities
+                            .iter()
+                            .any(|span| { span.start < month + 3 && span.end > month })
+                    );
+                }
+            }
+        }
+        let template = all.iter().find(|template| template.id == 509).unwrap();
+        let mut ctx = Ctx::new("US", &pools);
+        let mut rng = ChaCha8Rng::seed_from_u64(0);
+        let doc = render(template, &mut ctx, &mut rng).unwrap();
+        let month = doc.text.find("June is a month").unwrap();
+        assert!(
+            !doc.entities
+                .iter()
+                .any(|span| span.start < month + 4 && span.end > month)
+        );
+    }
+
+    #[test]
     fn multiline_addresses_keep_their_lines_inside_the_span() {
         let pools = stub_pools(&[("Maya Johnson", "latin")]);
         let mut ctx = Ctx::new("US", &pools);
@@ -2765,6 +3153,7 @@ mod tests {
     fn single_line_addresses_join_lines_with_commas() {
         let a = PoolAddress {
             text: "1200 Market Street\nPhiladelphia, PA 19107".into(),
+            delivery_boundary: None,
         };
         assert_eq!(a.one_line(), "1200 Market Street, Philadelphia, PA 19107");
     }

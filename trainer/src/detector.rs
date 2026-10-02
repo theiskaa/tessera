@@ -16,8 +16,7 @@ use sha2::{Digest, Sha256};
 use tessera::Kind;
 use tessera::internal::{
     DETECT_MIN_ADDRESS, DETECT_MIN_ORG, DETECT_MIN_PERSON, FeatureConfig, MAX_ENTITY_TOKENS,
-    decode_detector, featurize, flag, is_content, normalized_us_address_end, paragraph_breaks,
-    scan_rules, tokenize,
+    featurize, flag, is_content, normalized_us_address_end, paragraph_breaks, scan_rules, tokenize,
 };
 
 use crate::data::Split;
@@ -67,6 +66,9 @@ pub enum DetectorEncodeError {
     RuleOverlap(KindSpan),
     #[error("span {0:?} contains {1} content tokens, above the decoder limit")]
     EntityTooLong(KindSpan, usize),
+    /// Gold crosses a boundary where the decoder must close the entity.
+    #[error("span {0:?} crosses a paragraph break the decoder cannot span")]
+    ParagraphBreak(KindSpan),
 }
 
 /// Encodes one document. Rule spans come from the rules layer, not from gold, so training
@@ -110,6 +112,12 @@ pub fn encode_document(
         enc.flags.push(f.flags);
         enc.labels.push(0);
     }
+    let retained: Vec<_> = tokens
+        .iter()
+        .enumerate()
+        .filter_map(|(index, token)| is_content(token).then_some(index))
+        .collect();
+    let breaks = paragraph_breaks(&tokens, &retained);
     for g in gold {
         let first = enc.token_spans.iter().position(|t| t.0 == g.start);
         let last = enc.token_spans.iter().rposition(|t| t.1 == g.end);
@@ -122,6 +130,9 @@ pub fn encode_document(
         let span_tokens = last + 1 - first;
         if span_tokens > MAX_ENTITY_TOKENS {
             return Err(DetectorEncodeError::EntityTooLong(*g, span_tokens));
+        }
+        if breaks[first + 1..last + 1].iter().any(|&is_break| is_break) {
+            return Err(DetectorEncodeError::ParagraphBreak(*g));
         }
         enc.labels[first] = label(g.kind, true);
         for l in &mut enc.labels[first + 1..=last] {
@@ -331,11 +342,115 @@ pub fn load_split(
     Ok((docs, counts))
 }
 
+/// Shared exact-text annotation deduplication; conflicting model gold always refuses.
+#[derive(Default)]
+pub(crate) struct AnnotationDedup {
+    seen: HashMap<[u8; 32], (Vec<KindSpan>, String)>,
+}
+
+impl AnnotationDedup {
+    /// Returns whether a document is new, retaining first-seen order.
+    pub(crate) fn insert(
+        &mut self,
+        text: &str,
+        gold: &[KindSpan],
+        location: &str,
+    ) -> anyhow::Result<bool> {
+        let mut sorted = gold.to_vec();
+        sorted.sort_by_key(|span| (span.start, span.end, span.kind));
+        let hash: [u8; 32] = Sha256::digest(text.as_bytes()).into();
+        if let Some((previous, first)) = self.seen.get(&hash) {
+            ensure!(
+                previous == &sorted,
+                "{location} conflicts with {first}: identical text has different detector labels"
+            );
+            return Ok(false);
+        }
+        self.seen.insert(hash, (sorted, location.to_owned()));
+        Ok(true)
+    }
+}
+
+/// Encodes declared annotations through the same validation and encoder as native splits.
+pub(crate) fn annotated_document(
+    text: &str,
+    country: &str,
+    entities_json: &str,
+    fc: &FeatureConfig,
+) -> anyhow::Result<DetectorDoc> {
+    ensure!(country == "US", "authored annotations must be US-only");
+    let declared: Vec<GoldJson> = serde_json::from_str(entities_json)?;
+    let gold = model_spans(text, &declared)?;
+    let mut enc = encode_document(text, &gold, fc)?;
+    enc.country = country.to_owned();
+    Ok(DetectorDoc {
+        text: text.to_owned(),
+        enc,
+        gold,
+        breaks: breaks_of(text),
+    })
+}
+
 #[derive(Deserialize)]
 struct SilverJson {
+    #[serde(default)]
+    source: Option<String>,
+    #[serde(default)]
+    source_document_key: Option<String>,
+    #[serde(default)]
+    scenario_provenance: Option<String>,
+    #[serde(default)]
+    narrative_family: Option<String>,
+    #[serde(default)]
+    origin: Option<String>,
+    #[serde(default)]
+    split: Option<String>,
+    #[serde(default)]
+    family: Option<String>,
     text: String,
     country: String,
     entities: Vec<GoldJson>,
+}
+
+impl SilverJson {
+    fn verify_real(&self, path: &str, line_no: usize) -> anyhow::Result<()> {
+        ensure!(
+            self.origin
+                .as_deref()
+                .is_none_or(|origin| origin == "reviewed_real" || origin == "real_silver")
+                && self.split.is_none()
+                && self.family.is_none()
+                && self.scenario_provenance.is_none()
+                && self.narrative_family.is_none()
+                && self
+                    .source
+                    .as_deref()
+                    .is_none_or(|source| !source.to_ascii_lowercase().contains("synthetic"))
+                && self
+                    .source_document_key
+                    .as_deref()
+                    .is_none_or(|key| !key.starts_with("authored:")),
+            "{path}:{line_no} authored or split-marked data cannot be real silver"
+        );
+        Ok(())
+    }
+}
+
+/// Rejects authored markers before a fit can create a run directory or model.
+pub(crate) fn validate_real_silver_sources(paths: &[String]) -> anyhow::Result<()> {
+    for path in paths {
+        let text = std::fs::read_to_string(path).with_context(|| format!("reading {path}"))?;
+        for (line_no, line) in text
+            .lines()
+            .enumerate()
+            .filter(|(_, line)| !line.trim().is_empty())
+        {
+            let doc: SilverJson = serde_json::from_str(line)
+                .with_context(|| format!("{path}:{} invalid silver JSON", line_no + 1))?;
+            doc.verify_real(path, line_no + 1)?;
+        }
+    }
+    Ok(())
 }
 
 /// What loading the silver documents kept and dropped.
@@ -377,7 +492,7 @@ pub fn load_silver(
 ) -> anyhow::Result<(Vec<DetectorDoc>, SilverCounts)> {
     let mut docs = Vec::new();
     let mut counts = SilverCounts::default();
-    let mut seen: HashMap<[u8; 32], (Vec<KindSpan>, String)> = HashMap::new();
+    let mut seen = AnnotationDedup::default();
     let mut unreachable_details = Vec::new();
     for path in paths {
         let pieces_before = docs.len();
@@ -398,19 +513,11 @@ pub fn load_silver(
             );
             let gold = model_spans(&doc.text, &doc.entities)
                 .with_context(|| format!("{path}:{}", line_no + 1))?;
-            let mut sorted_gold = gold.clone();
-            sorted_gold.sort_by_key(|span| (span.start, span.end, span.kind));
-            let text_hash: [u8; 32] = Sha256::digest(doc.text.as_bytes()).into();
-            if let Some((previous, location)) = seen.get(&text_hash) {
-                ensure!(
-                    previous == &sorted_gold,
-                    "{path}:{} conflicts with {location}: identical silver text has different detector labels",
-                    line_no + 1
-                );
+            doc.verify_real(path, line_no + 1)?;
+            if !seen.insert(&doc.text, &gold, &format!("{path}:{}", line_no + 1))? {
                 counts.duplicate_documents += 1;
                 continue;
             }
-            seen.insert(text_hash, (sorted_gold, format!("{path}:{}", line_no + 1)));
             counts.documents += 1;
             let per_country = counts.by_country.entry(doc.country.clone()).or_default();
             per_country.documents += 1;
@@ -622,6 +729,26 @@ fn predicted_span(text: &str, kind: usize, start: u32, raw_end: u32) -> KindSpan
     KindSpan { kind, start, end }
 }
 
+/// A decoded candidate before the runtime confidence cutoff is applied.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ScoredSpan {
+    pub(crate) span: KindSpan,
+    pub(crate) confidence: f32,
+}
+
+/// Applies the unchanged runtime confidence policy to decoded candidates.
+pub(crate) fn apply_confidence_policy(candidates: &[Vec<ScoredSpan>]) -> Vec<Vec<KindSpan>> {
+    candidates
+        .iter()
+        .map(|doc| {
+            doc.iter()
+                .filter(|s| s.confidence >= DETECT_MIN[s.span.kind])
+                .map(|s| s.span)
+                .collect()
+        })
+        .collect()
+}
+
 /// Predicted spans per document in byte offsets, thresholded by `DETECT_MIN`.
 pub fn predict<B: Backend>(
     model: &TaggerNet<B>,
@@ -629,17 +756,76 @@ pub fn predict<B: Backend>(
     batch_size: usize,
     device: &B::Device,
 ) -> Vec<Vec<KindSpan>> {
-    let mut out = Vec::with_capacity(docs.len());
-    for chunk in docs.chunks(batch_size.max(1)) {
-        let items: Vec<Encoded> = chunk.iter().map(|d| d.enc.clone()).collect();
-        let batch: ParserBatch<B> = ParserBatcher.batch(items, device);
-        let logits = model.forward(
+    apply_confidence_policy(&predict_scored(model, docs, batch_size, device))
+}
+
+/// Decoded spans and their confidence, including candidates the runtime would reject.
+pub(crate) fn predict_scored<B: Backend>(
+    model: &TaggerNet<B>,
+    docs: &[DetectorDoc],
+    batch_size: usize,
+    device: &B::Device,
+) -> Vec<Vec<ScoredSpan>> {
+    let result = predict_scored_using(docs, batch_size, device, None, |batch| {
+        Ok::<_, std::convert::Infallible>(model.forward(
             batch.ngram_ids,
             batch.script,
             batch.shape,
             batch.flags,
             batch.mask,
-        );
+        ))
+    });
+    match result {
+        Ok(spans) => spans,
+        Err(never) => match never {},
+    }
+}
+
+/// Decode using the immutable operator verified once by the diagnostic entry point.
+pub(crate) fn predict_scored_with_operator<B: Backend>(
+    model: &TaggerNet<B>,
+    docs: &[DetectorDoc],
+    batch_size: usize,
+    device: &B::Device,
+    operator: crate::diagnostic_operator::ForwardOperator,
+) -> anyhow::Result<Vec<Vec<ScoredSpan>>> {
+    predict_scored_with_operator_and_decoder(model, docs, batch_size, device, operator, None)
+}
+
+/// Evaluation-only decoder selection; training probes use the legacy wrapper.
+pub(crate) fn predict_scored_with_operator_and_decoder<B: Backend>(
+    model: &TaggerNet<B>,
+    docs: &[DetectorDoc],
+    batch_size: usize,
+    device: &B::Device,
+    operator: crate::diagnostic_operator::ForwardOperator,
+    decoder: Option<crate::diagnostic_decode::Decoder>,
+) -> anyhow::Result<Vec<Vec<ScoredSpan>>> {
+    let decoder = operator.decoder(decoder);
+    predict_scored_using(docs, batch_size, device, decoder, |batch| {
+        operator.forward(
+            model,
+            batch.ngram_ids,
+            batch.script,
+            batch.shape,
+            batch.flags,
+            batch.mask,
+        )
+    })
+}
+
+fn predict_scored_using<B: Backend, E>(
+    docs: &[DetectorDoc],
+    batch_size: usize,
+    device: &B::Device,
+    decoder: Option<crate::diagnostic_decode::Decoder>,
+    mut forward: impl FnMut(ParserBatch<B>) -> Result<Tensor<B, 3>, E>,
+) -> Result<Vec<Vec<ScoredSpan>>, E> {
+    let mut out = Vec::with_capacity(docs.len());
+    for chunk in docs.chunks(batch_size.max(1)) {
+        let items: Vec<Encoded> = chunk.iter().map(|d| d.enc.clone()).collect();
+        let batch: ParserBatch<B> = ParserBatcher.batch(items, device);
+        let logits = forward(batch)?;
         let [_, l, c] = logits.dims();
         let probs: Vec<f32> = softmax(logits, 2).into_data().to_vec().unwrap_or_default();
         for (i, d) in chunk.iter().enumerate() {
@@ -652,24 +838,32 @@ pub fn predict<B: Backend>(
                 .map(|f| f & flag::IN_RULE_SPAN != 0)
                 .collect();
             out.push(
-                decode_detector(rows, &masked, &d.breaks)
-                    .into_iter()
-                    .filter_map(|s| {
-                        let kind = kind_index(s.kind)?;
-                        (s.confidence >= DETECT_MIN[kind]).then(|| {
-                            predicted_span(
-                                &d.text,
-                                kind,
-                                d.enc.token_spans[s.first].0,
-                                d.enc.token_spans[s.last].1,
-                            )
-                        })
+                crate::diagnostic_decode::decode(
+                    decoder,
+                    &d.text,
+                    &d.enc.token_spans,
+                    rows,
+                    &masked,
+                    &d.breaks,
+                )
+                .into_iter()
+                .filter_map(|s| {
+                    let kind = kind_index(s.kind)?;
+                    Some(ScoredSpan {
+                        span: predicted_span(
+                            &d.text,
+                            kind,
+                            d.enc.token_spans[s.first].0,
+                            d.enc.token_spans[s.last].1,
+                        ),
+                        confidence: s.confidence,
                     })
-                    .collect(),
+                })
+                .collect(),
             );
         }
     }
-    out
+    Ok(out)
 }
 
 /// Precision, recall, and F1.
@@ -826,6 +1020,80 @@ mod tests {
             kind: kind.into(),
             start,
             end,
+        }
+    }
+
+    #[test]
+    fn confidence_policy_keeps_cutoff_equality_and_rejects_lower_or_nan() {
+        let mut candidates = Vec::new();
+        let mut expected = Vec::new();
+        for (kind, threshold) in DETECT_MIN.iter().copied().enumerate() {
+            let span = KindSpan {
+                kind,
+                start: 0,
+                end: 4,
+            };
+            candidates.push(vec![
+                ScoredSpan {
+                    span,
+                    confidence: threshold,
+                },
+                ScoredSpan {
+                    span,
+                    confidence: threshold - 0.001,
+                },
+                ScoredSpan {
+                    span,
+                    confidence: f32::NAN,
+                },
+            ]);
+            expected.push(vec![span]);
+        }
+        candidates.push(vec![]);
+        expected.push(vec![]);
+        assert_eq!(apply_confidence_policy(&candidates), expected);
+    }
+
+    #[test]
+    fn candidate_recall_alone_does_not_establish_accepted_precision() {
+        let gold: Vec<_> = (0..3)
+            .map(|kind| KindSpan {
+                kind,
+                start: kind as u32 * 10,
+                end: kind as u32 * 10 + 4,
+            })
+            .collect();
+        let candidates: Vec<_> = gold
+            .iter()
+            .map(|&span| {
+                vec![
+                    ScoredSpan {
+                        span,
+                        confidence: DETECT_MIN[span.kind] - 0.001,
+                    },
+                    ScoredSpan {
+                        span: KindSpan {
+                            kind: span.kind,
+                            start: 40,
+                            end: 44,
+                        },
+                        confidence: 1.0,
+                    },
+                ]
+            })
+            .collect();
+        let documents: Vec<Vec<ScoredSpan>> = vec![candidates.into_iter().flatten().collect()];
+        let raw: Vec<Vec<KindSpan>> = documents
+            .iter()
+            .map(|document| document.iter().map(|candidate| candidate.span).collect())
+            .collect();
+        let raw_scores = score(std::slice::from_ref(&gold), &raw);
+        let kept_scores = score(&[gold], &apply_confidence_policy(&documents));
+        for kind in ["person", "org", "address"] {
+            assert_eq!(raw_scores.per_kind[kind].exact.recall, 1.0);
+            assert_eq!(raw_scores.per_kind[kind].exact.precision, 0.5);
+            assert_eq!(kept_scores.per_kind[kind].exact.recall, 0.0);
+            assert_eq!(kept_scores.per_kind[kind].exact.precision, 0.0);
         }
     }
 
@@ -1159,6 +1427,45 @@ mod tests {
         ];
         let enc = encode_document(text, &gold, &FeatureConfig::default()).unwrap();
         assert_eq!(enc.labels, vec![1, 2, 3, 4, 4]);
+    }
+
+    #[test]
+    fn encoder_rejects_gold_crossing_runtime_paragraph_breaks() {
+        for separator in [
+            "\n\n",
+            "\n \t\n",
+            "\r\r",
+            "\r\n\r\n",
+            "\u{85}\u{85}",
+            "\u{2028}\u{2028}",
+            "\u{2029}\u{2029}",
+        ] {
+            let text = format!("Maya{separator}Johnson");
+            for kind in 0..3 {
+                let gold = span(kind, &text, &text);
+                assert_eq!(
+                    encode_document(&text, &[gold], &FeatureConfig::default()),
+                    Err(DetectorEncodeError::ParagraphBreak(gold)),
+                    "{separator:?}"
+                );
+                assert!(reachable_spans(&text, &[gold]).is_empty());
+                assert_eq!(unreachable_reason(&text, &gold), "blank_line");
+            }
+            let separate = [span(0, &text, "Maya"), span(0, &text, "Johnson")];
+            let enc = encode_document(&text, &separate, &FeatureConfig::default()).unwrap();
+            assert_eq!(enc.labels, [1, 1]);
+        }
+    }
+
+    #[test]
+    fn encoder_allows_gold_across_runtime_single_line_breaks() {
+        for separator in ["\n", "\r", "\r\n", "\u{85}", "\u{2028}", "\u{2029}"] {
+            let text = format!("Maya{separator}Johnson");
+            let gold = span(0, &text, &text);
+            let enc = encode_document(&text, &[gold], &FeatureConfig::default()).unwrap();
+            assert_eq!(enc.labels, [1, 2], "{separator:?}");
+            assert_eq!(reachable_spans(&text, &[gold]), [gold]);
+        }
     }
 
     #[test]

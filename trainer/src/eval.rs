@@ -109,8 +109,34 @@ pub(crate) struct ExternalEntity {
     pub(crate) end: usize,
 }
 
+fn validate_operator_route(
+    args: &EvalArgs,
+    operator: crate::diagnostic_operator::ForwardOperator,
+) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        matches!(
+            operator,
+            crate::diagnostic_operator::ForwardOperator::Standard
+                | crate::diagnostic_operator::ForwardOperator::ContextRmsV2
+        ) || (args.run.is_some()
+            && args.gold.is_some()
+            && args.addresses.is_none()
+            && args.grouper.is_none()
+            && !args.baseline
+            && matches!(args.backend, crate::train::BackendKind::Ndarray)),
+        "residual RMS diagnostics require CPU model-only --run --gold scoring"
+    );
+    Ok(())
+}
+
 /// `trainer eval`: scores a run, the deterministic baselines, or external predictions.
 pub fn run(args: EvalArgs) -> anyhow::Result<()> {
+    crate::diagnostic_decode::validate_route(&args)?;
+    if let Some(run) = &args.run {
+        let cfg = crate::config::load(&run.join("config.toml"))?;
+        let operator = crate::diagnostic_operator::load(run, &cfg)?;
+        validate_operator_route(&args, operator)?;
+    }
     anyhow::ensure!(
         args.gold.is_some() || args.dump_predictions.is_none(),
         "--dump-predictions requires --gold"
@@ -621,5 +647,51 @@ mod tests {
         assert_eq!(prf(0, 0, 0), (0.0, 0.0, 0.0));
         assert_eq!(prf(0, 3, 0), (0.0, 0.0, 0.0));
         assert_eq!(prf(3, 3, 3), (1.0, 1.0, 1.0));
+    }
+}
+
+#[cfg(test)]
+mod diagnostic_route_tests {
+    use super::*;
+    use crate::diagnostic_operator::ForwardOperator;
+    use clap::Parser;
+
+    fn arguments(extra: &[&str]) -> EvalArgs {
+        let mut argv = vec!["trainer", "eval", "--run", "candidate"];
+        argv.extend_from_slice(extra);
+        match crate::Cli::try_parse_from(argv).unwrap().command {
+            crate::Command::Eval(args) => *args,
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn candidate_rejects_shipped_parser_grouper_and_gpu_dispatch() {
+        let good = arguments(&["--gold", "cases.jsonl", "--backend", "ndarray"]);
+        validate_operator_route(&good, ForwardOperator::ResidualRmsV1).unwrap();
+        for argv in [
+            &["--backend", "ndarray"][..],
+            &["--gold", "cases.jsonl", "--backend", "wgpu"][..],
+            &[
+                "--gold",
+                "cases.jsonl",
+                "--backend",
+                "ndarray",
+                "--addresses",
+                "fixtures",
+            ][..],
+            &[
+                "--gold",
+                "cases.jsonl",
+                "--backend",
+                "ndarray",
+                "--grouper",
+                "fixtures",
+            ][..],
+        ] {
+            let args = arguments(argv);
+            assert!(validate_operator_route(&args, ForwardOperator::ResidualRmsV1).is_err());
+            validate_operator_route(&args, ForwardOperator::Standard).unwrap();
+        }
     }
 }

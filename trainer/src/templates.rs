@@ -86,7 +86,7 @@ const TEMPLATES: &[(Family, u32, Category, &str)] = &[
         Prose,
         3,
         NoAddr,
-        "In {neg_place}, {person} runs a workshop with {org}. {neg_word_name} is their busiest month, and {neg_word_name} said sales doubled.",
+        "In {neg_place}, {person} runs a workshop with {org}. May is their busiest month, and {person_first} said sales doubled.",
     ),
     (
         Prose,
@@ -182,7 +182,7 @@ const TEMPLATES: &[(Family, u32, Category, &str)] = &[
         EmailBody,
         109,
         Both,
-        "{greeting},\n\n{sentence}\n\nOn {date}, {person} wrote that {org} had relocated to {address}. {neg_word_name} disagreed. {sentence}\n\n{closing}",
+        "{greeting},\n\n{sentence}\n\nOn {date}, {person} wrote that {org} had relocated to {address}. {person_first} disagreed. {sentence}\n\n{closing}",
     ),
     (
         Signature,
@@ -404,7 +404,7 @@ const TEMPLATES: &[(Family, u32, Category, &str)] = &[
         Markdown,
         509,
         Both,
-        "# {org#1}\n\n{sentence}\n\n## Contact\n\n{person#1} · {email#1} · {phone#1}\n{address#1}\n\n{neg_word_name} is a month, {neg_place} is a place.",
+        "# {org#1}\n\n{sentence}\n\n## Contact\n\n{person#1} · {email#1} · {phone#1}\n{address#1}\n\nJune is a month, {neg_place} is a place.",
     ),
     (
         Table,
@@ -488,7 +488,7 @@ const TEMPLATES: &[(Family, u32, Category, &str)] = &[
         Support,
         703,
         NoAddr,
-        "Ticket {neg_order}\nReporter: {person}\nAssignee: {person}\nSummary: {sentence}\nComment: {neg_word_name} said the {product} is fine.",
+        "Ticket {neg_order}\nReporter: {person}\nAssignee: {person}\nSummary: {sentence}\nComment: {person_first} said the {product} is fine.",
     ),
     (
         Support,
