@@ -99,6 +99,12 @@ pub fn metadata(cfg: &Config, snapshot: &str, date: &str) -> BTreeMap<String, St
             "Experimental contact extraction for United States documents".to_string(),
         ),
         ("model_scope".to_string(), "US".to_string()),
+        ("status".to_string(), "experimental".to_string()),
+        ("license".to_string(), "CC-BY-4.0".to_string()),
+        (
+            "repository".to_string(),
+            "https://github.com/theiskaa/tessera".to_string(),
+        ),
         ("format".to_string(), FORMAT.to_string()),
         ("model_version".to_string(), MODEL_VERSION.to_string()),
         (
@@ -348,7 +354,53 @@ pub fn run(parser_run: &Path, detector_run: &Path, out: &Path, date: &str) -> an
         date,
     );
     bind_architecture(&mut meta, &detector.cfg);
+    meta.insert("runtime_version".into(), env!("CARGO_PKG_VERSION").into());
+    meta.insert("quantization".into(), "per-channel symmetric int8".into());
+    meta.insert(
+        "experimental_regions".into(),
+        json(&detector.cfg.data.countries),
+    );
+    for (name, cfg) in [("parser", &parser.cfg), ("detector", &detector.cfg)] {
+        meta.insert(
+            format!("{name}_network"),
+            serde_json::json!({
+                "hidden": cfg.net.hidden,
+                "kernel": cfg.net.kernel,
+                "dilations": cfg.net.dilations,
+            })
+            .to_string(),
+        );
+    }
     bind_artifact_hashes(&mut meta, parser_run, detector_run)?;
+    if let Some(approval) = crate::release_candidate::verify(detector_run)? {
+        meta.insert(
+            "detector_training_updates".into(),
+            approval["optimizer_updates_executed"].to_string(),
+        );
+        meta.insert("detector_training_complete".into(), "false".into());
+        for key in [
+            "training_seen_95_percent_gate_passed",
+            "fresh_unseen_evaluation_pending",
+            "general_accuracy_claim",
+        ] {
+            meta.insert(key.into(), approval[key].to_string());
+        }
+        meta.insert(
+            "detector_parameter_sha256".into(),
+            approval["checkpoint"]["parameter_sha256"]
+                .as_str()
+                .context("release checkpoint lacks parameter identity")?
+                .into(),
+        );
+        meta.insert(
+            "evaluation_scope".into(),
+            "training-seen and reused development; no fresh unseen evaluation".into(),
+        );
+        meta.insert(
+            "release_approval_sha256".into(),
+            sha256_hex(&std::fs::read(detector_run.join("release.json"))?),
+        );
+    }
     let bundle_version = meta
         .get("model_version")
         .context("bundle metadata missing model_version")?
@@ -915,6 +967,9 @@ mod tests {
             "model_name",
             "description",
             "model_scope",
+            "status",
+            "license",
+            "repository",
             "format",
             "model_version",
             "tokenizer_contract",
