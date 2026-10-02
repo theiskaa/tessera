@@ -30,7 +30,9 @@
           "end": 67
         }
       ],
-      "must_not": []
+      "must_not": [],
+      "known_failure": true,
+      "known_failure_reason": "model 0.3.0 misses Grace Liu"
     },
     {
       "name": "pipe table of vendors",

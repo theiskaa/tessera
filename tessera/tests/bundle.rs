@@ -21,7 +21,25 @@ fn load(bytes: &[u8], checksum: Option<&str>) -> Result<Tessera, Error> {
 #[test]
 fn committed_bundle_loads() {
     let t = load(common::BUNDLE, Some(common::bundle_checksum())).unwrap();
-    assert_eq!(t.model_version(), Some("0.2.0"));
+    assert_eq!(t.model_version(), Some("0.3.0"));
+    let metadata = header(common::BUNDLE)["__metadata__"].clone();
+    assert_eq!(metadata["format"], "2");
+    assert_eq!(metadata["status"], "experimental");
+    assert_eq!(metadata["model_scope"], "US");
+    assert_eq!(metadata["detector_training_updates"], "4000");
+    assert_eq!(metadata["detector_training_complete"], "false");
+    assert_eq!(metadata["training_seen_95_percent_gate_passed"], "false");
+    assert_eq!(metadata["fresh_unseen_evaluation_pending"], "true");
+    assert_eq!(metadata["general_accuracy_claim"], "false");
+    assert_eq!(metadata["tokenizer_contract"], "tessera-tokenize-legacy-v1");
+    assert_eq!(
+        metadata["decoder_contract"],
+        "tessera-bio-context96-address-continuation-v1"
+    );
+    assert_eq!(
+        metadata["detector_architecture"],
+        tessera::internal::CONTEXT96_RMS_CONTRACT
+    );
 }
 
 #[test]
@@ -73,30 +91,27 @@ fn with_header_edit(from: &str, to: &str) -> Vec<u8> {
 
 #[test]
 fn newer_format_is_unsupported() {
-    let bytes = with_header_edit(r#""format":"1""#, r#""format":"2""#);
+    let bytes = with_header_edit(r#""format":"2""#, r#""format":"3""#);
     assert_eq!(load(&bytes, None).unwrap_err(), Error::UnsupportedVersion);
 }
 
 #[test]
 fn a_later_model_series_is_unsupported() {
-    let bytes = with_header_edit(r#""model_version":"0.2."#, r#""model_version":"0.3."#);
+    let bytes = with_header_edit(r#""model_version":"0.3."#, r#""model_version":"0.4."#);
     assert_eq!(load(&bytes, None).unwrap_err(), Error::UnsupportedVersion);
 }
 
-/// The bundle with its model version replaced by `version`.
-fn with_model_version(version: &str) -> Vec<u8> {
-    with_header(|h| {
-        let key = r#""model_version":""#;
-        let at = h.find(key).expect("header has a model version") + key.len();
-        let end = at + h[at..].find('"').expect("version is closed");
-        format!("{}{version}{}", &h[..at], &h[end..])
-    })
+fn header(bytes: &[u8]) -> serde_json::Value {
+    let n = u64::from_le_bytes(bytes[..8].try_into().unwrap()) as usize;
+    serde_json::from_slice(&bytes[8..8 + n]).unwrap()
 }
 
-fn with_metadata(edit: impl FnOnce(&mut serde_json::Map<String, serde_json::Value>)) -> Vec<u8> {
-    let bytes = common::BUNDLE;
+fn with_metadata_in(
+    bytes: &[u8],
+    edit: impl FnOnce(&mut serde_json::Map<String, serde_json::Value>),
+) -> Vec<u8> {
     let n = u64::from_le_bytes(bytes[..8].try_into().unwrap()) as usize;
-    let mut header: serde_json::Value = serde_json::from_slice(&bytes[8..8 + n]).unwrap();
+    let mut header = header(bytes);
     edit(header["__metadata__"].as_object_mut().unwrap());
     let header = serde_json::to_vec(&header).unwrap();
     let mut out = (header.len() as u64).to_le_bytes().to_vec();
@@ -105,9 +120,50 @@ fn with_metadata(edit: impl FnOnce(&mut serde_json::Map<String, serde_json::Valu
     out
 }
 
+fn with_metadata(edit: impl FnOnce(&mut serde_json::Map<String, serde_json::Value>)) -> Vec<u8> {
+    with_metadata_in(common::BUNDLE, edit)
+}
+
+/// Reuse tensor values in a synthetic six-block format-1 fixture, with compacted offsets.
+fn legacy_bundle() -> Vec<u8> {
+    let n = u64::from_le_bytes(common::BUNDLE[..8].try_into().unwrap()) as usize;
+    let mut header = header(common::BUNDLE);
+    let entries = header.as_object_mut().unwrap();
+    entries.retain(|name, _| !name.starts_with("detector.block6."));
+    let metadata = entries["__metadata__"].as_object_mut().unwrap();
+    metadata.insert("format".into(), "1".into());
+    metadata.insert("model_version".into(), "0.2.0".into());
+    for key in [
+        "detector_architecture",
+        "tokenizer_contract",
+        "decoder_contract",
+    ] {
+        metadata.remove(key);
+    }
+    let mut tensors: Vec<_> = entries
+        .iter_mut()
+        .filter(|(name, _)| *name != "__metadata__")
+        .collect();
+    tensors.sort_by_key(|(_, entry)| entry["data_offsets"][0].as_u64().unwrap());
+    let mut data = Vec::new();
+    for (_, entry) in tensors {
+        let start = entry["data_offsets"][0].as_u64().unwrap() as usize;
+        let end = entry["data_offsets"][1].as_u64().unwrap() as usize;
+        let offset = data.len();
+        data.extend_from_slice(&common::BUNDLE[8 + n + start..8 + n + end]);
+        entry["data_offsets"] = serde_json::json!([offset, data.len()]);
+    }
+    let header = serde_json::to_vec(&header).unwrap();
+    let mut out = (header.len() as u64).to_le_bytes().to_vec();
+    out.extend_from_slice(&header);
+    out.extend_from_slice(&data);
+    out
+}
+
 #[test]
 fn explicit_legacy_contracts_load_with_the_next_patch_version() {
-    let bytes = with_metadata(|m| {
+    let original = legacy_bundle();
+    let bytes = with_metadata_in(&original, |m| {
         m.insert("model_version".into(), "0.2.1".into());
         m.insert(
             "tokenizer_contract".into(),
@@ -117,7 +173,7 @@ fn explicit_legacy_contracts_load_with_the_next_patch_version() {
     });
     let t = load(&bytes, None).unwrap();
     assert_eq!(t.model_version(), Some("0.2.1"));
-    let legacy = load(common::BUNDLE, None).unwrap();
+    let legacy = load(&original, None).unwrap();
     let text = "14 Wharf Road, Leeds LS1 4AP";
     assert_eq!(
         t.parse_address(text, &tessera::Query::default()).unwrap(),
@@ -129,8 +185,9 @@ fn explicit_legacy_contracts_load_with_the_next_patch_version() {
 
 #[test]
 fn incompatible_or_partial_contracts_fail_before_network_loading() {
+    let original = legacy_bundle();
     let tagged = |tokenizer: Option<&str>, decoder: Option<&str>| {
-        with_metadata(|m| {
+        with_metadata_in(&original, |m| {
             m.insert("model_version".into(), "0.2.1".into());
             if let Some(id) = tokenizer {
                 m.insert("tokenizer_contract".into(), id.into());
@@ -156,13 +213,13 @@ fn incompatible_or_partial_contracts_fail_before_network_loading() {
         load(&tagged(None, None), None).unwrap_err(),
         Error::UnsupportedVersion
     );
-    let malformed = with_metadata(|m| {
+    let malformed = with_metadata_in(&original, |m| {
         m.insert("model_version".into(), "0.2.1".into());
         m.insert("tokenizer_contract".into(), serde_json::Value::Null);
         m.insert("decoder_contract".into(), "tessera-bio-legacy-v1".into());
     });
     assert_eq!(load(&malformed, None).unwrap_err(), Error::BundleInvalid);
-    let legacy_with_wrong_id = with_metadata(|m| {
+    let legacy_with_wrong_id = with_metadata_in(&original, |m| {
         m.insert("tokenizer_contract".into(), "future-tokenizer".into());
         m.insert("decoder_contract".into(), "tessera-bio-legacy-v1".into());
     });
@@ -173,17 +230,104 @@ fn incompatible_or_partial_contracts_fail_before_network_loading() {
 }
 
 #[test]
+fn context_bundle_requires_its_graph_and_input_contracts() {
+    for (key, value, error) in [
+        (
+            "decoder_contract",
+            serde_json::json!("tessera-bio-legacy-v1"),
+            Error::UnsupportedVersion,
+        ),
+        (
+            "tokenizer_contract",
+            serde_json::json!("future-tokenizer"),
+            Error::UnsupportedVersion,
+        ),
+        (
+            "detector_architecture",
+            serde_json::json!("future-graph"),
+            Error::UnsupportedVersion,
+        ),
+        (
+            "detector_architecture",
+            serde_json::Value::Null,
+            Error::BundleInvalid,
+        ),
+        (
+            "decoder_contract",
+            serde_json::Value::Null,
+            Error::BundleInvalid,
+        ),
+    ] {
+        let bytes = with_metadata(|m| {
+            m.insert(key.into(), value);
+        });
+        assert_eq!(load(&bytes, None).unwrap_err(), error, "{key}");
+    }
+    for key in [
+        "tokenizer_contract",
+        "decoder_contract",
+        "detector_architecture",
+    ] {
+        let bytes = with_metadata(|m| {
+            m.remove(key);
+        });
+        assert_eq!(
+            load(&bytes, None).unwrap_err(),
+            Error::BundleInvalid,
+            "{key}"
+        );
+    }
+    let missing_contracts = with_metadata(|m| {
+        m.remove("tokenizer_contract");
+        m.remove("decoder_contract");
+    });
+    assert_eq!(
+        load(&missing_contracts, None).unwrap_err(),
+        Error::UnsupportedVersion
+    );
+    let legacy_with_context_graph = with_metadata_in(&legacy_bundle(), |m| {
+        m.insert(
+            "detector_architecture".into(),
+            tessera::internal::CONTEXT96_RMS_CONTRACT.into(),
+        );
+    });
+    assert_eq!(
+        load(&legacy_with_context_graph, None).unwrap_err(),
+        Error::BundleInvalid
+    );
+}
+
+#[test]
 fn the_series_is_read_before_the_rest_of_the_version() {
-    let result = |v: &str| load(&with_model_version(v), None).map(|_| ());
-    assert_eq!(result("0.2.0"), Ok(()));
-    assert_eq!(result("0.2.7"), Err(Error::UnsupportedVersion));
-    assert_eq!(result("0.3.0-rc1"), Err(Error::UnsupportedVersion));
-    assert_eq!(result("0.1.9"), Err(Error::UnsupportedVersion));
-    assert_eq!(result("1.0"), Err(Error::UnsupportedVersion));
-    assert_eq!(result("0.2"), Err(Error::BundleInvalid));
-    assert_eq!(result("0.2.0-rc1"), Err(Error::BundleInvalid));
-    assert_eq!(result("garbage"), Err(Error::BundleInvalid));
-    assert_eq!(result(""), Err(Error::BundleInvalid));
+    let legacy = legacy_bundle();
+    let result = |bytes: &[u8], v: &str| {
+        load(
+            &with_metadata_in(bytes, |m| {
+                m.insert("model_version".into(), v.into());
+            }),
+            None,
+        )
+        .map(|_| ())
+    };
+    assert_eq!(result(&legacy, "0.2.0"), Ok(()));
+    assert_eq!(result(&legacy, "0.2.7"), Err(Error::UnsupportedVersion));
+    assert_eq!(result(&legacy, "0.3.0-rc1"), Err(Error::UnsupportedVersion));
+    assert_eq!(result(common::BUNDLE, "0.3.0"), Ok(()));
+    assert_eq!(result(common::BUNDLE, "0.3.7"), Ok(()));
+    assert_eq!(
+        result(common::BUNDLE, "0.4.0-rc1"),
+        Err(Error::UnsupportedVersion)
+    );
+    for (v, error) in [
+        ("0.1.9", Error::UnsupportedVersion),
+        ("1.0", Error::UnsupportedVersion),
+        ("0.3", Error::BundleInvalid),
+        ("0.3.0-rc1", Error::BundleInvalid),
+        ("garbage", Error::BundleInvalid),
+        ("", Error::BundleInvalid),
+    ] {
+        assert_eq!(result(common::BUNDLE, v), Err(error), "{v}");
+    }
 }
 
 #[test]
@@ -412,7 +556,7 @@ fn the_header_cap_is_exactly_64_kib() {
 #[test]
 fn a_newer_bundle_is_unsupported_even_with_other_changes() {
     let bytes = with_header(|h| {
-        h.replacen(r#""format":"1""#, r#""format":"2""#, 1)
+        h.replacen(r#""format":"2""#, r#""format":"3""#, 1)
             .replacen(r#""report_url":"""#, r#""report":"""#, 1)
     });
     assert_eq!(

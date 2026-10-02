@@ -22,8 +22,13 @@ macro_rules! golden {
 // A browser cannot list a directory, so every golden file is named here;
 // `the_case_list_names_every_golden_file` fails natively when the two drift apart.
 const PARSER_CASES: &[(&str, &str)] = &[
+    ("edge-long", golden!("parser/edge-long.json")),
     ("edge-long-word", golden!("parser/edge-long-word.json")),
     ("edge-one-char", golden!("parser/edge-one-char.json")),
+    (
+        "edge-single-token",
+        golden!("parser/edge-single-token.json"),
+    ),
     ("us-01", golden!("parser/us-01.json")),
     ("us-02", golden!("parser/us-02.json")),
     ("us-03", golden!("parser/us-03.json")),
@@ -31,9 +36,12 @@ const PARSER_CASES: &[(&str, &str)] = &[
 ];
 
 const DETECTOR_CASES: &[(&str, &str)] = &[
+    ("address-us", golden!("detector/address-us.json")),
+    ("letterhead-us", golden!("detector/letterhead-us.json")),
     ("one-word", golden!("detector/one-word.json")),
     ("prose-negatives", golden!("detector/prose-negatives.json")),
     ("rules-only", golden!("detector/rules-only.json")),
+    ("signature-us", golden!("detector/signature-us.json")),
     ("table-tab", golden!("detector/table-tab.json")),
 ];
 

@@ -98,9 +98,9 @@ fn assert_type_error(err: &JsValue) {
 /// Addresses whose components sit after a surrogate pair or a combining mark, where UTF-8 byte,
 /// UTF-16 unit, and code point offsets all differ.
 const WIDE_ADDRESSES: [&str; 3] = [
-    "📍 Flat 2, 10 Downing Street, London SW1A 2AA",
-    "Rue de l'E\u{301}glise 5, 75001 Paris",
-    "𠮷田ビル 3階, 1-1 Chiyoda, Tokyo 100-0001",
+    "📍 400 Broad St, Seattle, WA 98109",
+    "Cafe\u{301} 400 Broad St, Seattle, WA 98109",
+    "𠮷 400 Broad St, Seattle, WA 98109",
 ];
 
 async fn assert_parse_matches(
@@ -331,16 +331,14 @@ async fn extract_contacts_matches_native_with_utf16_offsets() {
     )
     .unwrap();
     let query = Query {
-        country_hint: &["GE"],
+        country_hint: &["US"],
         ..Query::default()
     };
-    for input in [
-        common::SPEC_DOC,
-        "მადლობა, ორშაბათს შევხვდებით.\n\nნინო ბერიძე\nშპს კავკაზ ფრეითი\nრუსთაველის გამზირი 14, თბილისი 0108, საქართველო\n+995 32 212 3456\nnino@kavkaz-freight.example",
-    ] {
+    let wide_doc = format!("😀 Café\u{301}: {}", common::SPEC_DOC);
+    for input in [common::SPEC_DOC, wide_doc.as_str()] {
         let want = native.extract_contacts(input, &query).unwrap();
         let got =
-            resolved(js.extract_contacts(&text(input), Some(options(r#"{"countryHint":["GE"]}"#))))
+            resolved(js.extract_contacts(&text(input), Some(options(r#"{"countryHint":["US"]}"#))))
                 .await;
         let contacts: Array = prop(&got, "contacts").dyn_into().unwrap();
         assert_eq!(contacts.length() as usize, want.contacts.len(), "{input}");
@@ -409,8 +407,7 @@ fn kinds_come_back_in_taxonomy_order() {
 async fn load_accepts_an_array_buffer() {
     let buffer = Uint8Array::from(common::BUNDLE).buffer();
     let tessera = JsTessera::load(&buffer.into(), Some(options(&address_options()))).unwrap();
-    let got =
-        resolved(tessera.parse_address(&text("10 Downing Street, London SW1A 2AA"), None)).await;
+    let got = resolved(tessera.parse_address(&text("400 Broad St, Seattle, WA 98109"), None)).await;
     let components: Array = prop(&got, "components").dyn_into().unwrap();
     assert!(components.length() > 0);
 }
@@ -836,8 +833,7 @@ async fn create_from_a_url_parses() {
     let tessera = create_instance(with_url(&url, common::bundle_checksum()))
         .await
         .unwrap();
-    let got =
-        resolved(tessera.parse_address(&text("221B Baker Street, London NW1 6XE"), None)).await;
+    let got = resolved(tessera.parse_address(&text("400 Broad St, Seattle, WA 98109"), None)).await;
     assert_eq!(string(&got, "kind"), "address");
     let components: Array = prop(&got, "components").dyn_into().unwrap();
     assert!(components.length() > 0);
@@ -1165,18 +1161,30 @@ async fn errors_cross_the_worker_boundary_with_their_code() {
     assert_eq!(string(&err, "stage"), "detect");
 }
 
-/// The shipped bundle with its manifest listing only the parser, as a Milestone 2 bundle did:
-/// an address instance loads from it and serves `parseAddress` but not `detect`.
+/// A parser-only legacy fixture using the committed parser tensors.
 fn parser_only_bundle() -> Vec<u8> {
     let bytes = common::BUNDLE;
     let n = u64::from_le_bytes(bytes[..8].try_into().unwrap()) as usize;
-    let header = std::str::from_utf8(&bytes[8..8 + n]).unwrap().replacen(
-        r#""nets":"parser,detector""#,
-        r#""nets":"parser""#,
-        1,
-    );
+    let mut header: serde_json::Value = serde_json::from_slice(&bytes[8..8 + n]).unwrap();
+    let source = &header["__metadata__"];
+    header["__metadata__"] = serde_json::json!({
+        "format": "1",
+        "model_version": "0.2.1",
+        "tokenizer_contract": "tessera-tokenize-legacy-v1",
+        "decoder_contract": "tessera-bio-legacy-v1",
+        "nets": "parser",
+        "detector_labels": "[]",
+        "parser_labels": source["parser_labels"],
+        "feature_config": source["feature_config"],
+        "phone_metadata_version": source["phone_metadata_version"],
+        "supported_regions": "[]",
+        "experimental_regions": "[]",
+        "training_snapshot": "wasm-api-parser-only-fixture",
+        "report_url": "",
+    });
+    let header = serde_json::to_vec(&header).unwrap();
     let mut out = (header.len() as u64).to_le_bytes().to_vec();
-    out.extend_from_slice(header.as_bytes());
+    out.extend_from_slice(&header);
     out.extend_from_slice(&bytes[8 + n..]);
     out
 }

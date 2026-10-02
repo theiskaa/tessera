@@ -49,8 +49,7 @@
           "end": 50
         }
       ],
-      "must_not": [],
-      "known_failure": true
+      "must_not": []
     },
     {
       "name": "Ford the company",

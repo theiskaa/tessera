@@ -23,8 +23,8 @@ macro_rules! report {
 #[allow(unused_imports)]
 pub(crate) use report;
 
-/// The spec's worked example: one signature with all five kinds.
-pub const SPEC_DOC: &str = "Thanks, see you on Monday.\n\nNino Beridze\nKavkaz Freight LLC\n14 Rustaveli Avenue, Tbilisi 0108, Georgia\n+995 32 212 3456\nnino@kavkaz-freight.example";
+/// A fictional US signature with all five kinds.
+pub const SPEC_DOC: &str = "Thanks, see you on Monday.\n\nJordan Avery, Project Coordinator\nAcme Corporation\n500 Main St, Springfield, IL 62701\n(202) 555-0199\njordan@acme.example";
 
 /// The release bundle, embedded.
 pub const BUNDLE: &[u8] = include_bytes!(concat!(

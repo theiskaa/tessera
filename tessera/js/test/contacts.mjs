@@ -1,5 +1,4 @@
-// extractContacts through the built package: the spec's worked example, and its Georgian twin,
-// whose byte and UTF-16 offsets differ for every entity. Run with node or bun after `just wasm`.
+// Run with node or bun after `just wasm`; offsets must slice the original JS string.
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { createTessera } from "../../pkg/index.js";
@@ -9,12 +8,15 @@ const modelBytes = await readFile(new URL("models/tessera-v1.safetensors", root)
 const integrity = (await readFile(new URL("models/tessera-v1.sha256", root), "utf8")).trim();
 
 const DOC =
-  "Thanks, see you on Monday.\n\nNino Beridze\nKavkaz Freight LLC\n14 Rustaveli Avenue, Tbilisi 0108, Georgia\n+995 32 212 3456\nnino@kavkaz-freight.example";
-
-const GEORGIAN =
-  "მადლობა, ორშაბათს შევხვდებით.\n\nნინო ბერიძე\nშპს კავკაზ ფრეითი\nრუსთაველის გამზირი 14, თბილისი 0108, საქართველო\n+995 32 212 3456\nnino@kavkaz-freight.example";
-
+  "Thanks, see you on Monday.\n\nJordan Avery, Project Coordinator\nAcme Corporation\n500 Main St, Springfield, IL 62701\n(202) 555-0199\njordan@acme.example";
+const WIDE_DOC = `😀 Café\u0301: ${DOC}`;
 const spans = (e) => [e.kind, e.text, e.start, e.end];
+
+function expectedSpan(input, kind, text) {
+  const start = input.indexOf(text);
+  assert.ok(start >= 0, `missing expected ${kind}: ${text}`);
+  return [kind, text, start, start + text.length];
+}
 
 function members(contact) {
   return [contact.person, contact.org, ...contact.addresses, ...contact.emails, ...contact.phones].filter(Boolean);
@@ -27,56 +29,67 @@ function assertSlices(input, entity) {
   }
 }
 
+function assertContact(input, out) {
+  assert.deepEqual(out.unassigned, []);
+  assert.equal(out.contacts.length, 1);
+  const c = out.contacts[0];
+  assert.deepEqual(spans(c.person), expectedSpan(input, "person", "Jordan Avery"));
+  assert.deepEqual(spans(c.org), expectedSpan(input, "org", "Acme Corporation"));
+  assert.deepEqual(c.addresses.map(spans), [expectedSpan(input, "address", "500 Main St, Springfield, IL 62701")]);
+  assert.deepEqual(c.phones.map(spans), [expectedSpan(input, "phone", "(202) 555-0199")]);
+  assert.deepEqual(c.emails.map(spans), [expectedSpan(input, "email", "jordan@acme.example")]);
+  assert.equal(c.start, c.person.start);
+  assert.equal(c.end, c.emails[0].end);
+  assert.equal(c.phones[0].normalized, "+12025550199");
+  assert.equal(c.phones[0].region, "US");
+  assert.equal(c.emails[0].normalized, "jordan@acme.example");
+  assert.deepEqual(
+    c.addresses[0].components.map((k) => [k.label, k.text, k.start, k.end]),
+    [
+      expectedSpan(input, "house_number", "500"),
+      expectedSpan(input, "road", "Main St"),
+      expectedSpan(input, "city", "Springfield"),
+      expectedSpan(input, "region", "IL"),
+      expectedSpan(input, "postcode", "62701"),
+    ],
+  );
+  const entities = members(c);
+  assert.equal(c.confidence, Math.min(...entities.map((e) => e.confidence)), "signature confidence uses its weakest member");
+  assert.ok(c.confidence >= 0.5 && c.confidence <= 1, `contact confidence ${c.confidence}`);
+  assert.equal(c.reviewRecommended, c.confidence < 0.85);
+  for (const e of entities) {
+    assert.equal(e.reviewRecommended, e.confidence < 0.85, `${e.kind}: confidence band`);
+    assertSlices(input, e);
+  }
+  return c;
+}
+
 const tessera = await createTessera({ modelBytes, integrity });
-
-// Person and org are experimental: the shipped detector misses "Nino Beridze" here (a known
-// failure in fixtures/detector/signatures.json), so the person is checked only when found and
-// the contact then starts at the org.
-const out = await tessera.extractContacts(DOC, { countryHint: ["GE"] });
-assert.deepEqual(out.unassigned, []);
-assert.equal(out.contacts.length, 1);
-const c = out.contacts[0];
-if (c.person) assert.deepEqual(spans(c.person), ["person", "Nino Beridze", 28, 40]);
-assert.equal(c.start, c.person ? 28 : 41);
-assert.equal(c.end, 147);
-assert.deepEqual(spans(c.org), ["org", "Kavkaz Freight LLC", 41, 59]);
-assert.deepEqual(c.addresses.map(spans), [["address", "14 Rustaveli Avenue, Tbilisi 0108, Georgia", 60, 102]]);
-assert.deepEqual(c.phones.map(spans), [["phone", "+995 32 212 3456", 103, 119]]);
-assert.deepEqual(c.emails.map(spans), [["email", "nino@kavkaz-freight.example", 120, 147]]);
-assert.equal(c.phones[0].normalized, "+995322123456");
-assert.equal(c.phones[0].region, "GE");
-assert.equal(c.emails[0].normalized, "nino@kavkaz-freight.example");
-assert.deepEqual(
-  c.addresses[0].components.map((k) => [k.label, k.text, k.start, k.end]),
-  [
-    ["house_number", "14", 60, 62],
-    ["road", "Rustaveli Avenue", 63, 79],
-    ["city", "Tbilisi", 81, 88],
-    ["postcode", "0108", 89, 93],
-    ["country", "Georgia", 95, 102],
-  ],
-);
-assert.ok(c.confidence >= 0.85, `contact confidence ${c.confidence}`);
-assert.equal(c.reviewRecommended, false);
-for (const e of members(c)) assertSlices(DOC, e);
-
-// Person and org are experimental in Georgian script, so only the rule-found entities and the
-// parsed address are held to exact offsets; every offset returned must slice the string.
-const ge = await tessera.extractContacts(GEORGIAN, { countryHint: ["GE"] });
-assert.equal(ge.contacts.length, 1);
-const g = ge.contacts[0];
-assert.deepEqual(g.addresses.map(spans), [["address", "რუსთაველის გამზირი 14, თბილისი 0108, საქართველო", 61, 108]]);
-assert.deepEqual(g.phones.map(spans), [["phone", "+995 32 212 3456", 109, 125]]);
-assert.deepEqual(g.emails.map(spans), [["email", "nino@kavkaz-freight.example", 126, 153]]);
-assert.equal(g.end, 153);
-assert.equal(GEORGIAN.length, 153);
-for (const e of [...members(g), ...ge.unassigned]) assertSlices(GEORGIAN, e);
+const plainContact = assertContact(DOC, await tessera.extractContacts(DOC, { countryHint: ["US"] }));
+const wideContact = assertContact(WIDE_DOC, await tessera.extractContacts(WIDE_DOC, { countryHint: ["US"] }));
+const shift = WIDE_DOC.indexOf(DOC);
+assert.notEqual(shift, Buffer.byteLength(WIDE_DOC.slice(0, shift)), "prefix must distinguish UTF-16 from UTF-8");
+for (const [i, entity] of members(wideContact).entries()) {
+  const plain = members(plainContact)[i];
+  assert.equal(entity.start, plain.start + shift);
+  assert.equal(entity.end, plain.end + shift);
+}
 
 const rules = await createTessera({ kinds: ["email", "phone"] });
-const plain = await rules.extractContacts(DOC, { countryHint: ["GE"] });
-assert.deepEqual(plain.contacts, []);
-assert.deepEqual(plain.unassigned.map((e) => e.kind), ["phone", "email"]);
+assert.deepEqual(rules.kinds, ["email", "phone"]);
+for (const input of [DOC, WIDE_DOC]) {
+  const out = await rules.extractContacts(input, { countryHint: ["US"] });
+  assert.deepEqual(out.contacts, []);
+  assert.deepEqual(out.unassigned.map(spans), [
+    expectedSpan(input, "phone", "(202) 555-0199"),
+    expectedSpan(input, "email", "jordan@acme.example"),
+  ]);
+  for (const e of out.unassigned) assertSlices(input, e);
+}
 
 tessera.dispose();
 rules.dispose();
-console.log("contacts: ok");
+await assert.rejects(tessera.extractContacts(DOC), { code: "DISPOSED" });
+await assert.rejects(rules.extractContacts(DOC), { code: "DISPOSED" });
+await assert.rejects(createTessera({ modelBytes, integrity: "sha256-0000" }), { code: "CHECKSUM_MISMATCH" });
+console.log("contacts: US grouping and Unicode offsets ok");

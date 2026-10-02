@@ -243,7 +243,7 @@ fn rules_only_extract_contacts_returns_unassigned() {
         .extract_contacts(
             text,
             &Query {
-                country_hint: &["GE"],
+                country_hint: &["US"],
                 ..Query::default()
             },
         )

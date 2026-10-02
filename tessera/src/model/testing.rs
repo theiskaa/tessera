@@ -1,13 +1,12 @@
-//! Bundles with controlled contents for unit tests: the committed bundle cut down to its
-//! parser, and that parser with small pseudo-random `detector.*` tensors added. Outputs from the
-//! random detector are meaningless; the shapes, masking, and pipeline invariants are what tests
-//! can check with it.
+//! Legacy bundles with controlled contents for unit tests: the committed parser tensors under
+//! an explicit format-1 manifest, optionally with pseudo-random `detector.*` tensors added.
+//! Random detector outputs are meaningless; tests check shapes, masking, and pipeline invariants.
 
 use serde_json::{Map, Value, json};
 
 use super::{DETECTOR_LABELS, INPUT_DIM, KERNEL, NGRAM_DIM, SCRIPT_DIM, SHAPE_DIM};
 
-/// Hidden width of the test bundles, the width the shipped networks use.
+/// Hidden width of the legacy test networks.
 const HIDDEN: usize = 96;
 use super::{SCRIPT_ROWS, SHAPE_ROWS, bio};
 
@@ -49,8 +48,8 @@ impl Parts {
     }
 }
 
-/// The committed bundle with every `detector.*` tensor removed and the manifest listing only
-/// the parser, as a parser-only bundle from Milestone 2 would be.
+/// Committed parser tensors in a format-1 parser-only fixture, independent of the shipped
+/// detector's graph and bundle version.
 pub(crate) fn parser_bundle() -> Vec<u8> {
     let path = concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -67,8 +66,25 @@ pub(crate) fn parser_bundle() -> Vec<u8> {
         header: Map::new(),
         data: Vec::new(),
     };
-    out.header
-        .insert("__metadata__".into(), full.header["__metadata__"].clone());
+    let source = full.header["__metadata__"].as_object().unwrap();
+    out.header.insert(
+        "__metadata__".into(),
+        json!({
+            "format": super::SUPPORTED_FORMAT,
+            "model_version": "0.2.1",
+            "tokenizer_contract": super::TOKENIZER_CONTRACT,
+            "decoder_contract": super::DECODER_CONTRACT,
+            "nets": "parser",
+            "detector_labels": "[]",
+            "parser_labels": source["parser_labels"],
+            "feature_config": source["feature_config"],
+            "phone_metadata_version": source["phone_metadata_version"],
+            "supported_regions": "[]",
+            "experimental_regions": "[]",
+            "training_snapshot": "unit-test-parser-fixture",
+            "report_url": "",
+        }),
+    );
     for (name, entry) in kept {
         let range = |i: usize| entry["data_offsets"][i].as_u64().unwrap() as usize;
         let shape: Vec<usize> = entry["shape"]
@@ -84,9 +100,6 @@ pub(crate) fn parser_bundle() -> Vec<u8> {
             &full.data[range(0)..range(1)],
         );
     }
-    let metadata = out.metadata();
-    metadata.insert("nets".into(), json!("parser"));
-    metadata.insert("detector_labels".into(), json!("[]"));
     out.write()
 }
 
@@ -187,6 +200,31 @@ mod tests {
     use crate::model::weights::Bundle;
     use crate::model::{MAX_HIDDEN, Tagger, kernels};
     use crate::token::tokenize;
+
+    #[test]
+    fn parser_fixture_keeps_legacy_identity_independent_of_the_shipped_detector() {
+        let bytes = parser_bundle();
+        let parts = Parts::read(&bytes);
+        let metadata = parts.header["__metadata__"].as_object().unwrap();
+        assert_eq!(metadata["format"], "1");
+        assert_eq!(metadata["model_version"], "0.2.1");
+        assert_eq!(
+            metadata["tokenizer_contract"],
+            super::super::TOKENIZER_CONTRACT
+        );
+        assert_eq!(metadata["decoder_contract"], super::super::DECODER_CONTRACT);
+        assert!(!metadata.contains_key("detector_architecture"));
+        assert!(
+            parts
+                .header
+                .keys()
+                .all(|name| !name.starts_with("detector."))
+        );
+        let bundle = Bundle::parse(&bytes, None).unwrap();
+        assert!(!bundle.manifest.context96_rms);
+        assert_eq!(bundle.manifest.nets, ["parser"]);
+        assert!(Tagger::parser(&bundle).is_ok());
+    }
 
     #[test]
     fn a_detector_with_six_blocks_loads_and_a_missing_block_is_invalid() {

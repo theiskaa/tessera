@@ -1,4 +1,4 @@
-//! Fixture-driven tests for `fixtures/parser/`: hand-written addresses per country that
+//! Fixture-driven tests for `fixtures/parser/`: hand-written US addresses that
 //! `parse_address` must split exactly. Cases marked `expected_failure` must keep failing, so a
 //! fix is noticed and the mark removed.
 
@@ -100,7 +100,7 @@ fn parse_address_needs_the_parser() {
 fn uncertain_components_follow_the_bands() {
     let tessera = common::load_tessera();
     let texts = [
-        "10 Downing Street, London SW1A 2AA",
+        "400 Broad St, Seattle, WA 98109",
         "Near the svan tower",
         "Kleintier-Ambulanz-Rheingönheim, Ludwigshafen am Rhein",
         "zq vx 17 kk",
@@ -143,7 +143,7 @@ fn uncertain_components_follow_the_bands() {
         assert_eq!(sure.review_recommended, sure.confidence < 0.85, "{text}");
     }
     let clean = tessera
-        .parse_address("10 Downing Street, London SW1A 2AA", &Query::default())
+        .parse_address("400 Broad St, Seattle, WA 98109", &Query::default())
         .unwrap();
     assert!(!clean.review_recommended && clean.confidence >= 0.85);
 }
