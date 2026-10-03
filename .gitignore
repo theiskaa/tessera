@@ -33,7 +33,6 @@ node_modules/
 
 # public us checks; collection and review recipes stay local
 /bench/us/*
-!/bench/us/README.md
 !/bench/us/address_keys.py
 !/bench/us/org_aliases.py
 !/bench/us/source_identity.py

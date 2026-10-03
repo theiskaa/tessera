@@ -25,8 +25,9 @@ use parse::ParseBox;
 const WORKER_URL: &str = "./worker_loader.js";
 
 const SOURCE_URL: &str = "https://github.com/theiskaa/tessera";
-const DOCS_URL: &str = "https://github.com/theiskaa/tessera/blob/main/docs/getting-started.md";
-const MODEL_URL: &str = "https://github.com/theiskaa/tessera/blob/main/docs/model.md";
+const README_URL: &str = "https://github.com/theiskaa/tessera/blob/main/README.md#usage";
+const MODEL_URL: &str =
+    "https://github.com/theiskaa/tessera/blob/main/README.md#results-and-limitations";
 
 /// The JavaScript API as `tessera/js/index.d.ts` declares it. The import path is only an example
 /// of a relative import: this page runs the Rust crate in its own worker and does not serve the
@@ -136,7 +137,7 @@ fn Header() -> impl IntoView {
             </div>
             <nav aria-label="Links">
                 <a href=SOURCE_URL>"[ source ]"</a>
-                <a href=DOCS_URL>"[ docs ]"</a>
+                <a href=README_URL>"[ readme ]"</a>
                 <a href="#demo" class="wide-only">
                     "[ live demo ]"
                 </a>
