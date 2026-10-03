@@ -4,9 +4,46 @@
 import argparse
 import hashlib
 import json
+import re
 import shutil
 import struct
 from pathlib import Path
+
+
+def model_card(readme: str) -> str:
+    asset_paths = {
+        "models/tessera-v1.safetensors": "tessera-v1.safetensors",
+        "models/tessera-v1.sha256": "tessera-v1.sha256",
+        "models/bundle.json": "bundle.json",
+        "NOTICE": "NOTICE",
+    }
+
+    def link(match: re.Match[str]) -> str:
+        target = match.group(1)
+        if target.startswith(("https://", "http://", "#")):
+            return match.group(0)
+        target = asset_paths.get(
+            target, f"https://github.com/theiskaa/tessera/blob/main/{target}"
+        )
+        return f"]({target})"
+
+    body = re.sub(r"\]\(([^)]+)\)", link, readme)
+    metadata = """---
+language:
+- en
+license: cc-by-4.0
+pipeline_tag: token-classification
+library_name: tessera
+tags:
+- tessera
+- contact-extraction
+- named-entity-recognition
+- wasm
+- experimental
+---
+
+"""
+    return metadata + body
 
 
 def prepare(out: Path) -> None:
@@ -35,15 +72,16 @@ def prepare(out: Path) -> None:
     copies = {
         "tessera-v1.safetensors": model,
         "tessera-v1.sha256": checksum_file,
-        "README.md": root / "models/README.md",
         "NOTICE": root / "NOTICE",
     }
+    readme = model_card((root / "README.md").read_text())
     for source in copies.values():
         if not source.is_file():
             raise ValueError(f"missing release input: {source.name}")
     out.mkdir(parents=True, exist_ok=False)
     for name, source in copies.items():
         shutil.copyfile(source, out / name)
+    (out / "README.md").write_text(readme)
     descriptor = {
         "runtime": "tessera",
         "file": model.name,
@@ -52,7 +90,7 @@ def prepare(out: Path) -> None:
         "metadata": metadata,
     }
     (out / "bundle.json").write_text(json.dumps(descriptor, indent=2) + "\n")
-    print(f"Prepared {len(copies) + 1} files in {out}; nothing uploaded.")
+    print(f"Prepared {len(copies) + 2} files in {out}; nothing uploaded.")
 
 
 if __name__ == "__main__":
