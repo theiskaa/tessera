@@ -11,6 +11,8 @@ A tiny model for extracting contact details from text, locally.
 
 </p>
 
+[Live demo](https://tessera.theiskaa.com) · [Hugging Face](https://huggingface.co/theiskaa/tessera)
+
 Tessera finds people, organizations, postal addresses, emails, and phone numbers. It returns their exact positions in the original text, splits addresses into components, and groups related details into contacts. The same Rust implementation runs natively and through WebAssembly in browsers, Node, and Bun.
 
 Email and phone extraction uses validating rules. Names, organizations, and addresses use an int8 neural network; a separate network parses address components. Inference stays in your process or browser worker. No text is sent to an inference service.
