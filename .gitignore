@@ -10,6 +10,7 @@ internal/
 /tessera/pkg/
 /bench/web/pkg/
 /site/dist/
+/.wrangler/
 
 # corpora, shards, checkpoints, and run directories
 /data/raw/
