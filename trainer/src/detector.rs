@@ -15,19 +15,21 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tessera::Kind;
 use tessera::internal::{
-    DETECT_MIN_ADDRESS, DETECT_MIN_ORG, DETECT_MIN_PERSON, FeatureConfig, MAX_ENTITY_TOKENS,
-    featurize, flag, is_content, normalized_us_address_end, paragraph_breaks, scan_rules, tokenize,
+    DETECT_MIN_ADDRESS, DETECT_MIN_ORG, DETECT_MIN_PERSON, FeatureConfig, MAX_ENTITY_TOKENS, flag,
+    is_content, normalized_us_address_end, paragraph_breaks, scan_rules, tokenize,
 };
 
 use crate::data::Split;
-use crate::dataset::{Encoded, ParserBatch, ParserBatcher};
+use crate::dataset::{Encoded, ParserBatch};
 use crate::net::TaggerNet;
+#[cfg(test)]
+use tessera::internal::featurize;
 
 /// The model kinds, in label order: kind `k` has `B = 1 + 2k` and `I = 2 + 2k`.
 pub use tessera::internal::DETECTOR_KINDS as KINDS;
 pub use tessera::internal::DETECTOR_LABELS;
 /// Lowest mean label probability kept per kind, in `KINDS` order, from the library's policy.
-const DETECT_MIN: [f32; 3] = [DETECT_MIN_PERSON, DETECT_MIN_ORG, DETECT_MIN_ADDRESS];
+pub(crate) const DETECT_MIN: [f32; 3] = [DETECT_MIN_PERSON, DETECT_MIN_ORG, DETECT_MIN_ADDRESS];
 
 fn kind_index(kind: Kind) -> Option<usize> {
     KINDS.iter().position(|k| *k == kind)
@@ -71,26 +73,87 @@ pub enum DetectorEncodeError {
     ParagraphBreak(KindSpan),
 }
 
-/// Encodes one document. Rule spans come from the rules layer, not from gold, so training
-/// sees exactly what inference computes; a gold span that overlaps one is an error, because
-/// the decoder can never produce it.
+/// Explicit plain-text input contract for a future reviewed training route.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DetectorInputPolicy {
+    /// Match a public Text query with an explicit US hint.
+    KnownUs,
+    /// Match a public Text query with document-inferred hints.
+    AutoText,
+}
+
+/// Encodes the legacy empty-hint diagnostic input contract.
+/// Public Text queries with explicit or inferred countries can produce different rule masks.
 pub fn encode_document(
     text: &str,
     gold: &[KindSpan],
     fc: &FeatureConfig,
 ) -> Result<Encoded, DetectorEncodeError> {
+    encode_document_rules(
+        text,
+        gold,
+        fc,
+        scan_rules(text, &[]),
+        tessera::internal::DetectorFeatureContract::Legacy23,
+    )
+}
+
+/// Encode features using the public Text rule selector; gold supplies labels only.
+#[cfg(test)]
+pub fn encode_document_with_input_policy(
+    text: &str,
+    gold: &[KindSpan],
+    fc: &FeatureConfig,
+    policy: DetectorInputPolicy,
+) -> Result<Encoded, DetectorEncodeError> {
+    encode_document_with_feature_contract(
+        text,
+        gold,
+        fc,
+        policy,
+        tessera::internal::DetectorFeatureContract::Legacy23,
+    )
+}
+
+/// Canonical country selector and explicit versioned numeric detector features.
+pub fn encode_document_with_feature_contract(
+    text: &str,
+    gold: &[KindSpan],
+    fc: &FeatureConfig,
+    policy: DetectorInputPolicy,
+    contract: tessera::internal::DetectorFeatureContract,
+) -> Result<Encoded, DetectorEncodeError> {
+    let hints: &[&str] = match policy {
+        DetectorInputPolicy::KnownUs => &["US"],
+        DetectorInputPolicy::AutoText => &[],
+    };
+    encode_document_rules(
+        text,
+        gold,
+        fc,
+        tessera::internal::scan_text_rules(text, hints),
+        contract,
+    )
+}
+
+fn encode_document_rules(
+    text: &str,
+    gold: &[KindSpan],
+    fc: &FeatureConfig,
+    rules: Vec<tessera::Entity>,
+    contract: tessera::internal::DetectorFeatureContract,
+) -> Result<Encoded, DetectorEncodeError> {
     let tokens = tokenize(text);
-    let rule_spans: Vec<(usize, usize)> = scan_rules(text, &[])
-        .iter()
-        .map(|e| (e.start, e.end))
-        .collect();
+    let rule_spans: Vec<(usize, usize)> = rules.iter().map(|e| (e.start, e.end)).collect();
     for g in gold {
         let (s, e) = (g.start as usize, g.end as usize);
         if rule_spans.iter().any(|&(rs, re)| s < re && rs < e) {
             return Err(DetectorEncodeError::RuleOverlap(*g));
         }
     }
-    let feats = featurize(text, &tokens, &rule_spans, None, fc, None);
+    let feats =
+        tessera::internal::featurize_detector(text, &tokens, &rule_spans, None, fc, None, contract);
     let mut enc = Encoded {
         token_spans: Vec::new(),
         ngram_ids: Vec::new(),
@@ -766,15 +829,22 @@ pub(crate) fn predict_scored<B: Backend>(
     batch_size: usize,
     device: &B::Device,
 ) -> Vec<Vec<ScoredSpan>> {
-    let result = predict_scored_using(docs, batch_size, device, None, |batch| {
-        Ok::<_, std::convert::Infallible>(model.forward(
-            batch.ngram_ids,
-            batch.script,
-            batch.shape,
-            batch.flags,
-            batch.mask,
-        ))
-    });
+    let result = predict_scored_using(
+        docs,
+        batch_size,
+        device,
+        crate::dataset::FeatureBatcher::for_model(model),
+        None,
+        |batch| {
+            Ok::<_, std::convert::Infallible>(model.forward(
+                batch.ngram_ids,
+                batch.script,
+                batch.shape,
+                batch.flags,
+                batch.mask,
+            ))
+        },
+    );
     match result {
         Ok(spans) => spans,
         Err(never) => match never {},
@@ -802,68 +872,184 @@ pub(crate) fn predict_scored_with_operator_and_decoder<B: Backend>(
     decoder: Option<crate::diagnostic_decode::Decoder>,
 ) -> anyhow::Result<Vec<Vec<ScoredSpan>>> {
     let decoder = operator.decoder(decoder);
-    predict_scored_using(docs, batch_size, device, decoder, |batch| {
-        operator.forward(
+    predict_scored_using(
+        docs,
+        batch_size,
+        device,
+        crate::dataset::FeatureBatcher::for_model(model),
+        decoder,
+        |batch| {
+            operator.forward(
+                model,
+                batch.ngram_ids,
+                batch.script,
+                batch.shape,
+                batch.flags,
+                batch.mask,
+            )
+        },
+    )
+}
+
+/// Execute the declared postprocessor after the bound ContextRmsV2 forward operator.
+pub(crate) fn predict_scored_with_postprocess<B: Backend>(
+    model: &TaggerNet<B>,
+    docs: &[DetectorDoc],
+    batch_size: usize,
+    device: &B::Device,
+    postprocess: crate::reviewed_fit::Postprocess,
+) -> anyhow::Result<Vec<Vec<ScoredSpan>>> {
+    let mut out = Vec::with_capacity(docs.len());
+    let batcher = crate::dataset::FeatureBatcher::for_model(model);
+    for chunk in docs.chunks(batch_size.max(1)) {
+        let items = chunk.iter().map(|d| d.enc.clone()).collect();
+        let batch: ParserBatch<B> = batcher.batch(items, device);
+        let logits = crate::diagnostic_operator::ForwardOperator::ContextRmsV2.forward(
             model,
             batch.ngram_ids,
             batch.script,
             batch.shape,
             batch.flags,
             batch.mask,
-        )
+        )?;
+        let [b, l, c] = logits.dims();
+        anyhow::ensure!(
+            b == chunk.len()
+                && c == DETECTOR_LABELS
+                && chunk.iter().all(|d| d.enc.token_spans.len() <= l),
+            "mixed postprocessor forward shape differs"
+        );
+        let probs: Vec<f32> = softmax(logits, 2)
+            .into_data()
+            .to_vec()
+            .map_err(|_| anyhow::anyhow!("mixed probabilities conversion failed"))?;
+        anyhow::ensure!(
+            probs.len() == b * l * c && probs.iter().all(|v| v.is_finite()),
+            "mixed probabilities nonfinite or incomplete"
+        );
+        for (i, doc) in chunk.iter().enumerate() {
+            let n = doc.enc.token_spans.len();
+            out.push(decode_scored_with_postprocess(
+                doc,
+                &probs[i * l * c..(i * l + n) * c],
+                postprocess,
+            )?);
+        }
+    }
+    Ok(out)
+}
+
+/// Keep the graph's base decoder identity separate from explicit address-field processing.
+pub(crate) fn decode_scored_with_postprocess(
+    doc: &DetectorDoc,
+    probs: &[f32],
+    postprocess: crate::reviewed_fit::Postprocess,
+) -> anyhow::Result<Vec<ScoredSpan>> {
+    anyhow::ensure!(
+        probs.len() == doc.enc.token_spans.len() * DETECTOR_LABELS
+            && probs.iter().all(|v| v.is_finite())
+            && doc.enc.flags.len() == doc.enc.token_spans.len()
+            && doc.breaks.len() == doc.enc.token_spans.len(),
+        "postprocessor canonical arrays differ"
+    );
+    if postprocess == crate::reviewed_fit::Postprocess::AddressContinuationV1 {
+        return Ok(decode_scored(
+            doc,
+            probs,
+            Some(crate::diagnostic_decode::Decoder::AddressContinuationV1),
+        ));
+    }
+    let masked: Vec<_> = doc
+        .enc
+        .flags
+        .iter()
+        .map(|f| f & flag::IN_RULE_SPAN != 0)
+        .collect();
+    let spans: Vec<_> = doc
+        .enc
+        .token_spans
+        .iter()
+        .map(|&(a, b)| (a as usize, b as usize))
+        .collect();
+    Ok(tessera::internal::decode_detector_with_labeled_fields(
+        &doc.text,
+        &spans,
+        probs,
+        &masked,
+        &doc.breaks,
+    )
+    .into_iter()
+    .filter_map(|span| {
+        Some(ScoredSpan {
+            span: predicted_span(
+                &doc.text,
+                kind_index(span.kind)?,
+                doc.enc.token_spans[span.first].0,
+                doc.enc.token_spans[span.last].1,
+            ),
+            confidence: span.confidence,
+        })
     })
+    .collect())
 }
 
 fn predict_scored_using<B: Backend, E>(
     docs: &[DetectorDoc],
     batch_size: usize,
     device: &B::Device,
+    batcher: crate::dataset::FeatureBatcher,
     decoder: Option<crate::diagnostic_decode::Decoder>,
     mut forward: impl FnMut(ParserBatch<B>) -> Result<Tensor<B, 3>, E>,
 ) -> Result<Vec<Vec<ScoredSpan>>, E> {
     let mut out = Vec::with_capacity(docs.len());
     for chunk in docs.chunks(batch_size.max(1)) {
         let items: Vec<Encoded> = chunk.iter().map(|d| d.enc.clone()).collect();
-        let batch: ParserBatch<B> = ParserBatcher.batch(items, device);
+        let batch: ParserBatch<B> = batcher.batch(items, device);
         let logits = forward(batch)?;
         let [_, l, c] = logits.dims();
         let probs: Vec<f32> = softmax(logits, 2).into_data().to_vec().unwrap_or_default();
         for (i, d) in chunk.iter().enumerate() {
             let n = d.enc.token_spans.len();
             let rows = &probs[i * l * c..(i * l + n) * c];
-            let masked: Vec<bool> = d
-                .enc
-                .flags
-                .iter()
-                .map(|f| f & flag::IN_RULE_SPAN != 0)
-                .collect();
-            out.push(
-                crate::diagnostic_decode::decode(
-                    decoder,
-                    &d.text,
-                    &d.enc.token_spans,
-                    rows,
-                    &masked,
-                    &d.breaks,
-                )
-                .into_iter()
-                .filter_map(|s| {
-                    let kind = kind_index(s.kind)?;
-                    Some(ScoredSpan {
-                        span: predicted_span(
-                            &d.text,
-                            kind,
-                            d.enc.token_spans[s.first].0,
-                            d.enc.token_spans[s.last].1,
-                        ),
-                        confidence: s.confidence,
-                    })
-                })
-                .collect(),
-            );
+            out.push(decode_scored(d, rows, decoder));
         }
     }
     Ok(out)
+}
+
+/// Decode scored candidates with the same masks and address adjustment used by evaluation.
+pub(crate) fn decode_scored(
+    doc: &DetectorDoc,
+    probs: &[f32],
+    decoder: Option<crate::diagnostic_decode::Decoder>,
+) -> Vec<ScoredSpan> {
+    let masked: Vec<_> = doc
+        .enc
+        .flags
+        .iter()
+        .map(|f| f & flag::IN_RULE_SPAN != 0)
+        .collect();
+    crate::diagnostic_decode::decode(
+        decoder,
+        &doc.text,
+        &doc.enc.token_spans,
+        probs,
+        &masked,
+        &doc.breaks,
+    )
+    .into_iter()
+    .filter_map(|span| {
+        Some(ScoredSpan {
+            span: predicted_span(
+                &doc.text,
+                kind_index(span.kind)?,
+                doc.enc.token_spans[span.first].0,
+                doc.enc.token_spans[span.last].1,
+            ),
+            confidence: span.confidence,
+        })
+    })
+    .collect()
 }
 
 /// Precision, recall, and F1.
@@ -1000,6 +1186,54 @@ pub fn score(gold: &[Vec<KindSpan>], pred: &[Vec<KindSpan>]) -> SpanScores {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn tab_encoder_preserves_gold_independence_and_legacy_numeric_features() {
+        use tessera::internal::{AFTER_TAB, BEFORE_TAB, DetectorFeatureContract};
+        let text = "Name\tPosition\nZoë Vice\tPresident";
+        let fc = FeatureConfig::default();
+        let policy = DetectorInputPolicy::KnownUs;
+        let legacy = encode_document_with_input_policy(text, &[], &fc, policy).unwrap();
+        let gold = [KindSpan {
+            kind: 0,
+            start: 14,
+            end: 23,
+        }];
+        let blank = encode_document_with_feature_contract(
+            text,
+            &[],
+            &fc,
+            policy,
+            DetectorFeatureContract::TabCells25,
+        )
+        .unwrap();
+        let labeled = encode_document_with_feature_contract(
+            text,
+            &gold,
+            &fc,
+            policy,
+            DetectorFeatureContract::TabCells25,
+        )
+        .unwrap();
+        assert_eq!(blank.token_spans, labeled.token_spans);
+        assert_eq!(blank.ngram_ids, labeled.ngram_ids);
+        assert_eq!(blank.script, labeled.script);
+        assert_eq!(blank.shape, labeled.shape);
+        assert_eq!(blank.flags, labeled.flags);
+        assert!(blank.labels.iter().all(|&l| l == 0));
+        assert!(labeled.labels.iter().any(|&l| l != 0));
+        assert_eq!(legacy.token_spans, blank.token_spans);
+        assert_eq!(legacy.ngram_ids, blank.ngram_ids);
+        assert_eq!(legacy.script, blank.script);
+        assert_eq!(legacy.shape, blank.shape);
+        assert_eq!(
+            legacy.flags,
+            blank
+                .flags
+                .iter()
+                .map(|f| f & !(AFTER_TAB | BEFORE_TAB))
+                .collect::<Vec<_>>()
+        );
+    }
     use burn::backend::NdArray;
     use polars::prelude::{Column, DataFrame, ParquetWriter};
 
@@ -1657,5 +1891,246 @@ mod tests {
     #[should_panic(expected = "one prediction list per document")]
     fn score_rejects_missing_prediction_documents() {
         score(&[vec![]], &[]);
+    }
+}
+
+#[cfg(test)]
+mod canonical_input_policy_tests {
+    use super::*;
+
+    fn config() -> FeatureConfig {
+        FeatureConfig {
+            ngram_sizes: vec![2, 3, 4],
+            hash_buckets: 32768,
+            hash_seed: 0,
+        }
+    }
+
+    fn check_runtime_arrays(text: &str, policy: DetectorInputPolicy, encoded: &Encoded) {
+        let hints: &[&str] = match policy {
+            DetectorInputPolicy::KnownUs => &["US"],
+            DetectorInputPolicy::AutoText => &[],
+        };
+        let rules = tessera::internal::scan_text_rules(text, hints);
+        let spans: Vec<_> = rules.iter().map(|e| (e.start, e.end)).collect();
+        let tokens = tokenize(text);
+        let raw = featurize(text, &tokens, &spans, None, &config(), None);
+        let retained: Vec<_> = tokens
+            .iter()
+            .enumerate()
+            .filter_map(|(i, t)| is_content(t).then_some(i))
+            .collect();
+        assert_eq!(
+            encoded.token_spans,
+            retained
+                .iter()
+                .map(|&i| (tokens[i].start as u32, tokens[i].end as u32))
+                .collect::<Vec<_>>()
+        );
+        for (j, &i) in retained.iter().enumerate() {
+            assert_eq!(
+                encoded.ngram_ids[j],
+                raw[i].ngram_ids.iter().map(|id| id + 1).collect::<Vec<_>>()
+            );
+            assert!(encoded.ngram_ids[j].iter().all(|&id| id > 0 && id <= 32768));
+            assert_eq!(encoded.script[j], raw[i].script);
+            assert_eq!(encoded.shape[j], raw[i].shape);
+            assert_eq!(encoded.flags[j], raw[i].flags);
+            assert_eq!(encoded.flags[j] & flag::MASKED, 0);
+            assert_eq!(
+                encoded.flags[j] & flag::IN_RULE_SPAN != 0,
+                raw[i].flags & (flag::IN_RULE_SPAN | flag::MASKED) != 0
+            );
+        }
+        assert_eq!(breaks_of(text), paragraph_breaks(&tokens, &retained));
+    }
+
+    #[test]
+    fn canonical_arrays_match_runtime_raw_features_and_padding_for_both_policies() {
+        for text in [
+            "é Jane Doe at (202) 555-0199; a@example.test",
+            "Jane Doe\n\nLondon +44 20 7946 0958 or 020 7946 0321",
+        ] {
+            for policy in [DetectorInputPolicy::KnownUs, DetectorInputPolicy::AutoText] {
+                let encoded =
+                    encode_document_with_input_policy(text, &[], &config(), policy).unwrap();
+                check_runtime_arrays(text, policy, &encoded);
+                assert!(encoded.labels.iter().all(|&x| x == 0));
+            }
+        }
+    }
+
+    #[test]
+    fn legacy_empty_hints_keep_national_phone_unmasked() {
+        let text = "Jane Doe at 202-555-0199";
+        let legacy = encode_document(text, &[], &config()).unwrap();
+        let known =
+            encode_document_with_input_policy(text, &[], &config(), DetectorInputPolicy::KnownUs)
+                .unwrap();
+        assert!(scan_rules(text, &[]).is_empty());
+        assert!(legacy.flags.iter().all(|f| f & flag::IN_RULE_SPAN == 0));
+        assert!(known.flags.iter().any(|f| f & flag::IN_RULE_SPAN != 0));
+        assert_eq!(legacy.token_spans, known.token_spans);
+        assert_eq!(legacy.ngram_ids, known.ngram_ids);
+        assert_eq!(legacy.script, known.script);
+        assert_eq!(legacy.shape, known.shape);
+        assert!(
+            legacy
+                .flags
+                .iter()
+                .zip(&known.flags)
+                .all(|(a, b)| (a ^ b) & !flag::IN_RULE_SPAN == 0)
+        );
+    }
+
+    #[test]
+    fn supervised_gold_changes_labels_only_and_empty_dev_gold_stays_all_o() {
+        let text = "Jane Doe at 202-555-0199";
+        let gold = [KindSpan {
+            kind: 0,
+            start: 0,
+            end: 8,
+        }];
+        for policy in [DetectorInputPolicy::KnownUs, DetectorInputPolicy::AutoText] {
+            let train = encode_document_with_input_policy(text, &gold, &config(), policy).unwrap();
+            let dev = encode_document_with_input_policy(text, &[], &config(), policy).unwrap();
+            assert_eq!(&train.labels[..2], &[1, 2]);
+            assert!(dev.labels.iter().all(|&label| label == 0));
+            assert_eq!(train.token_spans, dev.token_spans);
+            assert_eq!(train.ngram_ids, dev.ngram_ids);
+            assert_eq!(train.script, dev.script);
+            assert_eq!(train.shape, dev.shape);
+            assert_eq!(train.flags, dev.flags);
+        }
+    }
+
+    #[test]
+    fn canonical_supervision_rejects_rule_masks_and_preserves_paragraph_rejection() {
+        let text = "Jane Doe at 202-555-0199";
+        let phone = KindSpan {
+            kind: 1,
+            start: text.find("202").unwrap() as u32,
+            end: text.len() as u32,
+        };
+        assert_eq!(
+            encode_document_with_input_policy(
+                text,
+                &[phone],
+                &config(),
+                DetectorInputPolicy::KnownUs
+            ),
+            Err(DetectorEncodeError::RuleOverlap(phone))
+        );
+        let separated = "Jane\n\nDoe";
+        let gold = KindSpan {
+            kind: 0,
+            start: 0,
+            end: separated.len() as u32,
+        };
+        for policy in [DetectorInputPolicy::KnownUs, DetectorInputPolicy::AutoText] {
+            assert_eq!(
+                encode_document_with_input_policy(separated, &[gold], &config(), policy),
+                Err(DetectorEncodeError::ParagraphBreak(gold))
+            );
+            let single = "Jane\nDoe";
+            assert!(
+                encode_document_with_input_policy(
+                    single,
+                    &[KindSpan {
+                        end: single.len() as u32,
+                        ..gold
+                    }],
+                    &config(),
+                    policy
+                )
+                .is_ok()
+            );
+        }
+    }
+
+    #[test]
+    fn explicit_policy_serde_has_no_legacy_default_or_unknown_fallback() {
+        for policy in [DetectorInputPolicy::KnownUs, DetectorInputPolicy::AutoText] {
+            let bytes = serde_json::to_vec(&policy).unwrap();
+            assert_eq!(
+                serde_json::from_slice::<DetectorInputPolicy>(&bytes).unwrap(),
+                policy
+            );
+        }
+        assert!(serde_json::from_str::<DetectorInputPolicy>("\"legacy\"").is_err());
+        assert!(serde_json::from_str::<DetectorInputPolicy>("null").is_err());
+    }
+}
+
+#[cfg(test)]
+mod reviewed_postprocess_tests {
+    use super::*;
+    use crate::reviewed_fit::Postprocess;
+
+    #[test]
+    fn declared_field_postprocess_executes_before_unchanged_cutoffs() {
+        let text = "PO Box 17\nDenver CO 80202\nPhysical Address 123 Main Street\nDenver CO 80202";
+        let spans: Vec<_> = tokenize(text)
+            .into_iter()
+            .filter(is_content)
+            .map(|t| (t.start as u32, t.end as u32))
+            .collect();
+        let n = spans.len();
+        let doc = DetectorDoc {
+            text: text.to_owned(),
+            gold: vec![],
+            breaks: vec![false; n],
+            enc: Encoded {
+                token_spans: spans.clone(),
+                ngram_ids: vec![vec![1]; n],
+                script: vec![0; n],
+                shape: vec![0; n],
+                flags: vec![0; n],
+                labels: vec![0; n],
+                country: "US".into(),
+            },
+        };
+        let mut probs = vec![0.001; n * 7];
+        for (index, &(a, b)) in spans.iter().enumerate() {
+            probs[index * 7 + if index == 0 { 5 } else { 6 }] =
+                if matches!(&text[a as usize..b as usize], "Physical" | "Address") {
+                    0.1
+                } else {
+                    0.9
+                };
+        }
+        let old = decode_scored_with_postprocess(&doc, &probs, Postprocess::AddressContinuationV1)
+            .unwrap();
+        let new = decode_scored_with_postprocess(&doc, &probs, Postprocess::AddressLabeledFieldsV1)
+            .unwrap();
+        assert_eq!(old.len(), 1);
+        assert_eq!(new.len(), 2);
+        let quotes: Vec<_> = new
+            .iter()
+            .map(|s| &text[s.span.start as usize..s.span.end as usize])
+            .collect();
+        assert_eq!(
+            quotes,
+            [
+                "PO Box 17\nDenver CO 80202",
+                "123 Main Street\nDenver CO 80202"
+            ]
+        );
+        assert!(new.iter().all(|s| (s.confidence - 0.9).abs() < 1e-6));
+        assert_eq!(
+            apply_confidence_policy(std::slice::from_ref(&new))[0].len(),
+            2
+        );
+        let mut low = new;
+        for span in &mut low {
+            span.confidence = 0.0;
+        }
+        assert!(apply_confidence_policy(&[low])[0].is_empty());
+        let mut damaged = probs;
+        damaged[0] = f32::NAN;
+        assert!(
+            decode_scored_with_postprocess(&doc, &damaged, Postprocess::AddressLabeledFieldsV1)
+                .is_err()
+        );
     }
 }

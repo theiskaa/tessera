@@ -231,7 +231,7 @@ pub struct ParserBatch<B: Backend> {
     pub script: Tensor<B, 2, Int>,
     /// `[B, L]`.
     pub shape: Tensor<B, 2, Int>,
-    /// `[B, L, FLAG_BITS]`.
+    /// `[B, L, selected flag width]`; parsers use FLAG_BITS (23).
     pub flags: Tensor<B, 3>,
     /// `[B, L]`, 0 where padded.
     pub labels: Tensor<B, 2, Int>,
@@ -247,6 +247,44 @@ pub struct ParserBatcher;
 
 impl<B: Backend> Batcher<B, Encoded, ParserBatch<B>> for ParserBatcher {
     fn batch(&self, items: Vec<Encoded>, device: &B::Device) -> ParserBatch<B> {
+        FeatureBatcher::legacy().batch(items, device)
+    }
+}
+
+/// Batch detector inputs using one supported projection flag width.
+#[derive(Clone)]
+pub struct FeatureBatcher {
+    flag_bits: usize,
+}
+impl FeatureBatcher {
+    /// Preserve the parser and legacy detector's 23-bit batching.
+    pub const fn legacy() -> Self {
+        Self {
+            flag_bits: FLAG_BITS,
+        }
+    }
+    /// Select a detector width from its explicit feature contract.
+    pub fn detector(contract: tessera::internal::DetectorFeatureContract) -> Self {
+        Self {
+            flag_bits: contract.flag_bits(),
+        }
+    }
+    /// Use an already validated native graph's exact numeric width.
+    pub fn for_model<B: Backend>(model: &crate::net::TaggerNet<B>) -> Self {
+        let flag_bits = model.flag_bits();
+        assert!(matches!(flag_bits, 23 | 25), "unsupported graph flag width");
+        Self { flag_bits }
+    }
+}
+impl<B: Backend> Batcher<B, Encoded, ParserBatch<B>> for FeatureBatcher {
+    fn batch(&self, items: Vec<Encoded>, device: &B::Device) -> ParserBatch<B> {
+        let flag_bits = self.flag_bits;
+        assert!(
+            items
+                .iter()
+                .all(|e| e.flags.iter().all(|&flags| flags >> flag_bits == 0)),
+            "encoded flags exceed the selected feature contract"
+        );
         let b = items.len();
         let l = items
             .iter()
@@ -263,7 +301,7 @@ impl<B: Backend> Batcher<B, Encoded, ParserBatch<B>> for ParserBatcher {
         let mut ngram = vec![0i64; b * l * k];
         let mut script = vec![0i64; b * l];
         let mut shape = vec![0i64; b * l];
-        let mut flags = vec![0f32; b * l * FLAG_BITS];
+        let mut flags = vec![0f32; b * l * flag_bits];
         let mut labels = vec![0i64; b * l];
         let mut mask = vec![0f32; b * l];
         for (i, e) in items.iter().enumerate() {
@@ -274,8 +312,8 @@ impl<B: Backend> Batcher<B, Encoded, ParserBatch<B>> for ParserBatcher {
                 }
                 script[i * l + t] = i64::from(e.script[t]);
                 shape[i * l + t] = i64::from(e.shape[t]);
-                for bit in 0..FLAG_BITS {
-                    flags[(i * l + t) * FLAG_BITS + bit] = ((e.flags[t] >> bit) & 1) as f32;
+                for bit in 0..flag_bits {
+                    flags[(i * l + t) * flag_bits + bit] = ((e.flags[t] >> bit) & 1) as f32;
                 }
                 labels[i * l + t] = i64::from(e.labels.get(t).copied().unwrap_or(0));
                 mask[i * l + t] = 1.0;
@@ -285,7 +323,7 @@ impl<B: Backend> Batcher<B, Encoded, ParserBatch<B>> for ParserBatcher {
             ngram_ids: Tensor::from_data(TensorData::new(ngram, [b, l, k]), device),
             script: Tensor::from_data(TensorData::new(script, [b, l]), device),
             shape: Tensor::from_data(TensorData::new(shape, [b, l]), device),
-            flags: Tensor::from_data(TensorData::new(flags, [b, l, FLAG_BITS]), device),
+            flags: Tensor::from_data(TensorData::new(flags, [b, l, flag_bits]), device),
             labels: Tensor::from_data(TensorData::new(labels, [b, l]), device),
             mask: Tensor::from_data(TensorData::new(mask, [b, l]), device),
             lengths: items.iter().map(|e| e.token_spans.len()).collect(),
@@ -295,6 +333,40 @@ impl<B: Backend> Batcher<B, Encoded, ParserBatch<B>> for ParserBatcher {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn detector25_batch_preserves_old_columns_and_padding() {
+        use tessera::internal::{AFTER_TAB, BEFORE_TAB, DetectorFeatureContract};
+        let fc = FeatureConfig::default();
+        let mut a = encode("Mary Vice President", &[], &fc).unwrap();
+        let b = encode("Zoë", &[], &fc).unwrap();
+        let dev = Default::default();
+        let old: ParserBatch<NdArray> = ParserBatcher.batch(vec![a.clone(), b.clone()], &dev);
+        a.flags[0] |= BEFORE_TAB;
+        a.flags[1] |= AFTER_TAB;
+        let new: ParserBatch<NdArray> =
+            FeatureBatcher::detector(DetectorFeatureContract::TabCells25).batch(vec![a, b], &dev);
+        assert_eq!(old.flags.dims(), [2, 3, 23]);
+        assert_eq!(new.flags.dims(), [2, 3, 25]);
+        let of = old.flags.into_data().to_vec::<f32>().unwrap();
+        let nf = new.flags.into_data().to_vec::<f32>().unwrap();
+        for (i, (a, b)) in of.chunks_exact(23).zip(nf.chunks_exact(25)).enumerate() {
+            assert_eq!(a, &b[..23]);
+            assert_eq!(b[23], if i == 1 { 1.0 } else { 0.0 });
+            assert_eq!(b[24], if i == 0 { 1.0 } else { 0.0 });
+        }
+        assert_eq!(old.ngram_ids.into_data(), new.ngram_ids.into_data());
+        assert_eq!(old.script.into_data(), new.script.into_data());
+        assert_eq!(old.shape.into_data(), new.shape.into_data());
+        assert_eq!(old.labels.into_data(), new.labels.into_data());
+        assert_eq!(old.mask.into_data(), new.mask.into_data());
+    }
+    #[test]
+    #[should_panic(expected = "encoded flags exceed")]
+    fn legacy_batcher_rejects_tab_flags_instead_of_truncating() {
+        let mut a = encode("Mary", &[], &FeatureConfig::default()).unwrap();
+        a.flags[0] |= tessera::internal::AFTER_TAB;
+        let _: ParserBatch<NdArray> = ParserBatcher.batch(vec![a], &Default::default());
+    }
     use burn::backend::NdArray;
 
     use super::*;

@@ -24,6 +24,9 @@ pub struct Config {
     pub generate: Option<GenerateConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detector: Option<DetectorConfig>,
+    /// Explicit reviewed-only source authority, separate from legacy detector inputs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) reviewed_native: Option<crate::reviewed_train::Settings>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
@@ -87,9 +90,66 @@ pub struct FeaturesConfig {
     pub shape_dim: usize,
 }
 
+/// Versioned detector features, independent of country rule selection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DetectorFeatures {
+    /// Original detector flag layout.
+    Legacy23,
+    /// Explicit TAB adjacency in bits 23 and 24.
+    TabCells25,
+}
+impl DetectorFeatures {
+    /// Shared runtime feature contract.
+    pub fn contract(self) -> tessera::internal::DetectorFeatureContract {
+        match self {
+            Self::Legacy23 => tessera::internal::DetectorFeatureContract::Legacy23,
+            Self::TabCells25 => tessera::internal::DetectorFeatureContract::TabCells25,
+        }
+    }
+}
+
+/// Explicit bundle/runtime ADDRESS refinement; absence retains historical serialization.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DetectorPostprocess {
+    /// Preserve the graph's original ADDRESS continuation decoder.
+    AddressContinuationV1,
+    /// Use the separately versioned strict labeled-postal-field refinement.
+    AddressLabeledFieldsV1,
+}
+impl DetectorPostprocess {
+    /// Shared runtime contract used by export, never inferred from model weights or labels.
+    pub fn contract(self) -> tessera::internal::DetectorPostprocessContract {
+        match self {
+            Self::AddressContinuationV1 => {
+                tessera::internal::DetectorPostprocessContract::AddressContinuationV1
+            }
+            Self::AddressLabeledFieldsV1 => {
+                tessera::internal::DetectorPostprocessContract::AddressLabeledFieldsV1
+            }
+        }
+    }
+}
+fn present_detector_postprocess<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<Option<DetectorPostprocess>, D::Error> {
+    DetectorPostprocess::deserialize(d).map(Some)
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct NetConfig {
+    /// Opt-in runtime refinement; absent is the previous architecture-specific decoder.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_detector_postprocess"
+    )]
+    pub detector_postprocess: Option<DetectorPostprocess>,
+    /// Detector-only versioned flags; absence preserves the original 23-bit graph.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detector_features: Option<DetectorFeatures>,
     /// Explicit versioned deployment graph; absence retains the legacy task architecture.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub architecture: Option<String>,
@@ -307,6 +367,21 @@ impl Config {
             self.features.ngram_dim == 48 && self.features.shape_dim == 16,
             "the runtime requires features.ngram_dim=48 and shape_dim=16"
         );
+        ensure!(
+            self.task == Task::Detector || self.net.detector_features.is_none(),
+            "parser must not declare detector feature contracts"
+        );
+        ensure!(
+            self.detector_feature_contract()
+                == tessera::internal::DetectorFeatureContract::Legacy23
+                || self.reviewed_native.is_some(),
+            "TabCells25 requires the reviewed canonical native route; legacy training is unsupported"
+        );
+        ensure!(
+            self.net.detector_postprocess.is_none()
+                || (self.task == Task::Detector && self.context96_rms()),
+            "explicit detector postprocessing requires the Context96 detector graph"
+        );
         let dilations: &[usize] = match self.task {
             Task::Parser => &[1, 2, 4, 8],
             Task::Detector if self.context96_rms() => &tessera::internal::CONTEXT96_RMS_DILATIONS,
@@ -394,6 +469,9 @@ impl Config {
                 );
             }
         }
+        if let Some(reviewed) = &self.reviewed_native {
+            reviewed.validate(self)?;
+        }
         Ok(())
     }
 
@@ -432,6 +510,15 @@ impl Config {
     /// The detector network these settings describe.
     pub fn detector_net_config(&self) -> crate::net::TaggerNetConfig {
         self.net_config(crate::detector::DETECTOR_LABELS)
+            .with_flag_bits(self.detector_feature_contract().flag_bits())
+    }
+
+    /// Contract explicitly selected by the detector config, defaulting to Legacy23.
+    pub fn detector_feature_contract(&self) -> tessera::internal::DetectorFeatureContract {
+        self.net
+            .detector_features
+            .map(DetectorFeatures::contract)
+            .unwrap_or_default()
     }
 
     fn net_config(&self, labels: usize) -> crate::net::TaggerNetConfig {
@@ -455,6 +542,14 @@ pub fn load(path: &Path) -> anyhow::Result<Config> {
         std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
     let config: Config =
         toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
+    ensure!(
+        config.detector_feature_contract() == tessera::internal::DetectorFeatureContract::Legacy23,
+        "TabCells25 is supported only by the reviewed canonical recipe route; legacy fit/eval/export/quantize/inspect config loading is unsupported"
+    );
+    ensure!(
+        config.net.detector_postprocess != Some(DetectorPostprocess::AddressLabeledFieldsV1),
+        "labeled-field postprocessing requires the explicitly paired reviewed route; legacy fit/eval/export/quantize/inspect config loading is unsupported"
+    );
     config
         .validate()
         .with_context(|| format!("validating {}", path.display()))?;
@@ -482,6 +577,57 @@ pub(crate) fn learning_test_config() -> Config {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn legacy_commands_reject_postprocessing_they_do_not_score() {
+        let mut cfg = learning_test_config();
+        cfg.net.architecture = Some(tessera::internal::CONTEXT96_RMS_NAME.into());
+        cfg.net.hidden = 96;
+        cfg.net.dilations = tessera::internal::CONTEXT96_RMS_DILATIONS.to_vec();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        for selected in [None, Some(DetectorPostprocess::AddressContinuationV1)] {
+            cfg.net.detector_postprocess = selected;
+            cfg.validate().unwrap();
+            std::fs::write(&path, toml::to_string(&cfg).unwrap()).unwrap();
+            assert_eq!(load(&path).unwrap().net.detector_postprocess, selected);
+        }
+        cfg.net.detector_postprocess = Some(DetectorPostprocess::AddressLabeledFieldsV1);
+        cfg.validate().unwrap();
+        std::fs::write(&path, toml::to_string(&cfg).unwrap()).unwrap();
+        assert!(
+            load(&path)
+                .unwrap_err()
+                .to_string()
+                .contains("explicitly paired reviewed route")
+        );
+    }
+
+    #[test]
+    fn tab_contract_defaults_legacy_and_requires_reviewed_detector_route() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let mut cfg = load(&root.join("configs/detector-small.toml")).unwrap();
+        assert_eq!(cfg.net.detector_features, None);
+        assert_eq!(cfg.detector_net_config().flag_bits, 23);
+        cfg.net.detector_features = Some(DetectorFeatures::TabCells25);
+        assert_eq!(cfg.detector_net_config().flag_bits, 25);
+        assert_eq!(cfg.parser_net_config().flag_bits, 23);
+        assert!(cfg.validate().is_err());
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("tab.toml");
+        std::fs::write(&path, toml::to_string(&cfg).unwrap()).unwrap();
+        assert!(
+            load(&path)
+                .unwrap_err()
+                .to_string()
+                .contains("legacy fit/eval/export/quantize/inspect")
+        );
+        let invalid: Result<DetectorFeatures, _> = serde_json::from_str("\"anything25\"");
+        assert!(invalid.is_err());
+        cfg = load(&root.join("configs/parser-small.toml")).unwrap();
+        cfg.net.detector_features = Some(DetectorFeatures::Legacy23);
+        assert!(cfg.validate().is_err());
+    }
+
     use super::*;
 
     #[test]
@@ -600,6 +746,29 @@ mod tests {
         cfg.net.architecture = Some("unknown-rms-graph".into());
         assert!(cfg.validate().is_err());
         cfg.net.architecture = Some(tessera::internal::CONTEXT96_RMS_NAME.into());
+        cfg.task = Task::Parser;
+        assert!(cfg.validate().is_err());
+    }
+    #[test]
+    fn postprocess_config_is_opt_in_closed_and_graph_checked() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../configs/detector-shared.toml");
+        let mut cfg = load(&path).unwrap();
+        let old = toml::to_string(&cfg).unwrap();
+        assert!(cfg.net.detector_postprocess.is_none());
+        assert!(!old.contains("detector_postprocess"));
+        let mut json = serde_json::to_value(&cfg).unwrap();
+        json["net"]["detector_postprocess"] = serde_json::Value::Null;
+        assert!(serde_json::from_value::<Config>(json).is_err());
+        assert!(serde_json::from_str::<DetectorPostprocess>("\"future\"").is_err());
+        cfg.net.detector_postprocess = Some(DetectorPostprocess::AddressLabeledFieldsV1);
+        assert!(cfg.validate().is_err());
+        cfg.net.architecture = Some(tessera::internal::CONTEXT96_RMS_NAME.into());
+        cfg.net.dilations = tessera::internal::CONTEXT96_RMS_DILATIONS.to_vec();
+        cfg.net.hidden = 96;
+        cfg.validate().unwrap();
+        let encoded = toml::to_string(&cfg).unwrap();
+        assert!(encoded.contains("address_labeled_fields_v1"));
         cfg.task = Task::Parser;
         assert!(cfg.validate().is_err());
     }
