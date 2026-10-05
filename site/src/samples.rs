@@ -5,12 +5,7 @@
 pub(crate) struct Sample {
     pub(crate) name: &'static str,
     pub(crate) file: &'static str,
-    /// The region the document is written in. The demo leaves the library to infer it; the
-    /// tests check that inference finds what this hint finds.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "only the tests read the hint; the demo infers it")
-    )]
+    /// The document's default phone region; callers can explicitly select automatic inference.
     pub(crate) country_hint: &'static str,
     pub(crate) text: &'static str,
 }

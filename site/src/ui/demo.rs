@@ -142,7 +142,7 @@ impl DemoState {
         DemoState {
             sample: RwSignal::new(0),
             text: RwSignal::new(Arc::from(SAMPLES[0].text)),
-            hint: RwSignal::new(AUTO.to_string()),
+            hint: RwSignal::new(SAMPLES[0].country_hint.to_string()),
             section: RwSignal::new(None),
             editing: RwSignal::new(false),
             answer: RwSignal::new(None),
@@ -237,7 +237,7 @@ impl DemoState {
         self.editing.set(false);
         self.too_long.set(false);
         self.text.set(Arc::from(sample.text));
-        self.hint.set(AUTO.to_string());
+        self.hint.set(sample.country_hint.to_string());
         self.section.set(None);
         self.answer.set(None);
         self.analyze(stream::SCAN);
