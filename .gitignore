@@ -39,6 +39,7 @@ node_modules/
 !/bench/us/source_identity.py
 !/bench/us/silver_dedupe.py
 !/bench/us/diagnose_predictions.py
+!/bench/us/test_diagnose_predictions.py
 !/bench/us/holdout.py
 !/bench/us/check_data.py
 !/bench/us/check_sampling.py

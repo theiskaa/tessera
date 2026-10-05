@@ -83,6 +83,7 @@ test-web-ci:
 # The built package in Node and Bun: loading from disk, UTF-16 offsets, typed errors, and
 # extractContacts on the spec's worked example.
 js-test: wasm
+    node --test bench/web/scoring.test.mjs
     node tessera/js/test/smoke.mjs
     bun tessera/js/test/smoke.mjs
     node tessera/js/test/contacts.mjs
