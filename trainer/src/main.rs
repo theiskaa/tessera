@@ -6,6 +6,7 @@ mod baselines;
 mod bench;
 mod bodies;
 mod check;
+mod cohort_fit;
 mod config;
 mod context_sampling;
 mod context_views;
@@ -17,6 +18,7 @@ mod diagnostic_decode;
 mod diagnostic_operator;
 mod entity_context;
 mod eval;
+mod exact_metrics;
 mod export;
 mod filler;
 mod fixtures;
@@ -37,13 +39,21 @@ mod loss_stability;
 mod memorization;
 mod model_eval;
 mod names;
+mod native_checkpoint;
 mod negatives;
 mod net;
 mod pool_filter;
 mod quantize;
 mod release_candidate;
 mod residual_rms;
+mod reviewed_authored;
+mod reviewed_data;
+mod reviewed_fit;
+mod reviewed_train;
+mod span_scores;
+mod tab_cell_migration;
 mod templates;
+mod token_trace;
 mod train;
 mod training_audit;
 mod training_diagnostic;
@@ -121,6 +131,58 @@ enum Command {
         #[arg(long)]
         preflight: bool,
     },
+    /// Validate a composition of reviewed native datasets without loading model weights.
+    CheckReviewedData {
+        #[arg(long)]
+        manifest: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+    },
+    /// Check canonical reviewed recipe inputs without loading weights or enabling fitting.
+    CheckReviewedRecipe {
+        #[arg(long)]
+        config: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+    },
+    /// Validate or execute a preregistered native candidate fit; never export.
+    ReviewedNativeFit {
+        #[arg(long)]
+        manifest: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+        #[arg(long)]
+        preflight: bool,
+        #[arg(long, requires = "execution_preflight_sha256")]
+        execution_preflight: Option<PathBuf>,
+        #[arg(long, requires = "execution_preflight")]
+        execution_preflight_sha256: Option<String>,
+    },
+    /// Write every raw PERSON/ORG/ADDRESS span and its confidence from a reviewed-fit checkpoint.
+    ScoreSpans {
+        /// The reviewed run's config, which selects features, graph and postprocessor.
+        #[arg(long)]
+        config: PathBuf,
+        /// A native `.mpk` checkpoint written by the reviewed fit.
+        #[arg(long)]
+        checkpoint: PathBuf,
+        /// JSONL rows with `name`, `input` and `expected` spans in UTF-8 bytes.
+        #[arg(long)]
+        documents: PathBuf,
+        /// New JSONL file; existing files are never overwritten.
+        #[arg(long)]
+        out: PathBuf,
+    },
+    /// Prepare or execute a bounded current-graph fit on adjudicated whole US cohorts.
+    DiagnoseCohortFit {
+        #[arg(long)]
+        manifest: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+        /// Check contracts and encodings without initializing a model or optimizer.
+        #[arg(long)]
+        preflight: bool,
+    },
     /// Test learning on a small fixed training subset without scoring development data.
     Memorize {
         #[arg(long)]
@@ -154,6 +216,16 @@ enum Command {
         out: PathBuf,
         #[arg(long, default_value_t = 8)]
         samples: usize,
+    },
+    /// Inspect frozen detector token decisions without optimization or release approval.
+    InspectTokens {
+        #[arg(long)]
+        run: PathBuf,
+        #[arg(long)]
+        gold: PathBuf,
+        /// New JSONL file; existing files are never overwritten.
+        #[arg(long)]
+        out: PathBuf,
     },
     /// Validate detector silver labels and report distinct supervision before training.
     CheckSilver {
@@ -321,6 +393,33 @@ fn main() -> anyhow::Result<()> {
             max_steps,
             backend,
         }),
+        Command::CheckReviewedData { manifest, out } => reviewed_data::preflight(&manifest, &out),
+        Command::CheckReviewedRecipe { config, out } => reviewed_train::preflight(&config, &out),
+        Command::ReviewedNativeFit {
+            manifest,
+            out,
+            preflight,
+            execution_preflight,
+            execution_preflight_sha256,
+        } => {
+            let receipt = match (execution_preflight, execution_preflight_sha256) {
+                (Some(path), Some(sha256)) => Some(reviewed_data::Receipt { path, sha256 }),
+                (None, None) => None,
+                _ => anyhow::bail!("execution receipt path and SHA must be supplied together"),
+            };
+            reviewed_fit::run(&manifest, &out, preflight, receipt)
+        }
+        Command::ScoreSpans {
+            config,
+            checkpoint,
+            documents,
+            out,
+        } => span_scores::run(&config, &checkpoint, &documents, &out),
+        Command::DiagnoseCohortFit {
+            manifest,
+            out,
+            preflight,
+        } => cohort_fit::run(&manifest, &out, preflight),
         Command::Memorize {
             config,
             out,
@@ -348,6 +447,7 @@ fn main() -> anyhow::Result<()> {
             out,
             samples,
         } => loss_diagnostic::run(&run, &gold, &out, samples),
+        Command::InspectTokens { run, gold, out } => token_trace::run(&run, &gold, &out),
         Command::CheckSilver {
             config,
             context_windows,
