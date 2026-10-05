@@ -50,21 +50,23 @@ impl Tessera {
             let range = w.tok_start..w.tok_end;
             let mut probs = detector.forward(&feats[range.clone()])?;
             model::kernels::softmax_rows(&mut probs, detector.labels());
-            let decoded = if detector.uses_address_continuation() {
-                let bounds: Vec<_> = retained[range.clone()]
+            let bounds: Vec<_> = if detector.uses_address_continuation() {
+                retained[range.clone()]
                     .iter()
                     .map(|&i| (tokens[i].start, tokens[i].end))
-                    .collect();
-                model::bio::decode_detector_with_text(
-                    text,
-                    &bounds,
-                    &probs,
-                    &masked[range.clone()],
-                    &breaks[range.clone()],
-                )
+                    .collect()
             } else {
-                model::bio::decode_detector(&probs, &masked[range.clone()], &breaks[range.clone()])
+                Vec::new()
             };
+            let decoded = crate::detector_postprocess::decode(
+                detector.uses_address_continuation(),
+                model.detector_postprocess_contract,
+                text,
+                &bounds,
+                &probs,
+                &masked[range.clone()],
+                &breaks[range.clone()],
+            )?;
             for s in decoded {
                 let (first, last) = (w.tok_start + s.first, w.tok_start + s.last);
                 if chunk::trusted_with_margin(&w, first, last, detector.context_margin())
@@ -183,13 +185,14 @@ fn detector_inputs(
     let rule_spans: Vec<(usize, usize)> = rule_entities.iter().map(|e| (e.start, e.end)).collect();
     let all_feats = stage!(
         Featurize,
-        features::featurize(
+        crate::detector_features::featurize_detector(
             text,
             &tokens,
             &rule_spans,
             None,
             &model.feature_config,
-            mask
+            mask,
+            model.detector_feature_contract
         )
     );
     let retained: Vec<usize> = tokens

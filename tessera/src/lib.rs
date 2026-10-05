@@ -19,6 +19,8 @@ macro_rules! stage {
 
 mod chunk;
 mod detect;
+mod detector_features;
+mod detector_postprocess;
 mod features;
 mod group;
 #[cfg(feature = "markdown")]
@@ -57,14 +59,20 @@ pub mod internal {
     }
 
     pub use crate::chunk::{MAX_ENTITY_TOKENS, Mask, paragraph_breaks};
+    pub use crate::detector_features::{
+        AFTER_TAB, BEFORE_TAB, DetectorFeatureContract, featurize_detector,
+    };
+    pub use crate::detector_postprocess::DetectorPostprocessContract;
     pub use crate::features::{
         FeatureConfig, MAX_NGRAMS_PER_TOKEN, TokenFeatures, featurize, flag, fnv1a, is_content,
         line_ranges,
     };
     pub use crate::group::group;
+    #[cfg(feature = "profile")]
+    pub use crate::model::bio::detector_sequence_labels;
     pub use crate::model::bio::{
-        DETECTOR_KINDS, DetectedSpan, argmax, decode_detector, decode_detector_with_text,
-        detector_label_strings, parser_label_strings,
+        DETECTOR_KINDS, DetectedSpan, argmax, decode_detector, decode_detector_with_labeled_fields,
+        decode_detector_with_text, detector_label_strings, parser_label_strings,
     };
     pub use crate::model::context::{
         CONTEXT96_DECODER_CONTRACT, CONTEXT96_RMS_CONTRACT, CONTEXT96_RMS_DILATIONS,
@@ -80,6 +88,7 @@ pub mod internal {
     pub use crate::rules::email::scan as scan_email;
     pub use crate::rules::phone::scan as scan_phone;
     pub use crate::rules::scan as scan_rules;
+    pub use crate::rules::scan_text_rules;
     pub use crate::token::{Script, Token, TokenClass, tokenize};
 
     /// The intermediates of one `parse_address` call, for the golden-vector gate.
@@ -540,6 +549,8 @@ struct Model {
     parser: Option<model::Tagger>,
     detector: Option<model::Tagger>,
     feature_config: features::FeatureConfig,
+    detector_feature_contract: detector_features::DetectorFeatureContract,
+    detector_postprocess_contract: Option<detector_postprocess::DetectorPostprocessContract>,
     version: String,
 }
 
@@ -586,6 +597,8 @@ impl Tessera {
             model: Some(Model {
                 parser,
                 detector,
+                detector_feature_contract: bundle.manifest.detector_feature_contract,
+                detector_postprocess_contract: bundle.manifest.detector_postprocess_contract,
                 feature_config: bundle.manifest.feature_config,
                 version: bundle.manifest.model_version,
             }),
@@ -602,19 +615,15 @@ impl Tessera {
     pub fn detect(&self, text: &str, query: &Query<'_>) -> Result<Vec<Entity>, Error> {
         match &query.format {
             Format::Text => {
-                let inferred: Vec<&str>;
-                let with_regions: Query<'_>;
-                let query = if query.country_hint.is_empty() {
-                    inferred = rules::region::infer(text);
-                    with_regions = Query {
-                        country_hint: &inferred,
-                        ..query.clone()
-                    };
-                    &with_regions
-                } else {
-                    query
+                let (effective, rule_entities) = stage!(
+                    Rules,
+                    rules::scan_text_rules_with_regions(text, query.country_hint)
+                );
+                let with_regions = Query {
+                    country_hint: &effective,
+                    ..query.clone()
                 };
-                self.detect_masked(text, query, None, Vec::new())
+                self.detect_rule_entities(text, &with_regions, None, rule_entities)
             }
             #[cfg(feature = "markdown")]
             Format::Markdown(options) => self.detect_markdown(text, query, options),
@@ -688,6 +697,7 @@ impl Tessera {
 
     /// `detect` where only the bytes in `mask` may hold entities (`None` is plain text), with
     /// `linked` rule entities from link destinations winning over scanned ones they overlap.
+    #[cfg(feature = "markdown")]
     fn detect_masked(
         &self,
         text: &str,
@@ -700,6 +710,16 @@ impl Tessera {
             rules::retain_in_mask(&mut scanned, mask);
             rules::merge_links(scanned, linked)
         });
+        self.detect_rule_entities(text, query, mask, rule_entities)
+    }
+
+    fn detect_rule_entities(
+        &self,
+        text: &str,
+        query: &Query<'_>,
+        mask: Option<&chunk::Mask>,
+        rule_entities: Vec<Entity>,
+    ) -> Result<Vec<Entity>, Error> {
         let mut out: Vec<Entity> = rule_entities
             .iter()
             .filter(|e| self.kinds.contains(e.kind))

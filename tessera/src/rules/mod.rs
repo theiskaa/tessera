@@ -28,6 +28,25 @@ pub fn scan(text: &str, country_hint: &[&str]) -> Vec<Entity> {
     out
 }
 
+/// Run the rules with the same hint selection as public plain-text detection.
+/// An empty hint invokes document region inference; it is not a literal empty-hint scan.
+pub fn scan_text_rules(text: &str, country_hint: &[&str]) -> Vec<Entity> {
+    scan_text_rules_with_regions(text, country_hint).1
+}
+
+pub(crate) fn scan_text_rules_with_regions<'a>(
+    text: &str,
+    country_hint: &[&'a str],
+) -> (Vec<&'a str>, Vec<Entity>) {
+    let effective = if country_hint.is_empty() {
+        region::infer(text)
+    } else {
+        country_hint.to_vec()
+    };
+    let entities = scan(text, &effective);
+    (effective, entities)
+}
+
 /// Email and phone entities from `mailto:` and `tel:` link destinations: each spans the
 /// visible link text, and its `normalized` value and region come from the destination, read by
 /// the same scanners as running text. A `mailto:` with several addresses yields the first only,
@@ -66,6 +85,7 @@ pub(crate) fn from_links(links: &[LinkTarget], country_hint: &[&str]) -> Vec<Ent
 /// Scanned entities plus link entities, sorted by start and non-overlapping. A link entity wins
 /// over any scanned entity it overlaps, since the destination is where a click goes, and of two
 /// overlapping link entities the innermost wins.
+#[cfg(feature = "markdown")]
 pub(crate) fn merge_links(mut scanned: Vec<Entity>, mut linked: Vec<Entity>) -> Vec<Entity> {
     if linked.is_empty() {
         return scanned;
@@ -109,6 +129,7 @@ fn decode_percent(s: &str) -> String {
 }
 
 /// Drops rule entities the mask does not fully contain; plain text has no mask.
+#[cfg(feature = "markdown")]
 pub(crate) fn retain_in_mask(entities: &mut Vec<Entity>, mask: Option<&crate::chunk::Mask>) {
     if let Some(mask) = mask {
         entities.retain(|e| mask.contains(e.start, e.end));
@@ -269,5 +290,163 @@ mod link_tests {
             merged.iter().map(|e| e.start).collect::<Vec<_>>(),
             [10, 300]
         );
+    }
+}
+
+#[cfg(all(test, feature = "phone-metadata"))]
+mod text_input_policy_tests {
+    use super::*;
+    use crate::{Config, Format, Kind, KindSet, Query, Tessera};
+
+    type Record = (
+        Kind,
+        usize,
+        usize,
+        Option<String>,
+        Option<String>,
+        u32,
+        bool,
+    );
+
+    fn records(entities: &[Entity]) -> Vec<Record> {
+        entities
+            .iter()
+            .map(|e| {
+                (
+                    e.kind,
+                    e.start,
+                    e.end,
+                    e.normalized.clone(),
+                    e.region.clone(),
+                    e.confidence.to_bits(),
+                    e.review_recommended,
+                )
+            })
+            .collect()
+    }
+
+    fn instance(kinds: KindSet) -> Tessera {
+        let result = Tessera::load(
+            &[],
+            Config {
+                kinds,
+                expected_checksum: None,
+            },
+        )
+        .unwrap();
+        assert!(result.model_version().is_none());
+        result
+    }
+
+    #[test]
+    fn public_text_explicit_and_auto_rules_keep_unicode_offsets_and_regions() {
+        let text = "é ☎ +1 202 555 0199; (202) 555-0199; a@example.test";
+        let engine = instance(Kind::Email | Kind::Phone);
+        for hints in [&["US"][..], &[][..]] {
+            let effective = if hints.is_empty() {
+                region::infer(text)
+            } else {
+                hints.to_vec()
+            };
+            let old_rules = scan(text, &effective);
+            let selected = scan_text_rules(text, hints);
+            let actual = engine
+                .detect(
+                    text,
+                    &Query {
+                        country_hint: hints,
+                        include_uncertain: true,
+                        format: Format::Text,
+                    },
+                )
+                .unwrap();
+            assert_eq!(records(&selected), records(&old_rules));
+            assert_eq!(records(&actual), records(&old_rules));
+            assert_eq!(
+                actual
+                    .iter()
+                    .filter(|e| e.kind == Kind::Phone)
+                    .map(|e| e.text(text))
+                    .collect::<Vec<_>>(),
+                ["+1 202 555 0199", "(202) 555-0199"]
+            );
+            for entity in actual {
+                assert!(text.get(entity.start..entity.end).is_some());
+                if entity.kind == Kind::Phone {
+                    assert_eq!(entity.region.as_deref(), Some("US"));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn requested_output_kinds_do_not_remove_rules_from_input_features() {
+        use crate::features::{FeatureConfig, featurize, flag};
+        let text = "Desk (202) 555-0199 and a@example.test";
+        let full = scan_text_rules(text, &["US"]);
+        let tokens = crate::token::tokenize(text);
+        let spans: Vec<_> = full.iter().map(|e| (e.start, e.end)).collect();
+        let fc = FeatureConfig {
+            ngram_sizes: vec![2, 3, 4],
+            hash_buckets: 32768,
+            hash_seed: 0,
+        };
+        let features = featurize(text, &tokens, &spans, None, &fc, None);
+        assert_eq!(full.len(), 2);
+        for selected in [Kind::Email, Kind::Phone] {
+            let found = instance(selected.into())
+                .detect(
+                    text,
+                    &Query {
+                        country_hint: &["US"],
+                        include_uncertain: true,
+                        format: Format::Text,
+                    },
+                )
+                .unwrap();
+            assert_eq!(found.len(), 1);
+            assert_eq!(found[0].kind, selected);
+            assert_eq!(records(&full), records(&scan_text_rules(text, &["US"])));
+            for rule in &full {
+                assert!(
+                    tokens
+                        .iter()
+                        .zip(&features)
+                        .filter(|(t, _)| rule.start < t.end && t.start < rule.end)
+                        .all(|(_, f)| f.flags & flag::IN_RULE_SPAN != 0)
+                );
+            }
+        }
+    }
+
+    #[cfg(feature = "markdown")]
+    #[test]
+    fn markdown_keeps_visible_region_and_link_mask_while_hidden_phone_stays_hidden() {
+        let text =
+            "Germany\n030 23125 480\n\n```text\n+44 20 7946 0958\n```\n\n[desk](tel:+493023125480)";
+        let found = instance(Kind::Email | Kind::Phone)
+            .detect(
+                text,
+                &Query {
+                    country_hint: &[],
+                    include_uncertain: true,
+                    format: Format::Markdown(crate::MarkdownOptions::default()),
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            found
+                .iter()
+                .filter(|e| e.kind == Kind::Phone)
+                .map(|e| e.text(text))
+                .collect::<Vec<_>>(),
+            ["030 23125 480", "desk"]
+        );
+        assert!(found.iter().all(|e| e.region.as_deref() == Some("DE")));
+        assert_eq!(
+            found.last().unwrap().normalized.as_deref(),
+            Some("+493023125480")
+        );
+        assert!(!found.iter().any(|e| e.text(text).contains("+44")));
     }
 }
