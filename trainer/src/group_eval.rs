@@ -40,6 +40,10 @@ pub struct GrouperCounts {
     pub wrong_ownership_fields: usize,
     pub high_confidence_predicted_cards: usize,
     pub high_confidence_exact_cards: usize,
+    /// Exact entity matches, including fields left unassigned by the grouper.
+    pub detection_by_kind: BTreeMap<String, crate::exact_metrics::Counts>,
+    /// Exact `(contact anchor, kind, start, end)` matches for assigned fields.
+    pub contact_fields_by_kind: BTreeMap<String, crate::exact_metrics::Counts>,
 }
 
 impl GrouperCounts {
@@ -63,6 +67,18 @@ impl GrouperCounts {
         self.high_confidence_exact_cards += other.high_confidence_exact_cards;
         for (kind, count) in &other.false_assigned_by_kind {
             *self.false_assigned_by_kind.entry(kind.clone()).or_default() += count;
+        }
+        for (kind, count) in &other.detection_by_kind {
+            self.detection_by_kind
+                .entry(kind.clone())
+                .or_default()
+                .add(count);
+        }
+        for (kind, count) in &other.contact_fields_by_kind {
+            self.contact_fields_by_kind
+                .entry(kind.clone())
+                .or_default()
+                .add(count);
         }
     }
 }
@@ -224,6 +240,7 @@ fn gold_case(case: &GrouperCase) -> anyhow::Result<GoldCase> {
 /// another contact is wrong, one dropped is missed), and every gold contact is exact or not.
 fn score(case: &GoldCase, predicted: &Extraction, counts: &mut GrouperCounts) {
     counts.cases += 1;
+    score_fields(case, predicted, counts);
     let mut predicted_by_anchor: HashMap<Span, BTreeSet<Span>> = HashMap::new();
     let mut owner_of: HashMap<Span, Span> = HashMap::new();
     let mut predicted_cards = Vec::with_capacity(predicted.contacts.len());
@@ -312,6 +329,61 @@ fn score(case: &GoldCase, predicted: &Extraction, counts: &mut GrouperCounts) {
                     .or_default() += 1;
             }
         }
+    }
+}
+
+fn score_fields(case: &GoldCase, predicted: &Extraction, counts: &mut GrouperCounts) {
+    let gold_entities: Vec<_> = case.entities.iter().map(span).collect();
+    let predicted_entities: Vec<_> = predicted
+        .contacts
+        .iter()
+        .flat_map(|contact| contact.entities())
+        .chain(&predicted.unassigned)
+        .map(span)
+        .collect();
+    let gold_fields: Vec<_> = case
+        .contacts
+        .iter()
+        .flat_map(|(anchor, members)| members.iter().map(move |member| (Some(*anchor), *member)))
+        .collect();
+    let predicted_fields: Vec<_> = predicted
+        .contacts
+        .iter()
+        .flat_map(|contact| {
+            let anchor = contact.person.as_ref().or(contact.org.as_ref()).map(span);
+            contact.entities().map(move |entity| (anchor, span(entity)))
+        })
+        .collect();
+    let detection_matches = crate::exact_metrics::matches(&gold_entities, &predicted_entities);
+    let field_matches = crate::exact_metrics::matches(&gold_fields, &predicted_fields);
+    for kind in Kind::ALL {
+        let kind = kind.as_str();
+        counts
+            .detection_by_kind
+            .entry(kind.to_string())
+            .or_default()
+            .add(&crate::exact_metrics::Counts {
+                tp: predicted_entities
+                    .iter()
+                    .zip(&detection_matches)
+                    .filter(|(s, matched)| s.0 == kind && **matched)
+                    .count(),
+                predicted: predicted_entities.iter().filter(|s| s.0 == kind).count(),
+                gold: gold_entities.iter().filter(|s| s.0 == kind).count(),
+            });
+        counts
+            .contact_fields_by_kind
+            .entry(kind.to_string())
+            .or_default()
+            .add(&crate::exact_metrics::Counts {
+                tp: predicted_fields
+                    .iter()
+                    .zip(&field_matches)
+                    .filter(|((_, s), matched)| s.0 == kind && **matched)
+                    .count(),
+                predicted: predicted_fields.iter().filter(|(_, s)| s.0 == kind).count(),
+                gold: gold_fields.iter().filter(|(_, s)| s.0 == kind).count(),
+            });
     }
 }
 
@@ -429,6 +501,32 @@ fn false_fields_table(c: &GrouperCounts) -> String {
     out
 }
 
+fn field_table(counts: &GrouperCounts) -> String {
+    let mut out = String::from(
+        "| Kind | Mode | TP | FP | FN | Precision | Recall | F1 |\n| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |\n",
+    );
+    for kind in Kind::ALL {
+        for (mode, fields) in [
+            ("entities", &counts.detection_by_kind),
+            ("contact fields", &counts.contact_fields_by_kind),
+        ] {
+            let c = fields.get(kind.as_str()).cloned().unwrap_or_default();
+            let (p, r, f) = c.prf();
+            out.push_str(&format!(
+                "| {} | {mode} | {} | {} | {} | {:.2}% | {:.2}% | {:.2}% |\n",
+                kind.as_str(),
+                c.tp,
+                c.predicted - c.tp,
+                c.gold - c.tp,
+                p * 100.0,
+                r * 100.0,
+                f * 100.0
+            ));
+        }
+    }
+    out
+}
+
 /// The grouping report: the fixture table, the known-hard table when given, and what the
 /// end-to-end numbers include.
 pub fn render_markdown(
@@ -439,10 +537,11 @@ pub fn render_markdown(
     manifest_sha256: Option<&str>,
 ) -> String {
     let mut out = format!(
-        "# Contact grouping\n\nMetric version 3. Bundle `{bundle}`; SHA-256 `{bundle_sha256}`. Corpus manifest SHA-256 `{}`. End-to-end query: `Query::default()` (no country hint). Exact cards match `(kind, start, end)` member sets one-to-one. Extra assigned fields include members of false-anchor cards. High confidence means contact confidence ≥0.90.\n\n{}",
+        "# Contact grouping\n\nMetric version 4. Bundle `{bundle}`; SHA-256 `{bundle_sha256}`. Corpus manifest SHA-256 `{}`. End-to-end query: `Query::default()` (no country hint). Exact cards match `(kind, start, end)` member sets one-to-one. Extra assigned fields include members of false-anchor cards. High confidence means contact confidence ≥0.90.\n\n{}",
         manifest_sha256.unwrap_or("not provided"),
         family_table(report)
     );
+    out.push_str(&format!("\n## Exact fields, end to end\n\n{}\nEntity scores include unassigned fields. Contact-field scores require the correct exact anchor and field span; a wrong owner counts as both a false positive and a miss. Empty kinds score zero and cannot establish accuracy.\n", field_table(&report.total_end_to_end)));
     if !report.by_country.is_empty() {
         out.push_str(&format!(
             "\n## By country\n\n{}",
@@ -624,6 +723,15 @@ mod tests {
         score(&gold, &predicted, &mut counts);
         assert_eq!(counts.wrong_ownership_fields, 1);
         assert_eq!(counts.false_assigned_fields, 0);
+        assert_eq!(counts.detection_by_kind["phone"].tp, 1);
+        assert_eq!(
+            counts.contact_fields_by_kind["phone"],
+            crate::exact_metrics::Counts {
+                tp: 0,
+                predicted: 1,
+                gold: 1
+            }
+        );
     }
 
     #[test]
@@ -665,6 +773,53 @@ mod tests {
             ),
             (1, 1)
         );
+        assert_eq!(
+            counts.detection_by_kind["person"].prf(),
+            (0.5, 1.0, 2.0 / 3.0)
+        );
+        assert_eq!(counts.contact_fields_by_kind["person"].tp, 1);
+        assert_eq!(counts.contact_fields_by_kind["person"].predicted, 2);
+    }
+
+    #[test]
+    fn missing_unassigned_entity_is_a_detection_miss() {
+        let phone = entity(Kind::Phone, 0, 10);
+        let case = GoldCase {
+            text: String::new(),
+            entities: vec![phone],
+            contacts: vec![],
+        };
+        let predicted = Extraction {
+            contacts: vec![],
+            unassigned: vec![],
+        };
+        let mut counts = GrouperCounts::default();
+        score(&case, &predicted, &mut counts);
+        assert_eq!(counts.correct, 1);
+        assert_eq!(counts.detection_by_kind["phone"].gold, 1);
+        assert_eq!(counts.detection_by_kind["phone"].tp, 0);
+        assert_eq!(counts.contact_fields_by_kind["phone"].gold, 0);
+    }
+
+    #[test]
+    fn one_character_boundary_error_costs_detection_and_contact_recall() {
+        let person = entity(Kind::Person, 0, 4);
+        let predicted = Extraction {
+            contacts: vec![contact(entity(Kind::Person, 0, 3), vec![])],
+            unassigned: vec![],
+        };
+        let mut counts = GrouperCounts::default();
+        score(&gold(&[person]), &predicted, &mut counts);
+        for fields in [&counts.detection_by_kind, &counts.contact_fields_by_kind] {
+            assert_eq!(
+                fields["person"],
+                crate::exact_metrics::Counts {
+                    tp: 0,
+                    predicted: 1,
+                    gold: 1
+                }
+            );
+        }
     }
 
     #[test]

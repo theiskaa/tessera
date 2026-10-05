@@ -475,9 +475,12 @@ fn score_spans(group: &mut Group, predicted: &[Span], gold: &[Span], country: &s
     for g in gold {
         group.add(&g.kind, country, |c| c.gold += 1);
     }
-    for p in predicted {
+    for (p, exact) in predicted
+        .iter()
+        .zip(crate::exact_metrics::matches(gold, predicted))
+    {
         group.add(&p.kind, country, |c| c.pred += 1);
-        if gold.contains(p) {
+        if exact {
             group.add(&p.kind, country, |c| c.tp += 1);
         }
         let overlaps = gold
@@ -485,7 +488,7 @@ fn score_spans(group: &mut Group, predicted: &[Span], gold: &[Span], country: &s
             .any(|g| g.kind == p.kind && p.start < g.end && g.start < p.end);
         if overlaps {
             group.add(&p.kind, country, |c| c.boundary_candidates += 1);
-            if gold.contains(p) {
+            if exact {
                 group.add(&p.kind, country, |c| c.boundary_hits += 1);
             }
         }
@@ -647,6 +650,27 @@ mod tests {
         assert_eq!(prf(0, 0, 0), (0.0, 0.0, 0.0));
         assert_eq!(prf(0, 3, 0), (0.0, 0.0, 0.0));
         assert_eq!(prf(3, 3, 3), (1.0, 1.0, 1.0));
+    }
+
+    #[test]
+    fn duplicate_exact_predictions_reduce_precision() {
+        let person = Span {
+            kind: "person".into(),
+            start: 0,
+            end: 4,
+        };
+        let mut group = Group::default();
+        score_spans(
+            &mut group,
+            &[person.clone(), person.clone()],
+            &[person],
+            "US",
+        );
+        let counts = group.overall.json();
+        assert_eq!(counts["tp"], 1);
+        assert_eq!(counts["precision"], 0.5);
+        assert_eq!(counts["recall"], 1.0);
+        assert_eq!(boundary(&group.overall), 0.5);
     }
 }
 

@@ -103,6 +103,7 @@ fn parse_gold(path: &Path, text: &str) -> anyhow::Result<Vec<Case>> {
             i + 1,
             g.name
         );
+        let mut spans = BTreeSet::new();
         for s in &g.expected {
             let slice = g.input.get(s.start..s.end);
             if s.start >= s.end
@@ -119,6 +120,15 @@ fn parse_gold(path: &Path, text: &str) -> anyhow::Result<Vec<Case>> {
                     s.end
                 );
             }
+            anyhow::ensure!(
+                spans.insert((s.kind.as_str(), s.start, s.end)),
+                "{}: `{}` has a duplicate {} span {}..{}",
+                path.display(),
+                g.name,
+                s.kind,
+                s.start,
+                s.end
+            );
         }
         let mut slices = BTreeMap::from([("country", g.country.clone()), ("doc_type", g.doc_type)]);
         if let Some(host) = g.source_host.filter(|host| !host.is_empty()) {
@@ -576,16 +586,13 @@ fn score_doc(text: &str, gold: &[Span], predicted: &[Span]) -> Vec<(String, Stri
             bump(&g.kind, script, &|t| t.lenient_gold += 1);
         }
     }
-    let mut exact_used = vec![false; gold.len()];
-    for p in predicted {
+    for (p, exact) in predicted
+        .iter()
+        .zip(crate::exact_metrics::matches(gold, predicted))
+    {
         let script = span_script(text.get(p.start..p.end).unwrap_or("")).to_string();
         bump(&p.kind, script.clone(), &|t| t.predicted += 1);
-        if let Some((index, _)) = gold
-            .iter()
-            .enumerate()
-            .find(|(index, g)| !exact_used[*index] && *g == p)
-        {
-            exact_used[index] = true;
+        if exact {
             bump(&p.kind, script.clone(), &|t| t.exact += 1);
         }
         if gold.iter().any(|g| overlaps(p, g)) {
@@ -641,6 +648,7 @@ pub fn score(cases: &[Case], predictions: &Predictions) -> Value {
         BTreeMap::new();
     let mut by_script: BTreeMap<String, BTreeMap<String, Tally>> = BTreeMap::new();
     let mut fp_docs: BTreeMap<String, usize> = BTreeMap::new();
+    let mut exact_fp_docs: BTreeMap<String, usize> = BTreeMap::new();
     for (case, predicted) in cases.iter().zip(&predictions.spans) {
         for (kind, script, t) in score_doc(&case.input, &case.expected, predicted) {
             overall.add(&t);
@@ -662,7 +670,15 @@ pub fn score(cases: &[Case], predictions: &Predictions) -> Value {
                     .add(&t);
             }
         }
+        let exact = crate::exact_metrics::matches(&case.expected, predicted);
         for kind in KINDS {
+            if predicted
+                .iter()
+                .zip(&exact)
+                .any(|(p, matched)| p.kind == kind && !matched)
+            {
+                *exact_fp_docs.entry(kind.to_string()).or_default() += 1;
+            }
             let false_positive = predicted
                 .iter()
                 .any(|p| p.kind == kind && !case.expected.iter().any(|g| overlaps(p, g)));
@@ -686,6 +702,10 @@ pub fn score(cases: &[Case], predictions: &Predictions) -> Value {
         "by_script": Value::Object(by_script.iter().map(|(s, kinds)| (s.clone(), kinds_json(kinds))).collect()),
         "doc_false_positive_rate": Value::Object(KINDS.iter().map(|k| {
             (k.to_string(), json!(round4(*fp_docs.get(*k).unwrap_or(&0) as f64 / docs)))
+        }).collect()),
+        "doc_false_positive_rate_definition": "prediction has no same-kind overlapping gold span",
+        "doc_exact_false_positive_rate": Value::Object(KINDS.iter().map(|k| {
+            (k.to_string(), json!(round4(*exact_fp_docs.get(*k).unwrap_or(&0) as f64 / docs)))
         }).collect()),
     })
 }
@@ -794,7 +814,7 @@ pub fn script_sections(systems: &[Value]) -> String {
     out
 }
 
-/// The document-level false-positive table, one row per system.
+/// Exact document-level false positives, including boundary mistakes and duplicates.
 pub fn fp_table(systems: &[Value]) -> String {
     let mut out = format!(
         "| system | {} |\n| --- |{}\n",
@@ -805,7 +825,7 @@ pub fn fp_table(systems: &[Value]) -> String {
         let row: Vec<String> = KINDS
             .iter()
             .map(|k| {
-                s["doc_false_positive_rate"][*k]
+                s["doc_exact_false_positive_rate"][*k]
                     .as_f64()
                     .map_or("–".into(), pct)
             })
@@ -1572,6 +1592,44 @@ mod tests {
             1
         );
         assert_eq!(s["by_kind"]["person"]["exact"]["precision"], 0.5);
+    }
+
+    #[test]
+    fn exact_document_false_positives_include_boundaries_and_duplicates() {
+        let cases = vec![Case {
+            name: "boundary".into(),
+            input: "Jane".into(),
+            expected: vec![span("person", 0, 4)],
+            country: "US".into(),
+            slices: BTreeMap::new(),
+        }];
+        for spans in [
+            vec![span("person", 0, 3)],
+            vec![span("person", 0, 4), span("person", 0, 4)],
+        ] {
+            let scores = score(
+                &cases,
+                &Predictions {
+                    system: "stub".into(),
+                    spans: vec![spans],
+                },
+            );
+            assert_eq!(scores["doc_false_positive_rate"]["person"], 0.0);
+            assert_eq!(scores["doc_exact_false_positive_rate"]["person"], 1.0);
+        }
+    }
+
+    #[test]
+    fn duplicate_gold_spans_are_rejected() {
+        let row = json!({"name": "duplicate", "input": "Jane", "country": "US", "doc_type": "control", "expected": [
+            {"kind": "person", "start": 0, "end": 4}, {"kind": "person", "start": 0, "end": 4}
+        ]});
+        assert!(
+            parse_gold(Path::new("control.jsonl"), &row.to_string())
+                .unwrap_err()
+                .to_string()
+                .contains("duplicate person span")
+        );
     }
 
     #[test]
