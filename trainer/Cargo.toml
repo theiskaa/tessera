@@ -14,7 +14,7 @@ tessera = { workspace = true, features = ["profile"] }
 anyhow.workspace = true
 thiserror.workspace = true
 serde.workspace = true
-serde_json.workspace = true
+serde_json = { workspace = true, features = ["float_roundtrip"] }
 clap = { version = "4", features = ["derive"] }
 toml = "1"
 flate2 = "1"

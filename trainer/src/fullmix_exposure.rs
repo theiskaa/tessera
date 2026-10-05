@@ -199,7 +199,7 @@ impl Accumulated {
 
 /// Normalizes native numeric JSON through the same parser as pinned references.
 pub(crate) fn reference_representation(value: &Value) -> anyhow::Result<Value> {
-    // serdeJSON's default decimal parser need not recover the original native f64 bits.
+    // Pinned references are text; comparing through the parser keeps both sides in one form.
     Ok(serde_json::from_slice(&serde_json::to_vec(value)?)?)
 }
 
@@ -469,15 +469,7 @@ mod tests {
         ] {
             let fresh = json!(f64::from_bits(bits));
             let parsed: Value = serde_json::from_str(token).unwrap();
-            assert_ne!(fresh, parsed);
-            assert_eq!(
-                fresh
-                    .as_f64()
-                    .unwrap()
-                    .to_bits()
-                    .abs_diff(parsed.as_f64().unwrap().to_bits()),
-                1
-            );
+            assert_eq!(parsed.as_f64().unwrap().to_bits(), bits);
             assert_eq!(serde_json::to_string(&fresh).unwrap(), token);
             assert_eq!(reference_representation(&fresh).unwrap(), parsed);
         }
