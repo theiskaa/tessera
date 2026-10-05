@@ -40,6 +40,9 @@ pub(crate) struct Manifest {
     pub feature_config: FeatureConfig,
     pub max_ngrams_per_token: usize,
     pub flag_bits: usize,
+    pub detector_feature_contract: crate::detector_features::DetectorFeatureContract,
+    pub detector_postprocess_contract:
+        Option<crate::detector_postprocess::DetectorPostprocessContract>,
     pub script_rows: usize,
     pub shape_rows: usize,
     pub phone_metadata_version: String,
@@ -355,6 +358,30 @@ impl Manifest {
                     .ok_or(Error::BundleInvalid)
             })
             .collect::<Result<Vec<_>, _>>()?;
+        let detector_feature_contract = if m.get("detector_feature_config").is_some() {
+            let df = nested(m, "detector_feature_config")?;
+            let name = df
+                .get("contract")
+                .and_then(Json::as_str)
+                .ok_or(Error::BundleInvalid)?;
+            let width = df
+                .get("flag_bits")
+                .and_then(Json::as_usize)
+                .ok_or(Error::BundleInvalid)?;
+            crate::detector_features::DetectorFeatureContract::from_name_and_width(name, width)
+                .ok_or(Error::UnsupportedVersion)?
+        } else {
+            crate::detector_features::DetectorFeatureContract::Legacy23
+        };
+        let detector_postprocess_contract = match m.get("detector_postprocess_contract") {
+            None => None,
+            Some(value) => Some(
+                crate::detector_postprocess::DetectorPostprocessContract::from_name(
+                    value.as_str().ok_or(Error::BundleInvalid)?,
+                )
+                .ok_or(Error::UnsupportedVersion)?,
+            ),
+        };
         Ok(Manifest {
             format: text(m, "format")?,
             model_version: text(m, "model_version")?,
@@ -376,6 +403,8 @@ impl Manifest {
             },
             max_ngrams_per_token: num("max_ngrams_per_token")?,
             flag_bits: num("flag_bits")?,
+            detector_feature_contract,
+            detector_postprocess_contract,
             script_rows: num("script_rows")?,
             shape_rows: num("shape_rows")?,
             phone_metadata_version: text(m, "phone_metadata_version")?,
@@ -392,12 +421,21 @@ impl Manifest {
 
     /// The layout constants this library was built with, and sane feature settings.
     fn check_supported(&self) -> Result<(), Error> {
+        if self.detector_postprocess_contract.is_some()
+            && (!self.context96_rms || !self.nets.iter().any(|net| net == "detector"))
+        {
+            return Err(Error::UnsupportedVersion);
+        }
         let shapes_match = self.max_ngrams_per_token == crate::features::MAX_NGRAMS_PER_TOKEN
             && self.flag_bits == super::FLAG_BITS
             && self.script_rows == super::SCRIPT_ROWS
             && self.shape_rows == super::SHAPE_ROWS
             && self.parser_labels.len() == super::PARSER_LABELS;
-        if self.context96_rms && !self.nets.iter().any(|net| net == "detector") {
+        if (self.context96_rms
+            || self.detector_feature_contract
+                != crate::detector_features::DetectorFeatureContract::Legacy23)
+            && !self.nets.iter().any(|net| net == "detector")
+        {
             return Err(Error::BundleInvalid);
         }
         if !shapes_match {
@@ -420,6 +458,83 @@ impl Manifest {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn tab_contract_is_explicit_and_parser_flags_remain_legacy() {
+        use crate::detector_features::DetectorFeatureContract;
+        let meta = serde_json::json!({
+            "format":"1","model_version":"0.2.1","nets":"parser,detector",
+            "detector_labels":"[]","parser_labels":serde_json::to_string(&crate::model::bio::parser_label_strings()).unwrap(),
+            "feature_config":serde_json::json!({"ngram_sizes":[2,3,4],"hash_buckets":32768,"hash_seed":0,"max_ngrams_per_token":64,"flag_bits":23,"script_rows":13,"shape_rows":64}).to_string(),
+            "phone_metadata_version":"x","supported_regions":"[]","experimental_regions":"[]","training_snapshot":"x","report_url":""
+        });
+        let parse =
+            |v: &serde_json::Value| Manifest::from_json(&Json::parse(&v.to_string()).unwrap());
+        let old = parse(&meta).unwrap();
+        old.check_supported().unwrap();
+        assert_eq!(
+            old.detector_feature_contract,
+            DetectorFeatureContract::Legacy23
+        );
+        let mut tab = meta.clone();
+        tab["detector_feature_config"]=serde_json::json!({"contract":DetectorFeatureContract::TabCells25.name(),"flag_bits":25}).to_string().into();
+        let new = parse(&tab).unwrap();
+        new.check_supported().unwrap();
+        assert_eq!(new.flag_bits, 23);
+        assert_eq!(new.detector_feature_contract.flag_bits(), 25);
+        tab["detector_feature_config"]=serde_json::json!({"contract":DetectorFeatureContract::TabCells25.name(),"flag_bits":23}).to_string().into();
+        assert!(parse(&tab).is_err());
+        tab["detector_feature_config"] = serde_json::json!({"contract":"unknown","flag_bits":25})
+            .to_string()
+            .into();
+        assert!(parse(&tab).is_err());
+        tab = meta;
+        tab["feature_config"]=serde_json::json!({"ngram_sizes":[2,3,4],"hash_buckets":32768,"hash_seed":0,"max_ngrams_per_token":64,"flag_bits":25,"script_rows":13,"shape_rows":64}).to_string().into();
+        assert!(parse(&tab).unwrap().check_supported().is_err());
+    }
+
+    #[test]
+    fn postprocess_metadata_is_closed_and_absent_keeps_existing_default() {
+        let meta = serde_json::json!({"format":"2","model_version":"0.3.0","nets":"parser,detector",
+            "detector_architecture":crate::model::context::CONTEXT96_RMS_CONTRACT,
+            "detector_labels":"[]","parser_labels":serde_json::to_string(&crate::model::bio::parser_label_strings()).unwrap(),
+            "feature_config":serde_json::json!({"ngram_sizes":[2,3,4],"hash_buckets":32768,"hash_seed":0,"max_ngrams_per_token":64,"flag_bits":23,"script_rows":13,"shape_rows":64}).to_string(),
+            "phone_metadata_version":"x","supported_regions":"[]","experimental_regions":"[]","training_snapshot":"x","report_url":""});
+        let parse =
+            |v: &serde_json::Value| Manifest::from_json(&Json::parse(&v.to_string()).unwrap());
+        let old = parse(&meta).unwrap();
+        old.check_supported().unwrap();
+        assert_eq!(old.detector_postprocess_contract, None);
+        for name in ["address_continuation_v1", "address_labeled_fields_v1"] {
+            let mut selected = meta.clone();
+            selected["detector_postprocess_contract"] = serde_json::json!(name);
+            let parsed = parse(&selected).unwrap();
+            parsed.check_supported().unwrap();
+            assert_eq!(parsed.detector_postprocess_contract.unwrap().name(), name);
+            for bad in [
+                serde_json::Value::Null,
+                serde_json::json!(true),
+                serde_json::json!(0),
+                serde_json::json!({}),
+                serde_json::json!("unknown"),
+                serde_json::json!(" address_labeled_fields_v1"),
+            ] {
+                let mut malformed = meta.clone();
+                malformed["detector_postprocess_contract"] = bad;
+                assert!(parse(&malformed).is_err());
+            }
+            selected["format"] = serde_json::json!("1");
+            selected
+                .as_object_mut()
+                .unwrap()
+                .remove("detector_architecture");
+            assert!(parse(&selected).unwrap().check_supported().is_err());
+            let mut parser_only = meta.clone();
+            parser_only["nets"] = serde_json::json!("parser");
+            parser_only["detector_postprocess_contract"] = serde_json::json!(name);
+            assert!(parse(&parser_only).unwrap().check_supported().is_err());
+        }
+    }
+
     use super::*;
 
     fn bundle_bytes() -> Vec<u8> {
@@ -485,6 +600,9 @@ mod tests {
                 feature_config: FeatureConfig::default(),
                 max_ngrams_per_token: crate::features::MAX_NGRAMS_PER_TOKEN,
                 flag_bits: super::super::FLAG_BITS,
+                detector_feature_contract:
+                    crate::detector_features::DetectorFeatureContract::Legacy23,
+                detector_postprocess_contract: None,
                 script_rows: super::super::SCRIPT_ROWS,
                 shape_rows: super::super::SHAPE_ROWS,
                 phone_metadata_version: String::new(),

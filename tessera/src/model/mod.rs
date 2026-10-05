@@ -4,6 +4,7 @@
 //! golden vectors keep the two in agreement.
 
 mod address_continuation;
+mod address_field_boundaries;
 pub(crate) mod bio;
 pub(crate) mod context;
 pub(crate) mod json;
@@ -65,6 +66,7 @@ const SHAPE_DIM: usize = 8;
 /// The widest hidden layer a bundle may declare, which bounds the memory a bundle can ask for.
 const MAX_HIDDEN: usize = 1024;
 /// Width of one token's input to the projection.
+#[cfg(test)]
 const INPUT_DIM: usize = NGRAM_DIM + SCRIPT_DIM + SHAPE_DIM + FLAG_BITS;
 
 /// The int8 n-gram table `<net>.embed.ngram`: one row per hash bucket plus the padding row.
@@ -88,6 +90,7 @@ pub(crate) struct Tagger {
     labels: usize,
     hidden: usize,
     context96_rms: bool,
+    flag_bits: usize,
 }
 
 impl Tagger {
@@ -147,6 +150,12 @@ impl Tagger {
         context96_rms: bool,
     ) -> Result<Tagger, Error> {
         bundle.check_block_count(net, dilations.len())?;
+        let flag_bits = if net == "detector" {
+            bundle.manifest.detector_feature_contract.flag_bits()
+        } else {
+            FLAG_BITS
+        };
+        let input_dim = NGRAM_DIM + SCRIPT_DIM + SHAPE_DIM + flag_bits;
         // The hidden width is read from the projection's bias; every other tensor must agree.
         let hidden = bundle
             .f32_len(&format!("{net}.proj.bias"))
@@ -174,7 +183,7 @@ impl Tagger {
             )?,
             shape: bundle.take_i8(&format!("{net}.embed.shape"), &[SHAPE_ROWS, SHAPE_DIM], 1)?,
             proj: kernels::Dense::new(
-                &bundle.take_i8(&format!("{net}.proj.weight"), &[hidden, INPUT_DIM], 0)?,
+                &bundle.take_i8(&format!("{net}.proj.weight"), &[hidden, input_dim], 0)?,
                 bundle.take_f32(&format!("{net}.proj.bias"), hidden)?,
             ),
             blocks,
@@ -185,6 +194,7 @@ impl Tagger {
             labels,
             hidden,
             context96_rms,
+            flag_bits,
         })
     }
 
@@ -201,9 +211,13 @@ impl Tagger {
 
     /// Logits `[len, labels]` for the retained tokens' features.
     pub(crate) fn forward(&self, feats: &[TokenFeatures]) -> Result<Vec<f32>, Error> {
+        if feats.iter().any(|f| f.flags >> self.flag_bits != 0) {
+            return Err(Error::BundleInvalid);
+        }
         let len = feats.len();
-        let mut x = vec![0f32; len * INPUT_DIM];
-        for (row, f) in x.chunks_mut(INPUT_DIM).zip(feats) {
+        let input_dim = NGRAM_DIM + SCRIPT_DIM + SHAPE_DIM + self.flag_bits;
+        let mut x = vec![0f32; len * input_dim];
+        for (row, f) in x.chunks_mut(input_dim).zip(feats) {
             let (ngram, rest) = row.split_at_mut(NGRAM_DIM);
             let (script, rest) = rest.split_at_mut(SCRIPT_DIM);
             let (shape, flags) = rest.split_at_mut(SHAPE_DIM);

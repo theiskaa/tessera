@@ -96,6 +96,10 @@ pub mod flag {
     pub const IS_NEWLINE: u32 = 1 << 21;
     /// A token outside the mask of structured input: Markdown syntax, code, a link destination.
     pub const MASKED: u32 = 1 << 22;
+    /// Detector TabCells25 only: content after a TAB-containing horizontal run.
+    pub const AFTER_TAB: u32 = 1 << 23;
+    /// Detector TabCells25 only: content before a TAB-containing horizontal run.
+    pub const BEFORE_TAB: u32 = 1 << 24;
 }
 
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
