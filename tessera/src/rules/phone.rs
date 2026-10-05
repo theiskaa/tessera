@@ -4,9 +4,12 @@
 //! what is a phone number. National numbers without a country code need a
 //! region from `country_hint`; without one they are dropped rather than
 //! guessed. Fullwidth and Arabic-Indic digits are not scanned yet, and a
-//! trailing extension is left outside the span.
+//! trailing extension is retained for validated US numbers in supported displayed formats.
 
 use crate::{Entity, Kind, Source};
+
+#[path = "phone_vanity.rs"]
+mod vanity;
 
 /// A phone-shaped run of text, before validation.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1046,7 +1049,8 @@ fn hinted_regions(country_hint: &[&str]) -> Vec<&'static Region> {
 pub fn scan(text: &str, country_hint: &[&str]) -> Vec<Entity> {
     let chars: Vec<(usize, char)> = text.char_indices().collect();
     let hints = hinted_regions(country_hint);
-    let found = scan_numbers(text, &chars, &hints);
+    let mut found = scan_numbers(text, &chars, &hints);
+    found.extend(vanity::scan(text, &chars, &hints));
     with_service_numbers(text, &chars, country_hint, &hints, found)
 }
 
@@ -1141,7 +1145,11 @@ fn with_service_numbers(
             || (after.starts_with(['-', '.', '/', ','])
                 && after[1..].starts_with(|d: char| d.is_ascii_digit()));
         let taken = found.iter().any(|e| e.start < end && at < e.end);
-        if !glued && !continued && !taken && after_call_word(chars, i) {
+        let called = after_call_word(chars, i)
+            || (region == "US"
+                && matches!(number, "711" | "7-1-1")
+                && after_named_relay_call(chars, i, after));
+        if !glued && !continued && !taken && called {
             extra.push(service_entity(at, end, number, region));
         }
     }
@@ -1272,6 +1280,111 @@ fn after_call_word(chars: &[(usize, char)], i: usize) -> bool {
     end > j && end < i && CALL_WORDS.contains(&word.as_str())
 }
 
+fn after_named_relay_call(chars: &[(usize, char)], i: usize, tail: &str) -> bool {
+    let mut start = i.saturating_sub(128);
+    if start > 0 && !relay_context_boundary(chars[start - 1].1) {
+        while start < i && !relay_context_boundary(chars[start].1) {
+            start += 1;
+        }
+    }
+    let context: String = chars[start..i].iter().map(|&(_, c)| c).collect();
+    let clause = context
+        .rsplit(['\n', '\r', ';', ':', '.', '\u{2028}', '\u{2029}'])
+        .next()
+        .unwrap_or("");
+    let words: Vec<_> = clause
+        .split([' ', '\u{a0}'])
+        .filter(|s| !s.is_empty())
+        .collect();
+    if words
+        .last()
+        .is_none_or(|word| !word.eq_ignore_ascii_case("at"))
+    {
+        return false;
+    }
+    let Some(call) = words
+        .iter()
+        .rposition(|word| word.eq_ignore_ascii_case("call") || word.eq_ignore_ascii_case("dial"))
+    else {
+        return false;
+    };
+    let object = words[call + 1..words.len() - 1]
+        .join(" ")
+        .to_ascii_lowercase();
+    let object = object.strip_prefix("the ").unwrap_or(&object);
+    let target_named = matches!(
+        object,
+        "federal information relay service"
+            | "federal information relay service (firs)"
+            | "firs"
+            | "telecommunications relay service"
+            | "telecommunications relay services"
+    );
+    let suffix = tail.trim_start_matches([' ', '\u{a0}']);
+    let target_ends = suffix.is_empty()
+        || suffix.starts_with(['\n', '\r', '.', ';', ')', ']', '!', '?'])
+        || (suffix.starts_with(',') && !relay_comma_identifier(&suffix[1..]))
+        || suffix.split([' ', '\u{a0}']).next().is_some_and(|word| {
+            ["to", "for", "from", "now", "today"]
+                .iter()
+                .any(|accepted| word.eq_ignore_ascii_case(accepted))
+        });
+    target_named && target_ends
+}
+
+fn relay_context_boundary(ch: char) -> bool {
+    matches!(
+        ch,
+        ' ' | '\u{a0}' | '\n' | '\r' | '.' | ':' | ';' | '\u{2028}' | '\u{2029}'
+    )
+}
+
+fn relay_comma_identifier(tail: &str) -> bool {
+    let words: Vec<_> = tail
+        .split([' ', '\u{a0}'])
+        .filter(|s| !s.is_empty())
+        .take(4)
+        .map(|s| s.trim_end_matches(['.', ',', ';']).to_ascii_lowercase())
+        .collect();
+    if words
+        .first()
+        .is_some_and(|word| matches!(word.as_str(), "for" | "to" | "from"))
+    {
+        return false;
+    }
+    let count = words
+        .first()
+        .is_some_and(|word| word.chars().all(char::is_numeric))
+        && words.get(1).is_some_and(|word| {
+            matches!(
+                word.as_str(),
+                "cases" | "events" | "tickets" | "records" | "requests"
+            )
+        });
+    count
+        || words.iter().any(|word| {
+            matches!(
+                word.as_str(),
+                "street"
+                    | "st"
+                    | "road"
+                    | "rd"
+                    | "avenue"
+                    | "ave"
+                    | "drive"
+                    | "dr"
+                    | "lane"
+                    | "ln"
+                    | "boulevard"
+                    | "blvd"
+                    | "highway"
+                    | "hwy"
+                    | "court"
+                    | "ct"
+            )
+        })
+}
+
 /// `candidate` as one phone number, as the scanner would read it in running text: the entity
 /// when the scan finds exactly one and it covers the whole string.
 #[cfg(feature = "markdown")]
@@ -1313,11 +1426,19 @@ fn expand_us_phone_span(text: &str, entity: &mut Entity) {
         entity.end += 1;
     }
     let tail = &text[entity.end..];
-    let spaces = tail.bytes().take_while(|&b| b == b' ').count();
-    if spaces == 0 || spaces > 2 {
+    let Some(mut leading) = bounded_phone_gap(tail) else {
+        return;
+    };
+    if tail.as_bytes().get(leading) == Some(&b',') {
+        leading += 1;
+        let Some(after_comma) = bounded_phone_gap(&tail[leading..]) else {
+            return;
+        };
+        leading += after_comma;
+    } else if leading == 0 {
         return;
     }
-    let rest = &tail[spaces..];
+    let rest = &tail[leading..];
     let label = ["extension", "ext"].into_iter().find(|label| {
         rest.get(..label.len())
             .is_some_and(|prefix| prefix.eq_ignore_ascii_case(label))
@@ -1329,10 +1450,9 @@ fn expand_us_phone_span(text: &str, entity: &mut Entity) {
     if rest.as_bytes().get(consumed) == Some(&b'.') {
         consumed += 1;
     }
-    let gap = rest[consumed..].bytes().take_while(|&b| b == b' ').count();
-    if gap == 0 || gap > 2 {
+    let Some(gap) = bounded_phone_gap(&rest[consumed..]) else {
         return;
-    }
+    };
     consumed += gap;
     let digits = rest[consumed..]
         .bytes()
@@ -1342,14 +1462,43 @@ fn expand_us_phone_span(text: &str, entity: &mut Entity) {
         return;
     }
     consumed += digits;
-    if rest[consumed..]
+    let remainder = &rest[consumed..];
+    if remainder
         .chars()
         .next()
         .is_some_and(|c| c.is_alphanumeric() || c == '-')
     {
         return;
     }
-    entity.end += spaces + consumed;
+    let continuation = remainder.trim_start_matches(horizontal_phone_space);
+    if let Some(separator) = continuation
+        .chars()
+        .next()
+        .filter(|ch| matches!(ch, '/' | '.' | ',' | '\u{2011}') || DASHES.contains(ch))
+    {
+        let next = continuation[separator.len_utf8()..].trim_start_matches(horizontal_phone_space);
+        if next.starts_with(char::is_numeric) {
+            return;
+        }
+    }
+    entity.end += leading + consumed;
+}
+
+fn horizontal_phone_space(ch: char) -> bool {
+    ch.is_whitespace() && !matches!(ch, '\n' | '\r' | '\u{2028}' | '\u{2029}')
+}
+
+fn bounded_phone_gap(text: &str) -> Option<usize> {
+    let mut bytes = 0;
+    let mut count = 0;
+    for ch in text.chars().take_while(|&ch| matches!(ch, ' ' | '\u{a0}')) {
+        count += 1;
+        if count > 2 {
+            return None;
+        }
+        bytes += ch.len_utf8();
+    }
+    Some(bytes)
 }
 
 /// Groups `first..past_last` of `c`, read and checked on their own, or `None` when that read
@@ -3339,5 +3488,67 @@ mod tests {
             spans("202   555 0143"),
             vec![("555 0143", "5550143".into())]
         );
+    }
+}
+
+#[cfg(all(test, feature = "phone-metadata"))]
+mod us_phone_context_tests {
+    use super::scan;
+
+    fn phone_texts(text: &str) -> Vec<&str> {
+        scan(text, &["US"])
+            .into_iter()
+            .map(|entity| &text[entity.start..entity.end])
+            .collect()
+    }
+
+    #[test]
+    fn displayed_extensions_keep_exact_unicode_spans_and_normalization() {
+        for phone in [
+            "(202) 555-0199, ext. 12",
+            "(202) 555-0199\u{a0}ext.\u{a0}12",
+            "(202) 555-0199 ext.201",
+        ] {
+            let text = format!("é🙂 Phone: {phone}, email the office.");
+            let found = scan(&text, &["US"]);
+            assert_eq!(found.len(), 1, "{text}");
+            assert_eq!(&text[found[0].start..found[0].end], phone);
+            assert_eq!(found[0].normalized.as_deref(), Some("+12025550199"));
+        }
+    }
+
+    #[test]
+    fn displayed_extension_does_not_cross_a_hard_field_boundary() {
+        for boundary in ["\n", "\r\n", "\u{2028}", "\u{2029}"] {
+            for punctuation in [",", "."] {
+                let text = format!(
+                    "Phone: (202) 555-0199 ext. 12{punctuation}{boundary}2026 annual report attached."
+                );
+                assert_eq!(phone_texts(&text), ["(202) 555-0199 ext. 12"], "{text}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_numeric_continuation_cannot_be_a_partial_extension() {
+        for separator in ["/", "—", "―", "\u{2011}", " / "] {
+            let text = format!("Phone: (202) 555-0199 ext.12{separator}34");
+            assert_eq!(phone_texts(&text), ["(202) 555-0199"], "{text}");
+        }
+    }
+
+    #[test]
+    fn named_relay_calls_exclude_postal_and_count_contexts() {
+        for tail in [
+            ", Pine Court, Washington, DC 20001.",
+            ", Pine Street, Washington, DC 20001.",
+            ", 5 events annually.",
+        ] {
+            let text = format!("Call the Federal Information Relay Service at 711{tail}");
+            assert!(phone_texts(&text).is_empty(), "{text}");
+        }
+        let text = "Call the Federal Information Relay Service at 711. 5 events annually.";
+        assert_eq!(phone_texts(text), ["711"]);
+        assert!(scan(text, &["CA"]).is_empty());
     }
 }
