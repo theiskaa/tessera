@@ -82,6 +82,29 @@ pub fn decode_detector_with_text(
     )
 }
 
+/// Decodes with the explicitly selected AddressLabeledFieldsV1 contract.
+/// Existing continuation runs first. Only complete postal fields separated by literal
+/// line headings may split; the existing decoder and its defaults remain unchanged.
+pub fn decode_detector_with_labeled_fields(
+    text: &str,
+    token_spans: &[(usize, usize)],
+    probs: &[f32],
+    masked: &[bool],
+    paragraph_break: &[bool],
+) -> Vec<DetectedSpan> {
+    let original = decode_detector_with_text(text, token_spans, probs, masked, paragraph_break);
+    let labels = viterbi(probs, masked, paragraph_break);
+    super::address_field_boundaries::separate(
+        text,
+        token_spans,
+        probs,
+        &labels,
+        masked,
+        paragraph_break,
+        original,
+    )
+}
+
 /// The cost of label `to` after label `from` (`None` at the start or after a paragraph
 /// break): an `I-X` that does not continue an `X` span is impossible.
 fn transition(from: Option<usize>, to: usize) -> f32 {
@@ -150,6 +173,16 @@ fn viterbi(probs: &[f32], masked: &[bool], paragraph_break: &[bool]) -> Vec<usiz
         best = back[t][best];
     }
     labels
+}
+
+/// Exact sequence decisions before span limits and address continuation, for trainer inspection.
+#[cfg(feature = "profile")]
+pub fn detector_sequence_labels(
+    probs: &[f32],
+    masked: &[bool],
+    paragraph_break: &[bool],
+) -> Vec<usize> {
+    viterbi(probs, masked, paragraph_break)
 }
 
 /// The spans of a label sequence, with the mean probability of their labels. An `I-X` opens a

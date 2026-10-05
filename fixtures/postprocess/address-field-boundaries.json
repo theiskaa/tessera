@@ -1,0 +1,415 @@
+[
+  {
+    "name": "nbsp_merged",
+    "text": "PO Box 944\nNewton IA  50208\nPhysical Address 101 1st Street N.\nNewton IA  50208",
+    "mode": "single",
+    "expected_address_texts": [
+      "PO Box 944\nNewton IA  50208",
+      "101 1st Street N.\nNewton IA  50208"
+    ],
+    "mutation": null,
+    "description": "Weights-free adversarial boundary control; synthetic text, not a new gold/data document."
+  },
+  {
+    "name": "separate_tail_trim",
+    "text": "PO Box 944\nNewton IA  50208\nPhysical Address 101 1st Street N.\nNewton IA  50208",
+    "mode": "tail",
+    "expected_address_texts": [
+      "PO Box 944\nNewton IA  50208",
+      "101 1st Street N.\nNewton IA  50208"
+    ],
+    "mutation": null,
+    "description": "Weights-free adversarial boundary control; synthetic text, not a new gold/data document."
+  },
+  {
+    "name": "comma_city_split",
+    "text": "123 Main Street, Denver, CO 80202\nMailing Address: PO Box 17\nDenver CO 80202",
+    "mode": "single",
+    "expected_address_texts": [
+      "123 Main Street, Denver, CO 80202",
+      "PO Box 17\nDenver CO 80202"
+    ],
+    "mutation": null,
+    "description": "Weights-free adversarial boundary control; synthetic text, not a new gold/data document."
+  },
+  {
+    "name": "crlf_lowercase",
+    "text": "PO Box 944\r\nNewton IA  50208\r\nphysical address:\r\n101 1st Street N.\r\nNewton IA  50208",
+    "mode": "single",
+    "expected_address_texts": [
+      "PO Box 944\r\nNewton IA  50208",
+      "101 1st Street N.\r\nNewton IA  50208"
+    ],
+    "mutation": null,
+    "description": "Weights-free adversarial boundary control; synthetic text, not a new gold/data document."
+  },
+  {
+    "name": "unit_zip4",
+    "text": "123 Main Street, Suite 2\nDenver CO 80202-1234\nMailing Address PO Box 17\nDenver CO 80202",
+    "mode": "single",
+    "expected_address_texts": [
+      "123 Main Street, Suite 2\nDenver CO 80202-1234",
+      "PO Box 17\nDenver CO 80202"
+    ],
+    "mutation": null,
+    "description": "Weights-free adversarial boundary control; synthetic text, not a new gold/data document."
+  },
+  {
+    "name": "missing_left_zip",
+    "text": "PO Box 944\nNewton IA  \nPhysical Address 101 1st Street N.\nNewton IA  50208",
+    "mode": "single",
+    "expected_address_texts": [
+      "PO Box 944\nNewton IA  \nPhysical Address 101 1st Street N.\nNewton IA  50208"
+    ],
+    "mutation": null,
+    "description": "Weights-free adversarial boundary control; synthetic text, not a new gold/data document."
+  },
+  {
+    "name": "missing_right_zip",
+    "text": "PO Box 944\nNewton IA  50208\nPhysical Address 101 1st Street N.\nNewton IA  ",
+    "mode": "single",
+    "expected_address_texts": [
+      "PO Box 944\nNewton IA  50208\nPhysical Address 101 1st Street N.\nNewton IA"
+    ],
+    "mutation": null,
+    "description": "Weights-free adversarial boundary control; synthetic text, not a new gold/data document."
+  },
+  {
+    "name": "foreign_left_state",
+    "text": "PO Box 944\nNewton ON  50208\nPhysical Address 101 1st Street N.\nNewton IA  50208",
+    "mode": "single",
+    "expected_address_texts": [
+      "PO Box 944\nNewton ON  50208\nPhysical Address 101 1st Street N.\nNewton IA  50208"
+    ],
+    "mutation": null,
+    "description": "Weights-free adversarial boundary control; synthetic text, not a new gold/data document."
+  },
+  {
+    "name": "invalid_left_zip",
+    "text": "PO Box 944\nNewton IA  502080\nPhysical Address 101 1st Street N.\nNewton IA  50208",
+    "mode": "single",
+    "expected_address_texts": [
+      "PO Box 944\nNewton IA  502080\nPhysical Address 101 1st Street N.\nNewton IA  50208"
+    ],
+    "mutation": null,
+    "description": "Weights-free adversarial boundary control; synthetic text, not a new gold/data document."
+  },
+  {
+    "name": "inline_heading",
+    "text": "PO Box 944\nNewton IA  50208 Physical Address 101 1st Street N.\nNewton IA  50208",
+    "mode": "single",
+    "expected_address_texts": [
+      "PO Box 944\nNewton IA  50208 Physical Address 101 1st Street N.\nNewton IA  50208"
+    ],
+    "mutation": null,
+    "description": "Weights-free adversarial boundary control; synthetic text, not a new gold/data document."
+  },
+  {
+    "name": "unsupported_heading",
+    "text": "PO Box 944\nNewton IA  50208\nDepartment Address 101 1st Street N.\nNewton IA  50208",
+    "mode": "single",
+    "expected_address_texts": [
+      "PO Box 944\nNewton IA  50208\nDepartment Address 101 1st Street N.\nNewton IA  50208"
+    ],
+    "mutation": null,
+    "description": "Weights-free adversarial boundary control; synthetic text, not a new gold/data document."
+  },
+  {
+    "name": "blank_line_before_heading",
+    "text": "PO Box 944\nNewton IA  50208\n\nPhysical Address 101 1st Street N.\nNewton IA  50208",
+    "mode": "single",
+    "expected_address_texts": [
+      "PO Box 944\nNewton IA  50208\n\nPhysical Address 101 1st Street N.\nNewton IA  50208"
+    ],
+    "mutation": null,
+    "description": "Weights-free adversarial boundary control; synthetic text, not a new gold/data document."
+  },
+  {
+    "name": "blank_line_after_heading",
+    "text": "PO Box 944\nNewton IA  50208\nPhysical Address\n\n101 1st Street N.\nNewton IA  50208",
+    "mode": "single",
+    "expected_address_texts": [
+      "PO Box 944\nNewton IA  50208\nPhysical Address\n\n101 1st Street N.\nNewton IA  50208"
+    ],
+    "mutation": null,
+    "description": "Weights-free adversarial boundary control; synthetic text, not a new gold/data document."
+  },
+  {
+    "name": "unicode_line_separator",
+    "text": "PO Box 944\nNewton IA  50208 Physical Address 101 1st Street N.\nNewton IA  50208",
+    "mode": "single",
+    "expected_address_texts": [
+      "PO Box 944\nNewton IA  50208 Physical Address 101 1st Street N.\nNewton IA  50208"
+    ],
+    "mutation": null,
+    "description": "Weights-free adversarial boundary control; synthetic text, not a new gold/data document."
+  },
+  {
+    "name": "missing_po_prefix",
+    "text": "Box 944\nNewton IA  50208\nPhysical Address 101 1st Street N.\nNewton IA  50208",
+    "mode": "single",
+    "expected_address_texts": [
+      "Box 944\nNewton IA  50208\nPhysical Address 101 1st Street N.\nNewton IA  50208"
+    ],
+    "mutation": null,
+    "description": "Weights-free adversarial boundary control; synthetic text, not a new gold/data document."
+  },
+  {
+    "name": "right_building_only",
+    "text": "PO Box 944\nNewton IA  50208\nPhysical Address Civic Building\nNewton IA 50208",
+    "mode": "single",
+    "expected_address_texts": [
+      "PO Box 944\nNewton IA  50208\nPhysical Address Civic Building\nNewton IA 50208"
+    ],
+    "mutation": null,
+    "description": "Weights-free adversarial boundary control; synthetic text, not a new gold/data document."
+  },
+  {
+    "name": "bare_cr",
+    "text": "PO Box 944\rNewton IA  50208\rPhysical Address 101 1st Street N.\rNewton IA  50208",
+    "mode": "single",
+    "expected_address_texts": [
+      "PO Box 944\rNewton IA  50208\rPhysical Address 101 1st Street N.\rNewton IA  50208"
+    ],
+    "mutation": null,
+    "description": "Weights-free adversarial boundary control; synthetic text, not a new gold/data document."
+  },
+  {
+    "name": "coordination_in_street",
+    "text": "PO Box 944\nNewton IA  50208\nPhysical Address 101 First and Second Street N.\nNewton IA  50208",
+    "mode": "single",
+    "expected_address_texts": [
+      "PO Box 944\nNewton IA  50208\nPhysical Address 101 First and Second Street N.\nNewton IA  50208"
+    ],
+    "mutation": null,
+    "description": "Weights-free adversarial boundary control; synthetic text, not a new gold/data document."
+  },
+  {
+    "name": "header_named_road",
+    "text": "123 Physical Address Road\nNewton IA 50208",
+    "mode": "single",
+    "expected_address_texts": [
+      "123 Physical Address Road\nNewton IA 50208"
+    ],
+    "mutation": null,
+    "description": "Weights-free adversarial boundary control; synthetic text, not a new gold/data document."
+  },
+  {
+    "name": "two_headers",
+    "text": "PO Box 944\nNewton IA  50208\nPhysical Address 101 1st Street N.\nNewton IA  50208\nMailing Address PO Box 944\nNewton IA  50208",
+    "mode": "single",
+    "expected_address_texts": [
+      "PO Box 944\nNewton IA  50208\nPhysical Address 101 1st Street N.\nNewton IA  50208\nMailing Address PO Box 944\nNewton IA  50208"
+    ],
+    "mutation": null,
+    "description": "Weights-free adversarial boundary control; synthetic text, not a new gold/data document."
+  },
+  {
+    "name": "trailing_heading_no_value",
+    "text": "PO Box 944\nNewton IA  50208\nPhysical Address",
+    "mode": "single",
+    "expected_address_texts": [
+      "PO Box 944\nNewton IA  50208\nPhysical Address"
+    ],
+    "mutation": null,
+    "description": "Weights-free adversarial boundary control; synthetic text, not a new gold/data document."
+  },
+  {
+    "name": "masked_heading",
+    "text": "PO Box 944\nNewton IA  50208\nPhysical Address 101 1st Street N.\nNewton IA  50208",
+    "mode": "single",
+    "expected_address_texts": [
+      "PO Box 944\nNewton IA  50208\nPhysical Address 101 1st Street N.\nNewton IA  50208"
+    ],
+    "mutation": {
+      "mask": "Physical"
+    },
+    "description": "Weights-free adversarial boundary control; synthetic text, not a new gold/data document."
+  },
+  {
+    "name": "paragraph_cut_at_heading",
+    "text": "PO Box 944\nNewton IA  50208\nPhysical Address 101 1st Street N.\nNewton IA  50208",
+    "mode": "single",
+    "expected_address_texts": [
+      "PO Box 944\nNewton IA  50208\nPhysical Address 101 1st Street N.\nNewton IA  50208"
+    ],
+    "mutation": {
+      "break": "Physical"
+    },
+    "description": "Weights-free adversarial boundary control; synthetic text, not a new gold/data document."
+  },
+  {
+    "name": "wrong_heading_label",
+    "text": "PO Box 944\nNewton IA  50208\nPhysical Address 101 1st Street N.\nNewton IA  50208",
+    "mode": "single",
+    "expected_address_texts": [
+      "PO Box 944\nNewton IA  50208\nPhysical Address 101 1st Street N.\nNewton IA  50208"
+    ],
+    "mutation": {
+      "label": [
+        "Physical",
+        3
+      ]
+    },
+    "description": "Weights-free adversarial boundary control; synthetic text, not a new gold/data document."
+  },
+  {
+    "name": "invalid_utf8_byte_boundary",
+    "text": "PO Box 944\nNewton IA  50208\nPhysical Address 101 1st Street N.\nNewton IA  50208",
+    "mode": "single",
+    "expected_address_texts": [
+      "PO Box 944\nNewton IA  50208\nPhysical Address 101 1st Street N.\nNewton IA  50208"
+    ],
+    "mutation": {
+      "invalid_bound": true
+    },
+    "description": "Weights-free adversarial boundary control; synthetic text, not a new gold/data document."
+  },
+  {
+    "name": "overlapping_token_bounds",
+    "text": "PO Box 944\nNewton IA  50208\nPhysical Address 101 1st Street N.\nNewton IA  50208",
+    "mode": "single",
+    "expected_address_texts": [
+      "PO Box 944\nNewton IA  50208\nPhysical Address 101 1st Street N.\nNewton IA  50208"
+    ],
+    "mutation": {
+      "overlap": true
+    },
+    "description": "Weights-free adversarial boundary control; synthetic text, not a new gold/data document."
+  },
+  {
+    "name": "length_mismatch",
+    "text": "PO Box 944\nNewton IA  50208\nPhysical Address 101 1st Street N.\nNewton IA  50208",
+    "mode": "single",
+    "expected_address_texts": [
+      "PO Box 944\nNewton IA  50208\nPhysical Address 101 1st Street N.\nNewton IA  50208"
+    ],
+    "mutation": {
+      "truncate_probs": true
+    },
+    "description": "Weights-free adversarial boundary control; synthetic text, not a new gold/data document."
+  },
+  {
+    "name": "next_span_org",
+    "text": "PO Box 944\nNewton IA  50208\nPhysical Address 101 1st Street N.\nNewton IA  50208",
+    "mode": "tail",
+    "expected_address_texts": [
+      "PO Box 944\nNewton IA  50208\nPhysical Address"
+    ],
+    "mutation": {
+      "next_kind": "org"
+    },
+    "description": "Weights-free adversarial boundary control; synthetic text, not a new gold/data document."
+  },
+  {
+    "name": "next_paragraph_break",
+    "text": "PO Box 944\nNewton IA  50208\nPhysical Address 101 1st Street N.\nNewton IA  50208",
+    "mode": "tail",
+    "expected_address_texts": [
+      "PO Box 944\nNewton IA  50208\nPhysical Address",
+      "101 1st Street N.\nNewton IA  50208"
+    ],
+    "mutation": {
+      "break": "101"
+    },
+    "description": "Weights-free adversarial boundary control; synthetic text, not a new gold/data document."
+  },
+  {
+    "name": "over_entity_limit",
+    "text": "123 Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Street\nDenver CO 80202\nPhysical Address 101 1st Street N.\nNewton IA  50208",
+    "mode": "single",
+    "expected_address_texts": [
+      "123 Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Name Street\nDenver CO 80202\nPhysical Address 101 1st Street N.\nNewton IA  50208"
+    ],
+    "mutation": null,
+    "description": "Weights-free adversarial boundary control; synthetic text, not a new gold/data document."
+  },
+  {
+    "name": "unicode_line_after_heading",
+    "text": "PO Box 944\nNewton IA  50208\nPhysical Address 101 1st Street N.\nNewton IA  50208",
+    "mode": "single",
+    "expected_address_texts": [
+      "PO Box 944\nNewton IA  50208\nPhysical Address 101 1st Street N.\nNewton IA  50208"
+    ],
+    "mutation": null,
+    "description": "Reject an opaque line separator in heading-to-value gap even if supplied paragraph flags are false."
+  },
+  {
+    "name": "nan_chosen",
+    "text": "PO Box 944\nNewton IA  50208\nPhysical Address 101 1st Street N.\nNewton IA  50208",
+    "mode": "single",
+    "expected_address_texts": [
+      "PO Box 944\nNewton IA  50208\nPhysical Address 101 1st Street N.\nNewton IA  50208"
+    ],
+    "mutation": {
+      "probability": "nan",
+      "unchosen": false
+    },
+    "description": "Malformed probability anywhere in input rejects new phase and preserves existing spans unchanged."
+  },
+  {
+    "name": "pos_inf_chosen",
+    "text": "PO Box 944\nNewton IA  50208\nPhysical Address 101 1st Street N.\nNewton IA  50208",
+    "mode": "single",
+    "expected_address_texts": [
+      "PO Box 944\nNewton IA  50208\nPhysical Address 101 1st Street N.\nNewton IA  50208"
+    ],
+    "mutation": {
+      "probability": "pos_inf",
+      "unchosen": false
+    },
+    "description": "Malformed probability anywhere in input rejects new phase and preserves existing spans unchanged."
+  },
+  {
+    "name": "neg_inf_chosen",
+    "text": "PO Box 944\nNewton IA  50208\nPhysical Address 101 1st Street N.\nNewton IA  50208",
+    "mode": "single",
+    "expected_address_texts": [
+      "PO Box 944\nNewton IA  50208\nPhysical Address 101 1st Street N.\nNewton IA  50208"
+    ],
+    "mutation": {
+      "probability": "neg_inf",
+      "unchosen": false
+    },
+    "description": "Malformed probability anywhere in input rejects new phase and preserves existing spans unchanged."
+  },
+  {
+    "name": "negative_chosen",
+    "text": "PO Box 944\nNewton IA  50208\nPhysical Address 101 1st Street N.\nNewton IA  50208",
+    "mode": "single",
+    "expected_address_texts": [
+      "PO Box 944\nNewton IA  50208\nPhysical Address 101 1st Street N.\nNewton IA  50208"
+    ],
+    "mutation": {
+      "probability": "negative",
+      "unchosen": false
+    },
+    "description": "Malformed probability anywhere in input rejects new phase and preserves existing spans unchanged."
+  },
+  {
+    "name": "above_one_chosen",
+    "text": "PO Box 944\nNewton IA  50208\nPhysical Address 101 1st Street N.\nNewton IA  50208",
+    "mode": "single",
+    "expected_address_texts": [
+      "PO Box 944\nNewton IA  50208\nPhysical Address 101 1st Street N.\nNewton IA  50208"
+    ],
+    "mutation": {
+      "probability": "above_one",
+      "unchosen": false
+    },
+    "description": "Malformed probability anywhere in input rejects new phase and preserves existing spans unchanged."
+  },
+  {
+    "name": "nan_unchosen",
+    "text": "PO Box 944\nNewton IA  50208\nPhysical Address 101 1st Street N.\nNewton IA  50208",
+    "mode": "single",
+    "expected_address_texts": [
+      "PO Box 944\nNewton IA  50208\nPhysical Address 101 1st Street N.\nNewton IA  50208"
+    ],
+    "mutation": {
+      "probability": "nan",
+      "unchosen": true
+    },
+    "description": "Malformed probability anywhere in input rejects new phase and preserves existing spans unchanged."
+  }
+]
