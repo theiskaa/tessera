@@ -24,8 +24,8 @@ use tessera::internal::{
 use crate::config::{Config, Task};
 use crate::data::{Split, read_shard};
 use crate::dataset::{
-    Encoded, FLAG_BITS, MAX_NGRAMS_PER_TOKEN, PARSER_LABELS, ParserBatch, ParserBatcher,
-    SCRIPT_ROWS, SHAPE_ROWS, encode,
+    Encoded, FLAG_BITS, MAX_NGRAMS_PER_TOKEN, PARSER_LABELS, ParserBatch, SCRIPT_ROWS, SHAPE_ROWS,
+    encode,
 };
 use crate::detector::{self, DETECTOR_LABELS};
 use crate::model_eval::decode_probs;
@@ -79,8 +79,27 @@ pub(crate) fn hex(digest: &[u8]) -> String {
     digest.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// The bundle's `__metadata__`: format, versions, label sets, feature settings, and data
-/// provenance.
+fn bind_detector_features(metadata: &mut BTreeMap<String, String>, cfg: &Config) {
+    let contract = cfg.detector_feature_contract();
+    if contract != tessera::internal::DetectorFeatureContract::Legacy23 {
+        metadata.insert(
+            "detector_feature_config".into(),
+            serde_json::json!({"contract":contract.name(),"flag_bits":contract.flag_bits()})
+                .to_string(),
+        );
+    }
+}
+
+fn bind_detector_postprocess(metadata: &mut BTreeMap<String, String>, cfg: &Config) {
+    if let Some(selected) = cfg.net.detector_postprocess {
+        metadata.insert(
+            "detector_postprocess_contract".into(),
+            selected.contract().name().into(),
+        );
+    }
+}
+
+/// Bundle metadata: versions, label sets, feature contracts and data provenance.
 pub fn metadata(cfg: &Config, snapshot: &str, date: &str) -> BTreeMap<String, String> {
     let features = serde_json::json!({
         "ngram_sizes": cfg.features.ngram_sizes,
@@ -130,6 +149,8 @@ pub fn metadata(cfg: &Config, snapshot: &str, date: &str) -> BTreeMap<String, St
         ("created".to_string(), date.to_string()),
     ]);
     bind_architecture(&mut metadata, cfg);
+    bind_detector_features(&mut metadata, cfg);
+    bind_detector_postprocess(&mut metadata, cfg);
     metadata
 }
 
@@ -354,6 +375,8 @@ pub fn run(parser_run: &Path, detector_run: &Path, out: &Path, date: &str) -> an
         date,
     );
     bind_architecture(&mut meta, &detector.cfg);
+    bind_detector_features(&mut meta, &detector.cfg);
+    bind_detector_postprocess(&mut meta, &detector.cfg);
     meta.insert("runtime_version".into(), env!("CARGO_PKG_VERSION").into());
     meta.insert("quantization".into(), "per-channel symmetric int8".into());
     meta.insert(
@@ -458,8 +481,20 @@ pub fn run(parser_run: &Path, detector_run: &Path, out: &Path, date: &str) -> an
     let golden_dir = out.join("golden").join("detector");
     std::fs::create_dir_all(&golden_dir)?;
     for (name, text) in DETECTOR_GOLDEN_TEXTS {
-        let enc = detector::encode_document(text, &[], &fc)
-            .map_err(|e| anyhow::anyhow!("{name}: {e}"))?;
+        let enc = if detector.cfg.detector_feature_contract()
+            == tessera::internal::DetectorFeatureContract::Legacy23
+        {
+            detector::encode_document(text, &[], &fc)
+        } else {
+            detector::encode_document_with_feature_contract(
+                text,
+                &[],
+                &fc,
+                detector::DetectorInputPolicy::KnownUs,
+                detector.cfg.detector_feature_contract(),
+            )
+        }
+        .map_err(|e| anyhow::anyhow!("{name}: {e}"))?;
         let case = golden_case(
             &bundle_version,
             Task::Detector,
@@ -614,7 +649,8 @@ fn logits<B: Backend>(
     enc: &Encoded,
     device: &B::Device,
 ) -> anyhow::Result<Vec<Vec<f32>>> {
-    let batch: ParserBatch<B> = ParserBatcher.batch(vec![enc.clone()], device);
+    let batch: ParserBatch<B> =
+        crate::dataset::FeatureBatcher::for_model(model).batch(vec![enc.clone()], device);
     let out = operator.forward(
         model,
         batch.ngram_ids,
@@ -731,6 +767,55 @@ mod context96_tests;
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn tab_metadata_declares_only_detector_projection_expansion() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let mut cfg = crate::config::load(&root.join("configs/detector-small.toml")).unwrap();
+        let old = metadata(&cfg, "same", "same");
+        assert!(!old.contains_key("detector_feature_config"));
+        cfg.net.detector_features = Some(crate::config::DetectorFeatures::TabCells25);
+        let new = metadata(&cfg, "same", "same");
+        let field: serde_json::Value =
+            serde_json::from_str(&new["detector_feature_config"]).unwrap();
+        assert_eq!(field["flag_bits"], 25);
+        assert_eq!(field["contract"], cfg.detector_feature_contract().name());
+        let parser: serde_json::Value = serde_json::from_str(&new["feature_config"]).unwrap();
+        assert_eq!(parser["flag_bits"], 23);
+        let mut stripped = new;
+        stripped.remove("detector_feature_config");
+        assert_eq!(old, stripped);
+    }
+
+    #[test]
+    fn optional_postprocess_metadata_preserves_legacy_and_combined_detector_binding() {
+        let mut cfg = crate::config::load(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../configs/detector-shared.toml"),
+        )
+        .unwrap();
+        let old = metadata(&cfg, "same", "same");
+        assert!(!old.contains_key("detector_postprocess_contract"));
+        cfg.net.architecture = Some(tessera::internal::CONTEXT96_RMS_NAME.into());
+        cfg.net.dilations = tessera::internal::CONTEXT96_RMS_DILATIONS.to_vec();
+        let base = metadata(&cfg, "same", "same");
+        cfg.net.detector_postprocess =
+            Some(crate::config::DetectorPostprocess::AddressLabeledFieldsV1);
+        let selected = metadata(&cfg, "same", "same");
+        assert_eq!(
+            selected["detector_postprocess_contract"],
+            "address_labeled_fields_v1"
+        );
+        let mut stripped = selected.clone();
+        stripped.remove("detector_postprocess_contract");
+        assert_eq!(stripped, base);
+        assert_eq!(
+            selected["decoder_contract"],
+            tessera::internal::CONTEXT96_DECODER_CONTRACT
+        );
+        let mut combined = base;
+        bind_detector_postprocess(&mut combined, &cfg);
+        assert_eq!(combined, selected);
+    }
+
     use super::*;
 
     #[test]

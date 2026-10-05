@@ -14,7 +14,9 @@ use burn::nn::{
 use burn::prelude::*;
 use burn::tensor::activation::relu;
 
-use crate::dataset::{FLAG_BITS, SCRIPT_ROWS, SHAPE_ROWS};
+#[cfg(test)]
+use crate::dataset::FLAG_BITS;
+use crate::dataset::{SCRIPT_ROWS, SHAPE_ROWS};
 
 #[path = "activation_trace.rs"]
 mod activation_trace;
@@ -45,6 +47,9 @@ pub struct TaggerNetConfig {
     pub dilations: Vec<usize>,
     /// Output labels per token: `PARSER_LABELS` or `DETECTOR_LABELS`.
     pub labels: usize,
+    /// Versioned numeric flag width; original graphs default to 23.
+    #[config(default = 23)]
+    pub flag_bits: usize,
     /// Dropout after each block, during training only.
     #[config(default = 0.1)]
     pub dropout: f64,
@@ -76,7 +81,7 @@ pub struct TaggerNet<B: Backend> {
     pub script: Embedding<B>,
     /// `[SHAPE_ROWS, shape_dim]`.
     pub shape: Embedding<B>,
-    /// `ngram_dim + script_dim + shape_dim + FLAG_BITS` to `hidden`.
+    /// `ngram_dim + script_dim + shape_dim + flag_bits` to `hidden`.
     pub proj: Linear<B>,
     proj_dropout: Dropout,
     pub blocks: Vec<ConvBlock<B>>,
@@ -87,6 +92,14 @@ pub struct TaggerNet<B: Backend> {
 impl TaggerNetConfig {
     /// A freshly initialized network with these shapes.
     pub fn init<B: Backend>(&self, device: &B::Device) -> TaggerNet<B> {
+        assert!(
+            matches!(self.flag_bits, 23 | 25),
+            "unsupported numeric flag width"
+        );
+        assert!(
+            self.labels != crate::dataset::PARSER_LABELS || self.flag_bits == 23,
+            "parser flags must stay legacy23"
+        );
         let blocks = self
             .dilations
             .iter()
@@ -107,7 +120,7 @@ impl TaggerNetConfig {
             script: EmbeddingConfig::new(SCRIPT_ROWS, self.script_dim).init(device),
             shape: EmbeddingConfig::new(SHAPE_ROWS, self.shape_dim).init(device),
             proj: LinearConfig::new(
-                self.ngram_dim + self.script_dim + self.shape_dim + FLAG_BITS,
+                self.ngram_dim + self.script_dim + self.shape_dim + self.flag_bits,
                 self.hidden,
             )
             .init(device),
@@ -119,8 +132,15 @@ impl TaggerNetConfig {
 }
 
 impl<B: Backend> TaggerNet<B> {
+    /// Flag width read from the actual parameter shapes, including migrated native records.
+    pub fn flag_bits(&self) -> usize {
+        self.proj.weight.dims()[0]
+            - self.ngram.weight.dims()[1]
+            - self.script.weight.dims()[1]
+            - self.shape.weight.dims()[1]
+    }
     /// Logits `[B, L, labels]` for n-gram ids `[B, L, K]`, script and shape ids
-    /// `[B, L]`, flags `[B, L, FLAG_BITS]`, and `mask` `[B, L]` (1 for real tokens).
+    /// `[B, L]`, flags `[B, L, self.flag_bits()]`, and `mask` `[B, L]` (1 for real tokens).
     ///
     /// Padded positions are zeroed before every convolution, so a sequence's output does not
     /// depend on what it was batched with and equals the library, which runs one sequence at a
@@ -133,6 +153,11 @@ impl<B: Backend> TaggerNet<B> {
         flags: Tensor<B, 3>,
         mask: Tensor<B, 2>,
     ) -> Tensor<B, 3> {
+        assert_eq!(
+            flags.dims()[2],
+            self.flag_bits(),
+            "numeric flags differ from projection contract"
+        );
         let [b, l, k] = ngram_ids.dims();
         let dim = self.ngram.weight.dims()[1];
         let present = ngram_ids.clone().greater_elem(0).float();
@@ -166,6 +191,11 @@ impl<B: Backend> TaggerNet<B> {
         flags: Tensor<B, 3>,
         mask: Tensor<B, 2>,
     ) -> anyhow::Result<(Tensor<B, 3>, Vec<LayerActivation>)> {
+        assert_eq!(
+            flags.dims()[2],
+            self.flag_bits(),
+            "numeric flags differ from projection contract"
+        );
         let [b, l, k] = ngram_ids.dims();
         anyhow::ensure!(
             mask.dims() == [b, l],
@@ -272,7 +302,8 @@ impl<B: Backend> TaggerNet<B> {
 
     fn validate_context96_graph(&self) -> anyhow::Result<()> {
         anyhow::ensure!(
-            self.blocks.len() == 7
+            matches!(self.flag_bits(), 23 | 25)
+                && self.blocks.len() == 7
                 && self.proj.weight.dims()[1] == 96
                 && self.head.weight.dims() == [96, 7]
                 && self
@@ -298,6 +329,11 @@ impl<B: Backend> TaggerNet<B> {
         flags: Tensor<B, 3>,
         mask: Tensor<B, 2>,
     ) -> anyhow::Result<Tensor<B, 3>> {
+        assert_eq!(
+            flags.dims()[2],
+            self.flag_bits(),
+            "numeric flags differ from projection contract"
+        );
         let [b, l, k] = ngram_ids.dims();
         let dim = self.ngram.weight.dims()[1];
         let present = ngram_ids.clone().greater_elem(0).float();
@@ -355,6 +391,11 @@ impl<B: Backend> TaggerNet<B> {
         flags: Tensor<B, 3>,
         mask: Tensor<B, 2>,
     ) -> anyhow::Result<(Tensor<B, 3>, Vec<LayerActivation>)> {
+        assert_eq!(
+            flags.dims()[2],
+            self.flag_bits(),
+            "numeric flags differ from projection contract"
+        );
         let [b, l, k] = ngram_ids.dims();
         anyhow::ensure!(
             mask.dims() == [b, l],

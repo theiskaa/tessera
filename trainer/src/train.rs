@@ -108,7 +108,9 @@ pub struct TrainArgs<'a> {
 
 /// `trainer train`: trains the parser or the detector, as the config's `task` says.
 pub fn run(args: TrainArgs<'_>) -> anyhow::Result<()> {
-    crate::typed_synthetic::refuse_fit(&crate::config::load(args.config)?)?;
+    let config = crate::config::load(args.config)?;
+    crate::reviewed_train::refuse_incomplete(&config)?;
+    crate::typed_synthetic::refuse_fit(&config)?;
     match args.backend {
         BackendKind::Wgpu => train::<Autodiff<Wgpu>>(&args, &Default::default()),
         BackendKind::Ndarray => train::<Autodiff<NdArray>>(&args, &Default::default()),
@@ -122,6 +124,7 @@ pub(crate) fn diagnose_fullmix_rms(
     preflight: bool,
 ) -> anyhow::Result<()> {
     let (request, cfg) = crate::fullmix_rms::Request::load(manifest, preflight)?;
+    crate::reviewed_train::refuse_incomplete(&cfg)?;
     request.validate_authored_route(&cfg)?;
     anyhow::ensure!(
         matches!(std::fs::symlink_metadata(out), Err(error) if error.kind() == std::io::ErrorKind::NotFound),
@@ -169,6 +172,7 @@ pub(crate) fn memorize(
     scope: MemorizeScope<'_>,
 ) -> anyhow::Result<()> {
     let cfg = crate::config::load(config)?;
+    crate::reviewed_train::refuse_incomplete(&cfg)?;
     crate::typed_synthetic::refuse_fit(&cfg)?;
     anyhow::ensure!(
         !cfg.context96_rms(),
@@ -1773,6 +1777,7 @@ fn train_detector<B: AutodiffBackend>(
     fullmix: Option<&crate::fullmix_rms::Request>,
     device: &B::Device,
 ) -> anyhow::Result<()> {
+    crate::reviewed_train::refuse_incomplete(cfg)?;
     match fullmix {
         Some(request) => request.validate_authored_route(cfg)?,
         None => crate::typed_synthetic::refuse_fit(cfg)?,

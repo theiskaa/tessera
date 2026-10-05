@@ -714,7 +714,8 @@ fn org_value_start(value: &str) -> usize {
     }
 }
 
-fn person_key(text: &str) -> Option<(String, String)> {
+/// Extracts a conservative given-name/surname key for US name overlap checks.
+pub(crate) fn person_key(text: &str) -> Option<(String, String)> {
     let folded: String = text
         .nfkd()
         .filter(|char| !is_combining_mark(*char))
