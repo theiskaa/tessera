@@ -32,7 +32,7 @@
       ],
       "must_not": [],
       "known_failure": true,
-      "known_failure_reason": "model 0.3.0 misses Grace Liu"
+      "known_failure_reason": "model 0.4.0 labels Grace Liu as an organization"
     },
     {
       "name": "pipe table of vendors",

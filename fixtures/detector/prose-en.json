@@ -31,7 +31,7 @@
       ],
       "must_not": [],
       "known_failure": true,
-      "known_failure_reason": "model 0.3.0 misses both person spans and Brightwater Energy"
+      "known_failure_reason": "model 0.4.0 misses Grace Liu"
     },
     {
       "name": "a person joins a company",

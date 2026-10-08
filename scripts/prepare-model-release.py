@@ -63,8 +63,13 @@ def prepare(out: Path) -> None:
         "format": "2",
         "status": "experimental",
         "license": "CC-BY-4.0",
-        "detector_training_updates": "4000",
-        "detector_training_complete": "false",
+        "model_version": "0.4.0",
+        "runtime_version": "0.2.0",
+        "detector_training_updates": "6160",
+        "detector_training_complete": "true",
+        "learning_gate_passed": "true",
+        "detector_input_policy": "known_us",
+        "general_accuracy_claim": "false",
     }
     for key, value in required.items():
         if metadata.get(key) != value:

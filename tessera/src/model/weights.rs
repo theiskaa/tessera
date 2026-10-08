@@ -260,10 +260,13 @@ fn entries(json: &Json, data_len: usize) -> Result<Vec<Entry>, Error> {
 /// change any other key, and must still be reported as newer rather than as malformed. The
 /// series (`major.minor`) is read first, so `0.3.0-rc1` is unsupported; a version in the
 /// supported series must then be a plain `major.minor.patch`, so `0.2` or `0.2.x` is invalid.
+/// Format 2 covers two series: 0.3, the first Context96 detector, and 0.4, the reviewed-fit
+/// detector with tab-cell features and labeled-field postprocessing; both share the format 2
+/// graph and every other manifest key.
 fn check_version(meta: &Json) -> Result<(), Error> {
-    let series = match text(meta, "format")?.as_str() {
-        super::SUPPORTED_FORMAT => super::SUPPORTED_MODEL_SERIES,
-        "2" => (0, 3),
+    let series: &[(u32, u32)] = match text(meta, "format")?.as_str() {
+        super::SUPPORTED_FORMAT => &[super::SUPPORTED_MODEL_SERIES],
+        "2" => &[(0, 3), (0, 4)],
         _ => return Err(Error::UnsupportedVersion),
     };
     let version = text(meta, "model_version")?;
@@ -275,12 +278,13 @@ fn check_version(meta: &Json) -> Result<(), Error> {
             .ok_or(Error::BundleInvalid)
     };
     let (major, minor) = (number(parts.first())?, number(parts.get(1))?);
-    let (want_major, want_minor) = series;
-    let compatible = if want_major == 0 {
-        major == 0 && minor == want_minor
-    } else {
-        major == want_major
-    };
+    let compatible = series.iter().any(|&(want_major, want_minor)| {
+        if want_major == 0 {
+            major == 0 && minor == want_minor
+        } else {
+            major == want_major
+        }
+    });
     if !compatible {
         return Err(Error::UnsupportedVersion);
     }
@@ -421,9 +425,17 @@ impl Manifest {
 
     /// The layout constants this library was built with, and sane feature settings.
     fn check_supported(&self) -> Result<(), Error> {
-        if self.detector_postprocess_contract.is_some()
-            && (!self.context96_rms || !self.nets.iter().any(|net| net == "detector"))
+        // Detector settings without the detector network are malformed; postprocessing on a
+        // graph other than Context96 is a newer bundle.
+        if (self.context96_rms
+            || self.detector_postprocess_contract.is_some()
+            || self.detector_feature_contract
+                != crate::detector_features::DetectorFeatureContract::Legacy23)
+            && !self.nets.iter().any(|net| net == "detector")
         {
+            return Err(Error::BundleInvalid);
+        }
+        if self.detector_postprocess_contract.is_some() && !self.context96_rms {
             return Err(Error::UnsupportedVersion);
         }
         let shapes_match = self.max_ngrams_per_token == crate::features::MAX_NGRAMS_PER_TOKEN
@@ -431,13 +443,6 @@ impl Manifest {
             && self.script_rows == super::SCRIPT_ROWS
             && self.shape_rows == super::SHAPE_ROWS
             && self.parser_labels.len() == super::PARSER_LABELS;
-        if (self.context96_rms
-            || self.detector_feature_contract
-                != crate::detector_features::DetectorFeatureContract::Legacy23)
-            && !self.nets.iter().any(|net| net == "detector")
-        {
-            return Err(Error::BundleInvalid);
-        }
         if !shapes_match {
             return Err(Error::UnsupportedVersion);
         }
@@ -527,11 +532,17 @@ mod tests {
                 .as_object_mut()
                 .unwrap()
                 .remove("detector_architecture");
-            assert!(parse(&selected).unwrap().check_supported().is_err());
+            assert_eq!(
+                parse(&selected).unwrap().check_supported(),
+                Err(Error::UnsupportedVersion)
+            );
             let mut parser_only = meta.clone();
             parser_only["nets"] = serde_json::json!("parser");
             parser_only["detector_postprocess_contract"] = serde_json::json!(name);
-            assert!(parse(&parser_only).unwrap().check_supported().is_err());
+            assert_eq!(
+                parse(&parser_only).unwrap().check_supported(),
+                Err(Error::BundleInvalid)
+            );
         }
     }
 
@@ -588,8 +599,12 @@ mod tests {
         check_contracts(&parse(&meta)).unwrap();
         meta["decoder_contract"] = serde_json::json!(super::super::DECODER_CONTRACT);
         assert!(check_contracts(&parse(&meta)).is_err());
-        meta["model_version"] = serde_json::json!("0.2.1");
-        assert!(check_version(&parse(&meta)).is_err());
+        meta["model_version"] = serde_json::json!("0.4.0");
+        check_version(&parse(&meta)).unwrap();
+        for unsupported in ["0.2.1", "0.5.0", "1.4.0"] {
+            meta["model_version"] = serde_json::json!(unsupported);
+            assert!(check_version(&parse(&meta)).is_err(), "{unsupported}");
+        }
         let mut bundle = Bundle {
             manifest: Manifest {
                 format: "1".into(),

@@ -21,14 +21,15 @@ fn load(bytes: &[u8], checksum: Option<&str>) -> Result<Tessera, Error> {
 #[test]
 fn committed_bundle_loads() {
     let t = load(common::BUNDLE, Some(common::bundle_checksum())).unwrap();
-    assert_eq!(t.model_version(), Some("0.3.0"));
+    assert_eq!(t.model_version(), Some("0.4.0"));
     let metadata = header(common::BUNDLE)["__metadata__"].clone();
     assert_eq!(metadata["format"], "2");
     assert_eq!(metadata["status"], "experimental");
     assert_eq!(metadata["model_scope"], "US");
-    assert_eq!(metadata["detector_training_updates"], "4000");
-    assert_eq!(metadata["detector_training_complete"], "false");
-    assert_eq!(metadata["training_seen_95_percent_gate_passed"], "false");
+    assert_eq!(metadata["detector_training_updates"], "6160");
+    assert_eq!(metadata["detector_training_complete"], "true");
+    assert_eq!(metadata["learning_gate_passed"], "true");
+    assert_eq!(metadata["detector_input_policy"], "known_us");
     assert_eq!(metadata["fresh_unseen_evaluation_pending"], "true");
     assert_eq!(metadata["general_accuracy_claim"], "false");
     assert_eq!(metadata["tokenizer_contract"], "tessera-tokenize-legacy-v1");
@@ -39,6 +40,14 @@ fn committed_bundle_loads() {
     assert_eq!(
         metadata["detector_architecture"],
         tessera::internal::CONTEXT96_RMS_CONTRACT
+    );
+    assert_eq!(
+        metadata["detector_feature_config"],
+        r#"{"contract":"tessera-detector-tab-cells25-v1","flag_bits":25}"#
+    );
+    assert_eq!(
+        metadata["detector_postprocess_contract"],
+        "address_labeled_fields_v1"
     );
 }
 
@@ -97,7 +106,7 @@ fn newer_format_is_unsupported() {
 
 #[test]
 fn a_later_model_series_is_unsupported() {
-    let bytes = with_header_edit(r#""model_version":"0.3."#, r#""model_version":"0.4."#);
+    let bytes = with_header_edit(r#""model_version":"0.4."#, r#""model_version":"0.5."#);
     assert_eq!(load(&bytes, None).unwrap_err(), Error::UnsupportedVersion);
 }
 
@@ -124,7 +133,9 @@ fn with_metadata(edit: impl FnOnce(&mut serde_json::Map<String, serde_json::Valu
     with_metadata_in(common::BUNDLE, edit)
 }
 
-/// Reuse tensor values in a synthetic six-block format-1 fixture, with compacted offsets.
+/// Reuse tensor values in a synthetic six-block format-1 fixture, with compacted offsets. The
+/// fixture keeps the legacy 23 detector flags: the tab-cell flags are the projection's last two
+/// input columns, so each row drops them.
 fn legacy_bundle() -> Vec<u8> {
     let n = u64::from_le_bytes(common::BUNDLE[..8].try_into().unwrap()) as usize;
     let mut header = header(common::BUNDLE);
@@ -137,20 +148,38 @@ fn legacy_bundle() -> Vec<u8> {
         "detector_architecture",
         "tokenizer_contract",
         "decoder_contract",
+        "detector_feature_config",
+        "detector_postprocess_contract",
+        "detector_input_policy",
     ] {
         metadata.remove(key);
     }
+    let proj = &mut entries["detector.proj.weight"]["shape"];
+    let (rows, columns) = (
+        proj[0].as_u64().unwrap() as usize,
+        proj[1].as_u64().unwrap() as usize,
+    );
+    let legacy_columns = columns - 2;
+    *proj = serde_json::json!([rows, legacy_columns]);
     let mut tensors: Vec<_> = entries
         .iter_mut()
         .filter(|(name, _)| *name != "__metadata__")
         .collect();
     tensors.sort_by_key(|(_, entry)| entry["data_offsets"][0].as_u64().unwrap());
     let mut data = Vec::new();
-    for (_, entry) in tensors {
+    for (name, entry) in tensors {
         let start = entry["data_offsets"][0].as_u64().unwrap() as usize;
         let end = entry["data_offsets"][1].as_u64().unwrap() as usize;
         let offset = data.len();
-        data.extend_from_slice(&common::BUNDLE[8 + n + start..8 + n + end]);
+        let values = &common::BUNDLE[8 + n + start..8 + n + end];
+        if name == "detector.proj.weight" {
+            assert_eq!(values.len(), rows * columns);
+            for row in values.chunks(columns) {
+                data.extend_from_slice(&row[..legacy_columns]);
+            }
+        } else {
+            data.extend_from_slice(values);
+        }
         entry["data_offsets"] = serde_json::json!([offset, data.len()]);
     }
     let header = serde_json::to_vec(&header).unwrap();
@@ -314,14 +343,21 @@ fn the_series_is_read_before_the_rest_of_the_version() {
     assert_eq!(result(&legacy, "0.3.0-rc1"), Err(Error::UnsupportedVersion));
     assert_eq!(result(common::BUNDLE, "0.3.0"), Ok(()));
     assert_eq!(result(common::BUNDLE, "0.3.7"), Ok(()));
+    assert_eq!(result(common::BUNDLE, "0.4.0"), Ok(()));
+    assert_eq!(result(common::BUNDLE, "0.4.7"), Ok(()));
     assert_eq!(
         result(common::BUNDLE, "0.4.0-rc1"),
+        Err(Error::BundleInvalid)
+    );
+    assert_eq!(
+        result(common::BUNDLE, "0.5.0-rc1"),
         Err(Error::UnsupportedVersion)
     );
     for (v, error) in [
         ("0.1.9", Error::UnsupportedVersion),
         ("1.0", Error::UnsupportedVersion),
         ("0.3", Error::BundleInvalid),
+        ("0.4", Error::BundleInvalid),
         ("0.3.0-rc1", Error::BundleInvalid),
         ("garbage", Error::BundleInvalid),
         ("", Error::BundleInvalid),
@@ -418,7 +454,7 @@ fn a_bundle_that_loads_never_panics_on_parse() {
     let bytes = common::BUNDLE;
     let n = u64::from_le_bytes(bytes[..8].try_into().unwrap()) as usize;
     let header = std::str::from_utf8(&bytes[8..8 + n]).unwrap().to_string();
-    let fc_start = header.find("feature_config").unwrap();
+    let fc_start = header.find("\"feature_config\"").unwrap();
     let fc_end = fc_start + header[fc_start..].find("}\"").unwrap();
     let in_shape = |i: usize| {
         header[..i]

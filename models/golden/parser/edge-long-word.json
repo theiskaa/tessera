@@ -1,6 +1,6 @@
 {
   "net": "parser",
-  "bundle_version": "0.3.0",
+  "bundle_version": "0.4.0",
   "input": {
     "text": "Pneumonoultramicroscopicsilicovolcanoconiosis, Austin, TX 78701",
     "tokens": [

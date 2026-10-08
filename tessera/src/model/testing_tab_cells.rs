@@ -335,23 +335,24 @@ fn optional_metadata_and_tensor_widths_never_silently_fallback() {
 }
 
 #[test]
-fn committed_bundle_omits_optional_contract_and_still_defaults_legacy23() {
+fn committed_bundle_declares_tab_cells_and_omitting_it_defaults_legacy23() {
     let bytes = std::fs::read(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../models/tessera-v1.safetensors"
     ))
     .unwrap();
-    let parts = Parts::read(&bytes);
-    assert!(
-        !parts.header["__metadata__"]
-            .as_object()
-            .unwrap()
-            .contains_key("detector_feature_config")
-    );
     let bundle = Bundle::parse(&bytes, None).unwrap();
     assert_eq!(
         bundle.manifest.detector_feature_contract,
-        DetectorFeatureContract::Legacy23
+        DetectorFeatureContract::TabCells25
     );
     assert_eq!(bundle.manifest.flag_bits, 23);
+    let mut parts = Parts::read(&bytes);
+    parts.metadata().remove("detector_feature_config");
+    let omitted = parts.write();
+    let manifest = Bundle::parse(&omitted, None).unwrap().manifest;
+    assert_eq!(
+        manifest.detector_feature_contract,
+        DetectorFeatureContract::Legacy23
+    );
 }

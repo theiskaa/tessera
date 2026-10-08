@@ -1,6 +1,6 @@
 {
   "net": "parser",
-  "bundle_version": "0.3.0",
+  "bundle_version": "0.4.0",
   "input": {
     "text": "Spink Cty, South Dakota\nWoburn, MA 01801\n17109 Parks Crn\nLincoln, AR 72744\nP.O. Box # 48477\nSheffield & DePaul\nChicago\nNorth Edgewood Street\nBaltimore, MD 21216\nSchertz, Texas\nQueens\nN. Y. 11434\nNew York Cty\n3rd Lvl\nLot # 10094\n4003 Sunflower Avenue\n4285 Centennial Drive\n# 267\nSam's Club\nCable Park Historic District\nSandusky, OH\n146 Henry St\nBrooklyn Heights\nNew York Cty, N.Y.\nMain Street\nDowntown\nVancouver, WA 98660\nDenver, Denver Co, CO\n722 S W Tyler Street\nAp 11\nDakota Hotel\nS Francisco, CA 94109\n144 Kroemer Avenue\nCalverton, Suffolk County, New York\nUnited States\nMt Vernon, Fairfax Co, VA\n6482 Putnam Ford Dr\nSturbridge\nWoodstock, Georgia 30189\nSouth Doctor M L King Jr Drive\nDouglas\nChicago\n20 Hansen Court\nNarberth, PA 19072\n10910 Northeast Halsey Street\n2nd Level\nNumber 221R\nParkrose Hgths\nPortland, OR 97220\nQueens\nN. Y. 11379\n7101 3rd Avenue\nApt 282R\nBK\nNew York City, N.Y.\nQueens\nFl 9\nUnit No 10059\n614 Southwest Grand Court\nEllenwand\nTopeka",
     "tokens": [
