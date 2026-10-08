@@ -23,6 +23,7 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-features --all-targets -- -D warnings
       - run: cargo test --workspace
+      - run: cargo test -p tessera --features cli --test cli --test cli_json
 
   web:
     runs-on: ubuntu-latest
