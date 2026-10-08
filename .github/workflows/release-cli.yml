@@ -1,0 +1,59 @@
+name: release-cli
+
+on:
+  push:
+    tags: ["v*"]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            os: macos-latest
+          # Cross-compiled on the Apple silicon runner: Apple's toolchain links both architectures.
+          - target: x86_64-apple-darwin
+            os: macos-latest
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.96"
+          targets: ${{ matrix.target }}
+      - run: cargo build --locked --release -p tessera --bin tessera --features cli --target ${{ matrix.target }}
+      # The archive carries the model directory too, so `tessera json --bundle models` works
+      # with weights matching the binary's runtime.
+      - name: package
+        run: |
+          name="tessera-${GITHUB_REF_NAME}-${{ matrix.target }}"
+          mkdir -p "$name/models"
+          cp "target/${{ matrix.target }}/release/tessera" README.md LICENSE-MIT LICENSE-APACHE NOTICE "$name/"
+          cp models/bundle.json models/tessera-v1.safetensors models/tessera-v1.sha256 "$name/models/"
+          tar czf "$name.tar.gz" "$name"
+          shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tessera-${{ matrix.target }}
+          path: tessera-*.tar.gz*
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            tessera-*.tar.gz
+            tessera-*.tar.gz.sha256
