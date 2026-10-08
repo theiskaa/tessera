@@ -1,14 +1,14 @@
-//! The JSON shapes the CLI prints: entities, contacts, and their offsets.
+//! The JSON shapes of a response: entities, contacts, and their offsets.
 
+use crate::internal::display_confidence;
+use crate::{Contact, Entity, Extraction};
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
-use tessera::internal::display_confidence;
-use tessera::{Contact, Entity, Extraction};
 
 /// The unit `start` and `end` count.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub(crate) enum Offsets {
+pub(super) enum Offsets {
     /// UTF-8 bytes, as the library reports them.
     #[default]
     Utf8,
@@ -18,7 +18,7 @@ pub(crate) enum Offsets {
 
 /// The source text results are rendered against, with byte offsets converted to the requested
 /// unit.
-pub(crate) struct Document<'a> {
+pub(super) struct Document<'a> {
     text: &'a str,
     /// `(byte, unit)` pairs sorted by byte for the offsets the results carry; `None` for UTF-8.
     units: Option<Vec<(usize, usize)>>,
@@ -27,7 +27,7 @@ pub(crate) struct Document<'a> {
 impl<'a> Document<'a> {
     /// `needed` lists the byte offsets that will be rendered, so a UTF-16 conversion walks
     /// `text` once instead of once per offset.
-    pub(crate) fn new(
+    pub(super) fn new(
         text: &'a str,
         offsets: Offsets,
         needed: impl IntoIterator<Item = usize>,
@@ -53,7 +53,7 @@ impl<'a> Document<'a> {
     }
 
     /// One entity, with its address components when it has any.
-    pub(crate) fn entity(&self, e: &Entity) -> Value {
+    pub(super) fn entity(&self, e: &Entity) -> Value {
         let mut m = Map::new();
         m.insert("kind".into(), e.kind.as_str().into());
         m.insert("text".into(), e.text(self.text).into());
@@ -91,12 +91,12 @@ impl<'a> Document<'a> {
     }
 
     /// The entities as a JSON array, in their given order.
-    pub(crate) fn entities(&self, entities: &[Entity]) -> Value {
+    pub(super) fn entities(&self, entities: &[Entity]) -> Value {
         entities.iter().map(|e| self.entity(e)).collect()
     }
 
     /// One contact. `person` and `org` are absent rather than null when the contact has none.
-    pub(crate) fn contact(&self, c: &Contact) -> Value {
+    pub(super) fn contact(&self, c: &Contact) -> Value {
         let mut m = Map::new();
         m.insert("start".into(), self.offset(c.start).into());
         m.insert("end".into(), self.offset(c.end).into());
@@ -118,21 +118,21 @@ impl<'a> Document<'a> {
     }
 
     /// The contacts and the unassigned entities, as two JSON arrays.
-    pub(crate) fn extraction(&self, x: &Extraction) -> (Value, Value) {
+    pub(super) fn extraction(&self, x: &Extraction) -> (Value, Value) {
         let contacts = x.contacts.iter().map(|c| self.contact(c)).collect();
         (contacts, self.entities(&x.unassigned))
     }
 }
 
 /// Every byte offset `Document::entity` renders for `e`.
-pub(crate) fn entity_offsets(e: &Entity) -> impl Iterator<Item = usize> + '_ {
+pub(super) fn entity_offsets(e: &Entity) -> impl Iterator<Item = usize> + '_ {
     [e.start, e.end]
         .into_iter()
         .chain(e.components.iter().flat_map(|c| [c.start, c.end]))
 }
 
 /// Every byte offset `Document::extraction` renders for `x`.
-pub(crate) fn extraction_offsets(x: &Extraction) -> impl Iterator<Item = usize> + '_ {
+pub(super) fn extraction_offsets(x: &Extraction) -> impl Iterator<Item = usize> + '_ {
     x.contacts
         .iter()
         .flat_map(|c| {

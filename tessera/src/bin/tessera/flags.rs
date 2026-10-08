@@ -6,8 +6,6 @@ use std::process::ExitCode;
 use serde_json::json;
 use tessera::{Config, Format, Kind, KindSet, MarkdownOptions, Query, Tessera};
 
-use crate::render::{Document, Offsets};
-
 const USAGE: &str = "usage: tessera [--kinds email,phone] [--country GB,GE] [--include-uncertain] [--format text|markdown] [--include-code] [--include-html] [--no-gfm-tables] [--model PATH] [--pretty] [FILE]
        tessera json --bundle DIR [--pretty] < request.json";
 
@@ -137,7 +135,7 @@ fn run(args: impl Iterator<Item = String>) -> Result<(), (u8, String)> {
             },
         )
         .map_err(|e| (1, e.to_string()))?;
-    let out = json!({ "entities": Document::new(&text, Offsets::Utf8, []).entities(&entities) });
+    let out = json!({ "entities": tessera::json::entities(&text, &entities) });
     let rendered = if args.pretty {
         serde_json::to_string_pretty(&out)
     } else {

@@ -23,6 +23,8 @@ mod detector_features;
 mod detector_postprocess;
 mod features;
 mod group;
+#[cfg(feature = "json")]
+pub mod json;
 #[cfg(feature = "markdown")]
 pub mod markdown;
 mod model;

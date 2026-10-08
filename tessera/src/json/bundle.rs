@@ -4,27 +4,39 @@ use std::path::{Component, Path, PathBuf};
 
 use serde::Deserialize;
 
-/// The fields of `bundle.json` the CLI reads; the rest, such as `metadata`, are ignored.
+/// The fields of `bundle.json` read here; the rest are ignored.
 #[derive(Deserialize)]
 struct Manifest {
     runtime: String,
     file: String,
     sha256: String,
     bytes: Option<u64>,
+    #[serde(default)]
+    metadata: Metadata,
+}
+
+/// The `metadata` fields read here.
+#[derive(Deserialize, Default)]
+struct Metadata {
+    /// How the detector was trained to read its input; `known_us` means with a `US` hint.
+    detector_input_policy: Option<String>,
 }
 
 /// A weights file read from a model directory, with the checksum it must match.
-pub(crate) struct Bundle {
+pub(super) struct Bundle {
     /// Where the weights were read from, for error messages.
-    pub(crate) path: PathBuf,
+    pub(super) path: PathBuf,
     /// The weights file's contents, not yet verified.
-    pub(crate) bytes: Vec<u8>,
+    pub(super) bytes: Vec<u8>,
     /// The recorded digest in the `sha256-<hex>` form `Config::expected_checksum` takes.
-    pub(crate) checksum: String,
+    pub(super) checksum: String,
+    /// The region hint a request without one is answered with: the one the detector was
+    /// trained to expect.
+    pub(super) country_hint: Vec<String>,
 }
 
 /// Read `dir/bundle.json` and the weights file it names. Errors are complete messages.
-pub(crate) fn read(dir: &Path) -> Result<Bundle, String> {
+pub(super) fn read(dir: &Path) -> Result<Bundle, String> {
     let manifest_path = dir.join("bundle.json");
     let raw =
         std::fs::read(&manifest_path).map_err(|e| format!("{}: {e}", manifest_path.display()))?;
@@ -61,9 +73,14 @@ pub(crate) fn read(dir: &Path) -> Result<Bundle, String> {
             bytes.len()
         ));
     }
+    let country_hint = match manifest.metadata.detector_input_policy.as_deref() {
+        Some("known_us") => vec!["US".to_owned()],
+        _ => Vec::new(),
+    };
     Ok(Bundle {
         path,
         bytes,
         checksum: format!("sha256-{}", manifest.sha256),
+        country_hint,
     })
 }

@@ -123,7 +123,7 @@ cargo install --git https://github.com/theiskaa/tessera tessera --features cli
 | `operation`         | `"detect"`, `"contacts"`, or `"address"`; required                           |
 | `text`              | The document, or for `"address"` the one address; required                   |
 | `kinds`             | Any of `"person"`, `"org"`, `"address"`, `"email"`, `"phone"`; default all   |
-| `country_hint`      | Region codes such as `["US"]`; default inferred from the text                |
+| `country_hint`      | Region codes such as `["US"]`; default the hint the bundle's detector expects |
 | `include_uncertain` | Return low-confidence results too; default `false`                           |
 | `format`            | `"text"`, or `"markdown"` in a build with the `markdown` feature             |
 | `offsets`           | `"utf8"` bytes (default) or `"utf16"` code units for every `start` and `end` |
@@ -136,6 +136,8 @@ echo '{"operation":"detect","text":"Write to jordan@acme.example","kinds":["emai
 ```json
 {"model":"tessera","operation":"detect","entities":[{"kind":"email","text":"jordan@acme.example","start":9,"end":28,"confidence":0.99,"review_recommended":false,"source":"rules","normalized":"jordan@acme.example"}]}
 ```
+
+With the `json` feature, a program answers the same request in process with `tessera::json::answer(dir, request)`, which returns the response object or a `Fault` saying whether the request or the run is to blame.
 
 A response always has `model` and `operation`, then `entities` for `detect`, `contacts` and `unassigned` for `contacts`, or `address` with its `components` for `address`. Field names follow [index.d.ts](tessera/js/index.d.ts) in snake case. The exit status is 0 on success, 2 when the request is at fault (malformed JSON, an unknown field or value, or input the library rejects as too large), and 1 when the run fails (I/O, a missing or mismatched bundle, or an inference failure). Errors are one line on stderr.
 
