@@ -41,7 +41,7 @@ pulldown-cmark = { version = "0.13", default-features = false, optional = true }
 
 [[bin]]
 name = "tessera"
-path = "src/bin/tessera.rs"
+path = "src/bin/tessera/main.rs"
 required-features = ["cli"]
 
 [dev-dependencies]
