@@ -92,41 +92,77 @@ fn check_case(
     max_diff
 }
 
+/// Checks one parser golden case against `tessera`, returning the largest logit difference and
+/// the longest n-gram list of any token.
+fn check_parser(tessera: &tessera::Tessera, name: &str, json: &str) -> (f32, usize) {
+    let case: common::Golden = common::parse(name, json);
+    assert_eq!(
+        tessera.model_version(),
+        Some(case.bundle_version.as_str()),
+        "{name}: golden bundle version differs"
+    );
+    let trace = tessera::internal::parse_address_trace(tessera, &case.input.text).unwrap();
+    let diff = check_case(
+        name,
+        &case,
+        &trace.token_spans,
+        &trace.features,
+        &trace.logits,
+        &trace.decoded,
+    );
+    let longest = trace
+        .features
+        .iter()
+        .map(|f| f.ngram_ids.len())
+        .max()
+        .unwrap_or(0);
+    (diff, longest)
+}
+
+/// Checks one detector golden case against `tessera`, tracing its rules with the country hint
+/// of the input policy the case records, or with none for a legacy case.
+fn check_detector(tessera: &tessera::Tessera, name: &str, json: &str) -> f32 {
+    let case: common::Golden = common::parse(name, json);
+    assert_eq!(
+        tessera.model_version(),
+        Some(case.bundle_version.as_str()),
+        "{name}: golden bundle version differs"
+    );
+    let trace = match &case.input_policy {
+        Some(_) => {
+            let hint: Vec<&str> = case.country_hint.iter().map(String::as_str).collect();
+            tessera.detect_trace_with_country_hint(&case.input.text, &hint)
+        }
+        None => tessera::internal::detect_trace(tessera, &case.input.text),
+    }
+    .unwrap();
+    assert_eq!(trace.masked, case.masked, "{name}: decode mask differs");
+    check_case(
+        name,
+        &case,
+        &trace.token_spans,
+        &trace.features,
+        &trace.logits,
+        &trace.decoded,
+    )
+}
+
 #[test]
 fn parser_golden_vectors() {
     let tessera = common::load_tessera();
-    let mut checked = 0;
     let mut longest = 0;
     let mut worst = 0f32;
     for &(name, json) in PARSER_CASES {
-        let case: common::Golden = common::parse(name, json);
-        assert_eq!(
-            tessera.model_version(),
-            Some(case.bundle_version.as_str()),
-            "{name}: golden bundle version differs"
-        );
-        let trace = tessera::internal::parse_address_trace(&tessera, &case.input.text).unwrap();
-        let diff = check_case(
-            name,
-            &case,
-            &trace.token_spans,
-            &trace.features,
-            &trace.logits,
-            &trace.decoded,
-        );
+        let (diff, tokens) = check_parser(&tessera, name, json);
         worst = worst.max(diff);
-        longest = trace
-            .features
-            .iter()
-            .map(|f| f.ngram_ids.len())
-            .fold(longest, usize::max);
-        checked += 1;
+        longest = longest.max(tokens);
     }
     assert_eq!(
         longest,
         tessera::internal::MAX_NGRAMS_PER_TOKEN,
         "no golden token reaches the n-gram cap"
     );
+    let checked = PARSER_CASES.len();
     assert!(
         checked >= 6,
         "expected at least 6 golden cases, found {checked}"
@@ -142,27 +178,63 @@ fn detector_golden_vectors() {
     let tessera = common::load_all();
     let mut worst = 0f32;
     for &(name, json) in DETECTOR_CASES {
-        let case: common::Golden = common::parse(name, json);
-        assert_eq!(
-            tessera.model_version(),
-            Some(case.bundle_version.as_str()),
-            "{name}: golden bundle version differs"
-        );
-        let trace = tessera::internal::detect_trace(&tessera, &case.input.text).unwrap();
-        assert_eq!(trace.masked, case.masked, "{name}: decode mask differs");
-        let diff = check_case(
-            name,
-            &case,
-            &trace.token_spans,
-            &trace.features,
-            &trace.logits,
-            &trace.decoded,
-        );
-        worst = worst.max(diff);
+        worst = worst.max(check_detector(&tessera, name, json));
     }
     common::report!(
         "golden detector: {} cases, max logit difference {worst:e}",
         DETECTOR_CASES.len()
+    );
+}
+
+/// The same gate over a bundle not yet installed in `models/`: set `TESSERA_GOLDEN_BUNDLE_DIR`
+/// to the `--out` directory of `trainer export`, holding `tessera-v1.safetensors`, its
+/// `.sha256`, and `golden/{parser,detector}/*.json`.
+#[cfg(all(not(target_arch = "wasm32"), feature = "phone-metadata"))]
+#[test]
+#[ignore = "set TESSERA_GOLDEN_BUNDLE_DIR to an exported bundle directory"]
+fn exported_bundle_golden_vectors() {
+    let dir = std::path::PathBuf::from(
+        std::env::var("TESSERA_GOLDEN_BUNDLE_DIR").expect("TESSERA_GOLDEN_BUNDLE_DIR is set"),
+    );
+    let bundle = std::fs::read(dir.join("tessera-v1.safetensors")).unwrap();
+    let checksum = std::fs::read_to_string(dir.join("tessera-v1.sha256")).unwrap();
+    let tessera = tessera::Tessera::load(
+        &bundle,
+        tessera::Config {
+            kinds: tessera::Kind::all(),
+            expected_checksum: Some(checksum.trim()),
+        },
+    )
+    .expect("exported bundle loads");
+    let cases = |net: &str| {
+        let mut cases: Vec<(String, String)> = std::fs::read_dir(dir.join("golden").join(net))
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .filter(|p| p.extension().is_some_and(|x| x == "json"))
+            .map(|p| {
+                let name = p.file_stem().unwrap().to_string_lossy().into_owned();
+                (name, std::fs::read_to_string(p).unwrap())
+            })
+            .collect();
+        cases.sort();
+        cases
+    };
+    let (parser, detector) = (cases("parser"), cases("detector"));
+    assert!(
+        parser.len() >= 6 && detector.len() >= 7,
+        "golden cases missing"
+    );
+    let mut worst = 0f32;
+    for (name, json) in &parser {
+        worst = worst.max(check_parser(&tessera, name, json).0);
+    }
+    for (name, json) in &detector {
+        worst = worst.max(check_detector(&tessera, name, json));
+    }
+    common::report!(
+        "exported golden: {} parser and {} detector cases, max logit difference {worst:e}",
+        parser.len(),
+        detector.len()
     );
 }
 

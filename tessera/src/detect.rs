@@ -102,10 +102,30 @@ impl Tessera {
     }
 
     /// The detector over all of `text` as one window, with rule spans found without a country
-    /// hint, exactly as the trainer encodes its golden cases.
+    /// hint, exactly as the trainer encodes a legacy bundle's golden cases.
     pub(crate) fn detect_trace(&self, text: &str) -> Result<internal::DetectTrace, Error> {
+        self.trace_with_rules(text, &rules::scan(text, &[]))
+    }
+
+    /// The detector over all of `text` as one window, with rule spans found as public
+    /// plain-text detection finds them for `country_hint`, exactly as the trainer encodes the
+    /// golden cases of a bundle whose detector declares that input policy.
+    #[doc(hidden)]
+    pub fn detect_trace_with_country_hint(
+        &self,
+        text: &str,
+        country_hint: &[&str],
+    ) -> Result<internal::DetectTrace, Error> {
+        self.trace_with_rules(text, &rules::scan_text_rules(text, country_hint))
+    }
+
+    fn trace_with_rules(
+        &self,
+        text: &str,
+        rule_entities: &[Entity],
+    ) -> Result<internal::DetectTrace, Error> {
         let (model, detector) = self.detector()?;
-        let inputs = detector_inputs(text, &rules::scan(text, &[]), model, None);
+        let inputs = detector_inputs(text, rule_entities, model, None);
         let logits = detector.forward(&inputs.feats)?;
         let mut probs = logits.clone();
         model::kernels::softmax_rows(&mut probs, detector.labels());

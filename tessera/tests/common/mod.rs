@@ -189,6 +189,13 @@ pub struct Golden {
     /// Detector goldens only: whether each position lies inside an email or phone.
     #[serde(default)]
     pub masked: Vec<bool>,
+    /// Detector goldens of a declared input policy: the policy's name. Absent for legacy
+    /// goldens, whose rule spans were found without a country hint.
+    #[serde(default)]
+    pub input_policy: Option<String>,
+    /// The country hint the declared input policy runs the rules with.
+    #[serde(default)]
+    pub country_hint: Vec<String>,
 }
 
 #[derive(Deserialize)]
