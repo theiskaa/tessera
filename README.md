@@ -29,7 +29,7 @@ Email and phone extraction uses validating rules. Names, organizations, and addr
 | `parse_address` / `parseAddress`       | Split text already known to be one address               | Labeled address components                   |
 | `extract_contacts` / `extractContacts` | Associate extracted details with people or organizations | Contacts and unassigned entities             |
 
-Rust and CLI offsets use UTF-8 bytes. JavaScript offsets use UTF-16 code units, so `text.slice(start, end)` returns the entity. Every `end` is exclusive. Keep the original string when using offsets.
+Rust and CLI offsets use UTF-8 bytes; the CLI's JSON mode can return UTF-16 instead. JavaScript offsets use UTF-16 code units, so `text.slice(start, end)` returns the entity. Every `end` is exclusive. Keep the original string when using offsets.
 
 ### Rust
 
@@ -107,6 +107,37 @@ The complete JavaScript API is in [index.d.ts](tessera/js/index.d.ts).
 - `parse_address` accepts one address of at most 256 non-whitespace tokens and 8 KiB.
 - Rust's optional `markdown` feature scans prose and contact link destinations while retaining source offsets. The default JavaScript package omits it and rejects `format: "markdown"`.
 - Rust failures use `tessera::Error`; JavaScript failures expose a `TesseraError` code. An empty successful result means nothing was returned.
+
+### Command-line tool
+
+The crates.io and npm name `tessera` belongs to unrelated projects, so install the binary from this repository, or download one from a [GitHub release](https://github.com/theiskaa/tessera/releases):
+
+```sh
+cargo install --git https://github.com/theiskaa/tessera tessera --features cli
+```
+
+`tessera [--kinds email,phone] [--model PATH] [FILE]` prints the entities in a file or stdin. For programs that drive it as a subprocess, `tessera json --bundle DIR` answers one JSON request read from stdin with one JSON line on stdout. `DIR` holds a `bundle.json` like [models/bundle.json](models/bundle.json); the weights file it names is verified against its `sha256` before loading. The text is only ever read from stdin, never from arguments, which other users can see in `ps`.
+
+| Request field       | Value                                                                        |
+| ------------------- | ---------------------------------------------------------------------------- |
+| `operation`         | `"detect"`, `"contacts"`, or `"address"`; required                           |
+| `text`              | The document, or for `"address"` the one address; required                   |
+| `kinds`             | Any of `"person"`, `"org"`, `"address"`, `"email"`, `"phone"`; default all   |
+| `country_hint`      | Region codes such as `["US"]`; default inferred from the text                |
+| `include_uncertain` | Return low-confidence results too; default `false`                           |
+| `format`            | `"text"`, or `"markdown"` in a build with the `markdown` feature             |
+| `offsets`           | `"utf8"` bytes (default) or `"utf16"` code units for every `start` and `end` |
+
+```sh
+echo '{"operation":"detect","text":"Write to jordan@acme.example","kinds":["email"]}' \
+  | tessera json --bundle models
+```
+
+```json
+{"model":"tessera","operation":"detect","entities":[{"kind":"email","text":"jordan@acme.example","start":9,"end":28,"confidence":0.99,"review_recommended":false,"source":"rules","normalized":"jordan@acme.example"}]}
+```
+
+A response always has `model` and `operation`, then `entities` for `detect`, `contacts` and `unassigned` for `contacts`, or `address` with its `components` for `address`. Field names follow [index.d.ts](tessera/js/index.d.ts) in snake case. The exit status is 0 on success, 2 when the request is at fault (malformed JSON, an unknown field or value, or input the library rejects as too large), and 1 when the run fails (I/O, a missing or mismatched bundle, or an inference failure). Errors are one line on stderr.
 
 ## Model
 
