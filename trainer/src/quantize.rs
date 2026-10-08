@@ -338,7 +338,7 @@ pub(crate) fn load_best_for_operator<B: Backend>(
 }
 
 /// F1 may drop by at most this much when the weights go to int8.
-const MAX_F1_DROP: f64 = 0.002;
+pub(crate) const MAX_F1_DROP: f64 = 0.002;
 const GATE_VERSION: u64 = 2;
 
 /// Remove approval before any operation that may change the run's effective artifacts.
@@ -447,6 +447,30 @@ fn reject_quantization(
     write_gate(run_dir, summary)
 }
 
+/// Gate scored weights: pass only when both F1 values are finite and int8 loses at most
+/// `MAX_F1_DROP`, then publish them with their bound gate; otherwise keep them as rejected,
+/// record the failed gate, and fail. `summary` receives the gate version and the decision.
+pub(crate) fn publish_scored(
+    run_dir: &Path,
+    pending: &Path,
+    initial_hashes: &serde_json::Value,
+    (f32_f1, int8_f1): (f64, f64),
+    summary: &mut serde_json::Map<String, serde_json::Value>,
+) -> anyhow::Result<()> {
+    let drop = f32_f1 - int8_f1;
+    let passed = f32_f1.is_finite() && int8_f1.is_finite() && drop <= MAX_F1_DROP;
+    summary.insert("gate_version".into(), GATE_VERSION.into());
+    summary.insert("passed".into(), passed.into());
+    if !passed {
+        reject_quantization(run_dir, pending, summary)?;
+        bail!(
+            "int8 weights lose {drop:.4} F1, over the {MAX_F1_DROP} limit, or score non-finite; {} kept for inspection",
+            run_dir.join("quantized.rejected.safetensors").display()
+        );
+    }
+    publish_validated(run_dir, pending, initial_hashes, summary)
+}
+
 /// Validation F1 of the f32 and the int8 model, with the summary keys to record them under:
 /// component F1 and exact parses for the parser, macro exact span F1 for the detector.
 fn validation_scores<B: Backend>(
@@ -524,6 +548,11 @@ fn validation_scores<B: Backend>(
 /// `trainer quantize`: quantizes the best checkpoint and fails if validation F1 drops by more
 /// than the allowed margin.
 pub fn run<B: Backend>(run_dir: &Path, device: &B::Device) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        !crate::reviewed_release::staged(run_dir)?,
+        "{} is a reviewed release stage; only `trainer reviewed-release` quantizes it",
+        run_dir.display()
+    );
     invalidate_gate(run_dir)?;
     reject_diagnostic_run(run_dir)?;
     crate::train::verify_input_snapshot(run_dir)?;

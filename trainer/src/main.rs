@@ -49,6 +49,7 @@ mod residual_rms;
 mod reviewed_authored;
 mod reviewed_data;
 mod reviewed_fit;
+mod reviewed_release;
 mod reviewed_train;
 mod span_scores;
 mod tab_cell_migration;
@@ -280,6 +281,17 @@ enum Command {
         #[arg(long, required = true)]
         accept_experimental_quality: bool,
     },
+    /// Stage a completed reviewed fixed-final fit for export with an explicit quality waiver.
+    ReviewedRelease {
+        /// The reviewed fit run: `config.toml`, `manifest.json` and the completed `fit/`.
+        #[arg(long)]
+        fit: PathBuf,
+        /// A new stage directory, later passed to `trainer export --detector-run`.
+        #[arg(long)]
+        out: PathBuf,
+        #[arg(long, required = true)]
+        accept_experimental_quality: bool,
+    },
     /// Write the two-network safetensors bundle and the golden vectors of both networks.
     Export {
         /// The parser run.
@@ -494,6 +506,11 @@ fn main() -> anyhow::Result<()> {
             &out,
             accept_experimental_quality,
         ),
+        Command::ReviewedRelease {
+            fit,
+            out,
+            accept_experimental_quality,
+        } => reviewed_release::stage(&fit, &out, accept_experimental_quality),
         Command::Export {
             parser_run,
             detector_run,

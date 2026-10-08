@@ -17,8 +17,10 @@ use serde_json::json;
 use std::io::Write;
 use std::path::Path;
 
-const SCOPE: &str = "reviewed-native-fixed-fit-v1";
-const MIXED_SCOPE: &str = "reviewed-native-authored-fixed-fit-v1";
+/// Scope of a native-only fixed-final fit.
+pub(crate) const SCOPE: &str = "reviewed-native-fixed-fit-v1";
+/// Scope of a native fixed-final fit mixed with authored TRAIN rows.
+pub(crate) const MIXED_SCOPE: &str = "reviewed-native-authored-fixed-fit-v1";
 
 /// Validate all metadata without weights, or execute only the separately pinned fixed recipe.
 pub(crate) fn run(

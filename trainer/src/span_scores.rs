@@ -140,7 +140,7 @@ fn parse_config(bytes: &[u8], path: &Path) -> anyhow::Result<Config> {
 
 /// Load native f32 weights, refusing any tensor whose name or shape the config does not declare,
 /// and return the finite parameter digest.
-fn load_checkpoint(
+pub(crate) fn load_checkpoint(
     net: &TaggerNetConfig,
     path: &Path,
     device: &burn::backend::ndarray::NdArrayDevice,

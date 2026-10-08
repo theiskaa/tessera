@@ -56,7 +56,8 @@ struct Release {
     original_files: BTreeMap<PathBuf, String>,
 }
 
-fn hash(path: &Path) -> anyhow::Result<String> {
+/// SHA-256 of a file's exact bytes.
+pub(crate) fn hash(path: &Path) -> anyhow::Result<String> {
     Ok(crate::export::sha256_hex(
         &std::fs::read(path).with_context(|| format!("reading {}", path.display()))?,
     ))
@@ -261,7 +262,11 @@ fn evaluated_files(report: &Value) -> anyhow::Result<BTreeMap<String, Pin>> {
     Ok(files)
 }
 
-fn verify_hashes(base: Option<&Path>, files: &BTreeMap<PathBuf, String>) -> anyhow::Result<()> {
+/// Require every staged (relative to `base`) or original (absolute) file to keep its hash.
+pub(crate) fn verify_hashes(
+    base: Option<&Path>,
+    files: &BTreeMap<PathBuf, String>,
+) -> anyhow::Result<()> {
     ensure!(!files.is_empty(), "release artifact hash closure absent");
     for (path, expected) in files {
         let actual_path = if let Some(base) = base {
@@ -374,13 +379,18 @@ fn exact_closure(release: &Release, evaluation: &Value) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Revalidate an experimental stage before quantization or export; ordinary runs return None.
+/// Revalidate an experimental or reviewed-fit stage before quantization or export; ordinary
+/// runs return None.
 pub(crate) fn verify(run: &Path) -> anyhow::Result<Option<Value>> {
     let path = run.join("release.json");
     if !path.try_exists()? {
         return Ok(None);
     }
-    let release: Release = serde_json::from_slice(&std::fs::read(path)?)?;
+    let bytes = std::fs::read(path)?;
+    if crate::reviewed_release::declares(&bytes)? {
+        return crate::reviewed_release::verify(run).map(Some);
+    }
+    let release: Release = serde_json::from_slice(&bytes)?;
     ensure!(
         release.schema == SCHEMA
             && release.experimental_quality_accepted
@@ -441,7 +451,8 @@ pub(crate) fn verify(run: &Path) -> anyhow::Result<Option<Value>> {
     Ok(Some(serde_json::to_value(release)?))
 }
 
-fn copy_file(
+/// Copy one original into the stage and record both of its hash bindings.
+pub(crate) fn copy_file(
     source: &Path,
     relative: &Path,
     out: &Path,

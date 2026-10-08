@@ -251,8 +251,12 @@ struct ShippedRun {
 
 fn load_run(dir: &Path, task: Task) -> anyhow::Result<ShippedRun> {
     crate::quantize::verify_gate(dir)?;
-    crate::train::verify_input_snapshot(dir)?;
-    let cfg = crate::config::load(&dir.join("config.toml"))?;
+    let cfg = if crate::reviewed_release::staged(dir)? {
+        crate::reviewed_release::verified_config(dir)?
+    } else {
+        crate::train::verify_input_snapshot(dir)?;
+        crate::config::load(&dir.join("config.toml"))?
+    };
     crate::quantize::verify_learning_result(dir, &cfg)?;
     anyhow::ensure!(
         cfg.task == task,
@@ -335,7 +339,11 @@ fn training_snapshot(parser_run: &Path, detector_run: &Path) -> anyhow::Result<S
         ("parser-inputs", parser_run),
         ("detector-inputs", detector_run),
     ] {
-        crate::train::load_input_snapshot(run)?;
+        if crate::reviewed_release::staged(run)? {
+            crate::reviewed_release::verified_config(run)?;
+        } else {
+            crate::train::load_input_snapshot(run)?;
+        }
         let bytes = std::fs::read(run.join("input_snapshot.json"))?;
         parts.push(format!("{name}:{}", sha256_hex(&bytes)));
     }
@@ -395,7 +403,20 @@ pub fn run(parser_run: &Path, detector_run: &Path, out: &Path, date: &str) -> an
         );
     }
     bind_artifact_hashes(&mut meta, parser_run, detector_run)?;
-    if let Some(approval) = crate::release_candidate::verify(detector_run)? {
+    let approval = crate::release_candidate::verify(detector_run)?;
+    let detector_policy = match approval
+        .as_ref()
+        .filter(|a| crate::reviewed_release::is_approval(a))
+    {
+        Some(approval) => Some(crate::reviewed_release::input_policy(approval)?),
+        None => None,
+    };
+    if let Some(approval) = approval
+        .as_ref()
+        .filter(|a| crate::reviewed_release::is_approval(a))
+    {
+        crate::reviewed_release::bind_metadata(&mut meta, approval, detector_run)?;
+    } else if let Some(approval) = approval {
         meta.insert(
             "detector_training_updates".into(),
             approval["optimizer_updates_executed"].to_string(),
@@ -465,6 +486,7 @@ pub fn run(parser_run: &Path, detector_run: &Path, out: &Path, date: &str) -> an
             &bundle_version,
             Task::Parser,
             crate::diagnostic_operator::ForwardOperator::Standard,
+            None,
             &f32_parser,
             &int8_parser,
             &text,
@@ -481,30 +503,15 @@ pub fn run(parser_run: &Path, detector_run: &Path, out: &Path, date: &str) -> an
     let golden_dir = out.join("golden").join("detector");
     std::fs::create_dir_all(&golden_dir)?;
     for (name, text) in DETECTOR_GOLDEN_TEXTS {
-        let enc = if detector.cfg.detector_feature_contract()
-            == tessera::internal::DetectorFeatureContract::Legacy23
-        {
-            detector::encode_document(text, &[], &fc)
-        } else {
-            detector::encode_document_with_feature_contract(
-                text,
-                &[],
-                &fc,
-                detector::DetectorInputPolicy::KnownUs,
-                detector.cfg.detector_feature_contract(),
-            )
-        }
-        .map_err(|e| anyhow::anyhow!("{name}: {e}"))?;
-        let case = golden_case(
+        let case = detector_golden(
             &bundle_version,
-            Task::Detector,
-            crate::diagnostic_operator::deployable(&detector.cfg),
-            &f32_detector,
-            &int8_detector,
+            &detector.cfg,
+            detector_policy,
+            (&f32_detector, &int8_detector),
             text,
-            &enc,
             &device,
-        )?;
+        )
+        .with_context(|| format!("detector golden {name}"))?;
         std::fs::write(
             golden_dir.join(format!("{name}.json")),
             golden_json(&case, 0) + "\n",
@@ -582,6 +589,51 @@ fn golden_json(v: &serde_json::Value, indent: usize) -> String {
         }
         v => v.to_string(),
     }
+}
+
+/// One detector golden case. A legacy bundle's rule spans are found without a country hint; a
+/// reviewed stage's are found with the hint of the input policy it was trained and scored with,
+/// which the case records so the library traces it the same way.
+fn detector_golden(
+    bundle_version: &str,
+    cfg: &Config,
+    policy: Option<detector::DetectorInputPolicy>,
+    (f32_model, int8_model): (&TaggerNet<NdArray>, &TaggerNet<NdArray>),
+    text: &str,
+    device: &burn::tensor::Device<NdArray>,
+) -> anyhow::Result<serde_json::Value> {
+    let fc = cfg.features.to_tessera();
+    let contract = cfg.detector_feature_contract();
+    let enc = match policy {
+        None => {
+            anyhow::ensure!(
+                contract == tessera::internal::DetectorFeatureContract::Legacy23,
+                "a {} detector needs its declared input policy",
+                contract.name()
+            );
+            detector::encode_document(text, &[], &fc)
+        }
+        Some(policy) => {
+            detector::encode_document_with_feature_contract(text, &[], &fc, policy, contract)
+        }
+    }
+    .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let mut case = golden_case(
+        bundle_version,
+        Task::Detector,
+        crate::diagnostic_operator::deployable(cfg),
+        cfg.net.detector_postprocess,
+        f32_model,
+        int8_model,
+        text,
+        &enc,
+        device,
+    )?;
+    if let Some(policy) = policy {
+        case["input_policy"] = serde_json::to_value(policy)?;
+        case["country_hint"] = serde_json::json!(policy.country_hint());
+    }
+    Ok(case)
 }
 
 /// The golden inputs: the first rows per country of the test split with 4 to 30 tokens, and
@@ -675,6 +727,7 @@ fn golden_case(
     bundle_version: &str,
     task: Task,
     operator: crate::diagnostic_operator::ForwardOperator,
+    postprocess: Option<crate::config::DetectorPostprocess>,
     f32_model: &TaggerNet<NdArray>,
     int8_model: &TaggerNet<NdArray>,
     text: &str,
@@ -743,14 +796,29 @@ fn golden_case(
                 "context golden token boundaries differ"
             );
             let flat: Vec<_> = probs.iter().flatten().copied().collect();
-            let candidates = crate::diagnostic_decode::decode(
-                operator.decoder(None),
-                text,
-                &enc.token_spans,
-                &flat,
-                &masked,
-                &breaks,
-            );
+            let candidates = match postprocess {
+                Some(crate::config::DetectorPostprocess::AddressLabeledFieldsV1) => {
+                    let bounds: Vec<_> = enc
+                        .token_spans
+                        .iter()
+                        .map(|&(start, end)| (start as usize, end as usize))
+                        .collect();
+                    tessera::internal::decode_detector_with_labeled_fields(
+                        text, &bounds, &flat, &masked, &breaks,
+                    )
+                }
+                _ => crate::diagnostic_decode::decode(
+                    operator.decoder(None),
+                    text,
+                    &enc.token_spans,
+                    &flat,
+                    &masked,
+                    &breaks,
+                ),
+            };
+            if let Some(postprocess) = postprocess {
+                case["detector_postprocess"] = serde_json::json!(postprocess.contract().name());
+            }
             case["detector_spans"] = serde_json::json!(candidates.iter().map(|s| serde_json::json!({"kind":s.kind.as_str(),"first":s.first,"last":s.last,"confidence":s.confidence})).collect::<Vec<_>>());
             case["forward_operator"] = serde_json::json!(crate::diagnostic_operator::CONTEXT_NAME);
             case["decoder_contract"] =
@@ -993,6 +1061,36 @@ mod tests {
             error.to_string().contains("changed during training"),
             "{error:#}"
         );
+    }
+
+    #[test]
+    fn export_accepts_a_reviewed_stage_and_rejects_tampering() {
+        let (fixture, stage) = crate::reviewed_release::tests::staged();
+        let run = load_run(&stage, Task::Detector).unwrap();
+        assert_eq!(
+            run.cfg.detector_feature_contract(),
+            tessera::internal::DetectorFeatureContract::TabCells25
+        );
+        assert!(training_snapshot(&stage, &stage).is_ok());
+        assert!(load_run(&stage, Task::Parser).is_err());
+        for path in [
+            stage.join("source/fit/learning-proof.json"),
+            stage.join("input_snapshot.json"),
+            fixture.data.clone(),
+        ] {
+            let original = std::fs::read(&path).unwrap();
+            let mut changed = original.clone();
+            changed.push(b' ');
+            std::fs::write(&path, changed).unwrap();
+            assert!(
+                load_run(&stage, Task::Detector).is_err(),
+                "{}",
+                path.display()
+            );
+            std::fs::write(&path, original).unwrap();
+        }
+        std::fs::remove_file(stage.join("release.json")).unwrap();
+        assert!(load_run(&stage, Task::Detector).is_err());
     }
 
     #[test]

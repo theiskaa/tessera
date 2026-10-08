@@ -202,3 +202,96 @@ fn context96_native_parity_and_padding() {
             .is_err()
     );
 }
+
+#[test]
+fn reviewed_tab_cell_goldens_match_the_library_trace_with_their_country_hint() {
+    let device = Default::default();
+    <NdArray as Backend>::seed(&device, 9301);
+    let mut cfg = crate::config::load(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../configs/detector-shared.toml"),
+    )
+    .unwrap();
+    cfg.features.hash_buckets = 16;
+    cfg.net.architecture = Some(tessera::internal::CONTEXT96_RMS_NAME.into());
+    cfg.net.dilations = tessera::internal::CONTEXT96_RMS_DILATIONS.to_vec();
+    cfg.net.dropout = 0.;
+    cfg.net.ngram_from = None;
+    cfg.net.finetune_ngram = false;
+    cfg.net.detector_features = Some(crate::config::DetectorFeatures::TabCells25);
+    cfg.net.detector_postprocess = Some(crate::config::DetectorPostprocess::AddressLabeledFieldsV1);
+    let net = cfg.detector_net_config();
+    let f32_model = net.init::<NdArray>(&device);
+    let (q, biases, dequantized) =
+        crate::quantize::quantize_all(&crate::quantize::extract(&f32_model, "detector"));
+    let int8_model =
+        crate::quantize::inject::<NdArray>(&net, &dequantized, "detector", &device).unwrap();
+    let mut metadata = crate::export::metadata(&cfg, "synthetic golden parity", "synthetic");
+    metadata.insert("nets".into(), "detector".into());
+    metadata.insert("model_version".into(), "0.4.0".into());
+    let runtime = tessera::Tessera::load(
+        &bundle_bytes(&q, &biases, metadata),
+        tessera::Config {
+            kinds: tessera::Kind::Person.into(),
+            expected_checksum: None,
+        },
+    )
+    .unwrap();
+    let policy = crate::detector::DetectorInputPolicy::KnownUs;
+    let mut unhinted_differs = false;
+    for (name, text) in super::DETECTOR_GOLDEN_TEXTS {
+        let case = super::detector_golden(
+            "0.4.0",
+            &cfg,
+            Some(policy),
+            (&f32_model, &int8_model),
+            text,
+            &device,
+        )
+        .unwrap();
+        assert_eq!(case["input_policy"], "known_us", "{name}");
+        assert_eq!(case["country_hint"], json!(["US"]), "{name}");
+        assert_eq!(
+            case["detector_postprocess"], "address_labeled_fields_v1",
+            "{name}"
+        );
+        let hint: Vec<&str> = case["country_hint"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|h| h.as_str().unwrap())
+            .collect();
+        let trace = runtime.detect_trace_with_country_hint(text, &hint).unwrap();
+        let tokens: Vec<(usize, usize)> =
+            serde_json::from_value(case["input"]["tokens"].clone()).unwrap();
+        assert_eq!(trace.token_spans, tokens, "{name}");
+        for (i, (got, want)) in trace
+            .features
+            .iter()
+            .zip(case["input"]["features"].as_array().unwrap())
+            .enumerate()
+        {
+            assert_eq!(json!(got.ngram_ids), want["ngram_ids"], "{name} {i}");
+            assert_eq!(
+                json!([got.script, got.shape, got.flags]),
+                json!([want["script"], want["shape"], want["flags"]]),
+                "{name} {i}"
+            );
+        }
+        assert_eq!(json!(trace.masked), case["masked"], "{name}");
+        let want: Vec<f32> = serde_json::from_value::<Vec<Vec<f32>>>(case["int8_logits"].clone())
+            .unwrap()
+            .concat();
+        let difference = max_difference(&trace.logits, &want);
+        assert!(
+            difference <= crate::export::GOLDEN_TOLERANCE as f32,
+            "{name}: {difference}"
+        );
+        assert_eq!(json!(trace.decoded), case["decoded"], "{name}");
+        let unhinted = tessera::internal::detect_trace(&runtime, text).unwrap();
+        unhinted_differs |= json!(unhinted.masked) != case["masked"];
+    }
+    assert!(
+        unhinted_differs,
+        "some golden must depend on the declared country hint"
+    );
+}

@@ -105,6 +105,11 @@ impl Loaded {
     pub(crate) fn cohorts(&self) -> &Cohorts {
         &self.cohorts
     }
+
+    /// Canonical feature identity of the encoded cohorts, as a fit's preflight records it.
+    pub(crate) fn canonical_identity(&self) -> &Value {
+        &self.identity
+    }
 }
 
 impl Prepared {
@@ -115,6 +120,14 @@ impl Prepared {
         prepared.canonical_preflight = Some(canonical_preflight);
         prepared.load_documents()?;
         Ok(prepared)
+    }
+
+    /// Re-encode the declared cohorts under current code for a release check, without the
+    /// fit-time execution identity; the caller must compare the returned canonical identity.
+    pub(crate) fn reencode(path: &Path) -> anyhow::Result<(Self, Loaded)> {
+        let prepared = Self::prepare(path)?;
+        let loaded = prepared.encode_documents()?;
+        Ok((prepared, loaded))
     }
 
     /// Bind metadata for a new canonical preflight without requiring a circular receipt.

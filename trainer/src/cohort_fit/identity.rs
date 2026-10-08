@@ -306,8 +306,24 @@ pub(crate) fn code_identity() -> anyhow::Result<BTreeMap<String, String>> {
             include_bytes!("../../../tessera/Cargo.toml").as_slice(),
         ),
         (
-            "tessera/src/bin/tessera.rs",
-            include_bytes!("../../../tessera/src/bin/tessera.rs").as_slice(),
+            "tessera/src/bin/tessera/bundle.rs",
+            include_bytes!("../../../tessera/src/bin/tessera/bundle.rs").as_slice(),
+        ),
+        (
+            "tessera/src/bin/tessera/flags.rs",
+            include_bytes!("../../../tessera/src/bin/tessera/flags.rs").as_slice(),
+        ),
+        (
+            "tessera/src/bin/tessera/json.rs",
+            include_bytes!("../../../tessera/src/bin/tessera/json.rs").as_slice(),
+        ),
+        (
+            "tessera/src/bin/tessera/main.rs",
+            include_bytes!("../../../tessera/src/bin/tessera/main.rs").as_slice(),
+        ),
+        (
+            "tessera/src/bin/tessera/render.rs",
+            include_bytes!("../../../tessera/src/bin/tessera/render.rs").as_slice(),
         ),
         (
             "tessera/src/chunk.rs",

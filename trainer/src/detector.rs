@@ -83,6 +83,16 @@ pub enum DetectorInputPolicy {
     AutoText,
 }
 
+impl DetectorInputPolicy {
+    /// The country hint the rules run with: `US` when known, none when inferred from the text.
+    pub fn country_hint(self) -> &'static [&'static str] {
+        match self {
+            Self::KnownUs => &["US"],
+            Self::AutoText => &[],
+        }
+    }
+}
+
 /// Encodes the legacy empty-hint diagnostic input contract.
 /// Public Text queries with explicit or inferred countries can produce different rule masks.
 pub fn encode_document(
@@ -124,15 +134,11 @@ pub fn encode_document_with_feature_contract(
     policy: DetectorInputPolicy,
     contract: tessera::internal::DetectorFeatureContract,
 ) -> Result<Encoded, DetectorEncodeError> {
-    let hints: &[&str] = match policy {
-        DetectorInputPolicy::KnownUs => &["US"],
-        DetectorInputPolicy::AutoText => &[],
-    };
     encode_document_rules(
         text,
         gold,
         fc,
-        tessera::internal::scan_text_rules(text, hints),
+        tessera::internal::scan_text_rules(text, policy.country_hint()),
         contract,
     )
 }
