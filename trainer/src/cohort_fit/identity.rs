@@ -306,10 +306,6 @@ pub(crate) fn code_identity() -> anyhow::Result<BTreeMap<String, String>> {
             include_bytes!("../../../tessera/Cargo.toml").as_slice(),
         ),
         (
-            "tessera/src/bin/tessera/bundle.rs",
-            include_bytes!("../../../tessera/src/bin/tessera/bundle.rs").as_slice(),
-        ),
-        (
             "tessera/src/bin/tessera/flags.rs",
             include_bytes!("../../../tessera/src/bin/tessera/flags.rs").as_slice(),
         ),
@@ -320,10 +316,6 @@ pub(crate) fn code_identity() -> anyhow::Result<BTreeMap<String, String>> {
         (
             "tessera/src/bin/tessera/main.rs",
             include_bytes!("../../../tessera/src/bin/tessera/main.rs").as_slice(),
-        ),
-        (
-            "tessera/src/bin/tessera/render.rs",
-            include_bytes!("../../../tessera/src/bin/tessera/render.rs").as_slice(),
         ),
         (
             "tessera/src/chunk.rs",
@@ -340,6 +332,18 @@ pub(crate) fn code_identity() -> anyhow::Result<BTreeMap<String, String>> {
         (
             "tessera/src/group.rs",
             include_bytes!("../../../tessera/src/group.rs").as_slice(),
+        ),
+        (
+            "tessera/src/json/bundle.rs",
+            include_bytes!("../../../tessera/src/json/bundle.rs").as_slice(),
+        ),
+        (
+            "tessera/src/json/mod.rs",
+            include_bytes!("../../../tessera/src/json/mod.rs").as_slice(),
+        ),
+        (
+            "tessera/src/json/render.rs",
+            include_bytes!("../../../tessera/src/json/render.rs").as_slice(),
         ),
         (
             "tessera/src/lib.rs",
