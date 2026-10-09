@@ -148,7 +148,7 @@ The distributed [Safetensors bundle](models/tessera-v1.safetensors) contains bot
 | Property                             | Value                                                 |
 | ------------------------------------ | ----------------------------------------------------- |
 | Model version / bundle format        | `0.4.0` / `2`                                         |
-| Runtime version                      | `0.2.0`                                               |
+| Runtime version                      | `0.3.0`                                               |
 | Bundle size                          | 3,490,312 bytes (3.49 MB; about 3.08 MB with gzip)    |
 | Weight encoding                      | Per-channel symmetric int8; float32 scales and biases |
 | Detector architecture                | `detector-context96-rms-v2`                           |
